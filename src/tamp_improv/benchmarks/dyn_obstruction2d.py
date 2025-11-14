@@ -281,6 +281,8 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
             return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
 
+        dtheta = 0.0  # Already aligned
+
         # Calculate distance
         distance = np.sqrt(delta_x**2 + delta_y**2)
 
