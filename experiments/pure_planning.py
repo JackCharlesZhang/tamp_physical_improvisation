@@ -1,9 +1,12 @@
 """Pure planning baselines for PyBullet environments."""
 
 import argparse
+from pathlib import Path
 
+from gymnasium.wrappers import RecordVideo
 from task_then_motion_planning.planning import TaskThenMotionPlanner
 
+from tamp_improv.benchmarks.dyn_obstruction2d import BaseDynObstruction2DTAMPSystem
 from tamp_improv.benchmarks.pybullet_cleanup_table import (
     BaseCleanupTableTAMPSystem,
 )
@@ -167,6 +170,89 @@ def run_cleanup_table_planning(
     system.env.close()  # type: ignore[no-untyped-call]
 
 
+def run_dyn_obstruction2d_planning(
+    seed: int = 42,
+    render_mode: str | None = None,
+    max_steps: int = 200,
+    num_obstructions: int = 2,
+    record_video: bool = False,
+    video_folder: str = "videos/dyn_obstruction2d_planning",
+) -> None:
+    """Run pure planning baseline on DynObstruction2D environment."""
+    print("\n" + "=" * 80)
+    print("Running Pure Planning on DynObstruction2D Environment")
+    print("=" * 80)
+    print(f"Number of obstructions: {num_obstructions}")
+    print(f"Seed: {seed}")
+    print(f"Max steps: {max_steps}")
+    if record_video:
+        print(f"Recording video to: {video_folder}")
+    print("=" * 80)
+
+    system = BaseDynObstruction2DTAMPSystem.create_default(
+        seed=seed,
+        render_mode=render_mode,
+        num_obstructions=num_obstructions,
+    )
+
+    # Wrap with video recording if requested
+    if record_video:
+        if render_mode is None:
+            print("WARNING: --record-video requires --render to be enabled!")
+            print("Enabling render mode automatically...")
+            system.env.render_mode = "rgb_array"
+
+        Path(video_folder).mkdir(parents=True, exist_ok=True)
+        system.env = RecordVideo(
+            system.env,
+            video_folder,
+            episode_trigger=lambda _: True,
+            name_prefix=f"seed_{seed}",
+        )
+
+    planner = TaskThenMotionPlanner(
+        system.types,
+        system.predicates,
+        system.perceiver,
+        system.operators,
+        system.skills,
+        planner_id="pyperplan",
+    )
+
+    obs, info = system.env.reset(seed=seed)
+    objects, atoms, goal = system.perceiver.reset(obs, info)
+
+    print(f"\nObjects: {[obj.name for obj in objects]}")
+    print(f"Initial atoms ({len(atoms)}):")
+    for atom in sorted(atoms, key=str)[:10]:  # Show first 10
+        print(f"  - {atom}")
+    if len(atoms) > 10:
+        print(f"  ... and {len(atoms) - 10} more")
+    print(f"Goal ({len(goal)}):")
+    for atom in sorted(goal, key=str):
+        print(f"  - {atom}")
+
+    planner.reset(obs, info)
+
+    for step in range(max_steps):
+        action = planner.step(obs)
+        obs, reward, done, _, info = system.env.step(action)
+
+        if step % 20 == 0:
+            print(f"Step {step}: reward={reward:.3f}")
+
+        if done:
+            print(f"\nGoal reached in {step + 1} steps!")
+            print(f"Final reward: {reward}")
+            if float(reward) > 0:
+                print("SUCCESS: Task completed successfully!")
+            break
+    else:
+        print(f"\nFAILED: Goal not reached within {max_steps} steps")
+
+    system.env.close()  # type: ignore[no-untyped-call]
+
+
 def main() -> None:
     """Main function to run pure planning baselines."""
     parser = argparse.ArgumentParser(
@@ -180,6 +266,7 @@ def main() -> None:
             "obstacle_tower",
             "cluttered_drawer",
             "cleanup_table",
+            "dyn_obstruction2d",
         ],
         help="Environment to run",
     )
@@ -200,9 +287,26 @@ def main() -> None:
         default=10000,
         help="Maximum steps per episode",
     )
+    parser.add_argument(
+        "--num-obstructions",
+        type=int,
+        default=2,
+        help="Number of obstruction blocks (for dyn_obstruction2d)",
+    )
+    parser.add_argument(
+        "--record-video",
+        action="store_true",
+        help="Record video of the episode (implies --render)",
+    )
+    parser.add_argument(
+        "--video-folder",
+        type=str,
+        default="videos",
+        help="Folder to save videos (default: videos/)",
+    )
 
     args = parser.parse_args()
-    render_mode = "rgb_array" if args.render else None
+    render_mode = "rgb_array" if (args.render or args.record_video) else None
 
     if args.env == "obstacle_tower":
         run_obstacle_tower_planning(
@@ -221,6 +325,16 @@ def main() -> None:
             seed=args.seed,
             render_mode=render_mode,
             max_steps=args.max_steps,
+        )
+    elif args.env == "dyn_obstruction2d":
+        video_folder = f"{args.video_folder}/dyn_obstruction2d_planning"
+        run_dyn_obstruction2d_planning(
+            seed=args.seed,
+            render_mode=render_mode,
+            max_steps=args.max_steps,
+            num_obstructions=args.num_obstructions,
+            record_video=args.record_video,
+            video_folder=video_folder,
         )
 
 

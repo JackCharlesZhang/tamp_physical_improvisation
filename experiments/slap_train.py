@@ -15,6 +15,7 @@ from tamp_improv.approaches.improvisational.training import (
     train_and_evaluate,
 )
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
+from tamp_improv.benchmarks.dyn_obstruction2d import DynObstruction2DTAMPSystem
 from tamp_improv.benchmarks.obstacle2d_graph import GraphObstacle2DTAMPSystem
 from tamp_improv.benchmarks.pybullet_cleanup_table import CleanupTableTAMPSystem
 from tamp_improv.benchmarks.pybullet_cluttered_drawer import ClutteredDrawerTAMPSystem
@@ -27,6 +28,7 @@ SYSTEM_CLASSES: dict[str, Type[ImprovisationalTAMPSystem[Any, Any]]] = {
     "GraphObstacleTowerTAMPSystem": GraphObstacleTowerTAMPSystem,
     "ClutteredDrawerTAMPSystem": ClutteredDrawerTAMPSystem,
     "CleanupTableTAMPSystem": CleanupTableTAMPSystem,
+    "DynObstruction2DTAMPSystem": DynObstruction2DTAMPSystem,
 }
 
 
@@ -47,6 +49,8 @@ def main(cfg: DictConfig) -> float:
     }
     if hasattr(cfg, "num_obstacle_blocks"):
         system_kwargs["num_obstacle_blocks"] = cfg.num_obstacle_blocks
+    if hasattr(cfg, "num_obstructions"):
+        system_kwargs["num_obstructions"] = cfg.num_obstructions
     system = system_cls.create_default(**system_kwargs)  # type: ignore[attr-defined]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
