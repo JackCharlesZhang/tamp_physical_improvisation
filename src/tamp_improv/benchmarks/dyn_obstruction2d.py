@@ -114,9 +114,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             obs: Flat observation array
         """
         # TODO: Parse observation to extract positions
-        # For now, return a placeholder action
+        # For now, return a placeholder action within action space bounds
         # Action format: [dx, dy, dtheta, darm, dgripper]
-        return np.array([0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+        # Bounds: dx/dy in [-0.05, 0.05], dtheta in [-pi/16, pi/16], darm in [-0.1, 0.1], dgripper in [-0.02, 0.02]
+        return np.array([0.0, 0.0, 0.0, 0.0, 0.02], dtype=np.float32)  # Close gripper
 
 
 class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
@@ -138,7 +139,8 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         """
         # TODO: Parse observation and compute placement action
         # Action format: [dx, dy, dtheta, darm, dgripper]
-        return np.array([0.0, 0.0, 0.0, 0.0, -1.0], dtype=np.float32)
+        # Bounds: dx/dy in [-0.05, 0.05], dtheta in [-pi/16, pi/16], darm in [-0.1, 0.1], dgripper in [-0.02, 0.02]
+        return np.array([0.0, 0.0, 0.0, 0.0, -0.02], dtype=np.float32)  # Open gripper
 
 
 class PushSkill(BaseDynObstruction2DSkill):
@@ -217,12 +219,12 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
     def _get_atoms(self, obs: NDArray[np.float32]) -> set[GroundAtom]:
         """Extract PDDL atoms from observation.
 
-        Observation structure (for num_obstructions=2, ~81 dims):
-        - target_surface: features[0:14]  (x, y, theta, vx, vy, omega, static, held, color_r, color_g, color_b, z_order, width, height)
-        - target_block: features[14:29]   (x, y, theta, vx, vy, omega, static, held, color_r, color_g, color_b, z_order, width, height, mass)
-        - obstruction0: features[29:44]   (same as target_block)
-        - obstruction1: features[44:59]   (same as obstruction0)
-        - robot: features[59:81]          (x, y, theta, vx_base, vy_base, omega_base, vx_arm, vy_arm, omega_arm, vx_gripper, vy_gripper, omega_gripper, static, base_radius, arm_joint, arm_length, gripper_base_width, gripper_base_height, finger_gap, finger_height, finger_width)
+        Observation structure (for num_obstructions=2, 80 dims):
+        - target_surface: features[0:14]  (14 features)
+        - target_block: features[14:29]   (15 features)
+        - obstruction0: features[29:44]   (15 features)
+        - obstruction1: features[44:59]   (15 features)
+        - robot: features[59:80]          (21 features)
         """
         atoms = set()
 

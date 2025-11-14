@@ -35,8 +35,8 @@ def test_dyn_obstruction2d_env_reset():
     obs, info = env.reset()
 
     # Check observation shape
-    # For 2 obstructions: 14 (surface) + 15 (target_block) + 15*2 (obstructions) + 22 (robot) = 81
-    assert obs.shape == (81,)
+    # For 2 obstructions: 14 (surface) + 15 (target_block) + 15*2 (obstructions) + 21 (robot) = 80
+    assert obs.shape == (80,)
 
     # Check that perceiver can process the observation
     objects, atoms, goal = tamp_system.perceiver.reset(obs, info)
