@@ -149,6 +149,11 @@ class BaseDynObstruction2DSkill(LiftedOperatorSkill[NDArray[np.float32], NDArray
 class PickUpSkill(BaseDynObstruction2DSkill):
     """Skill for picking up the target block."""
 
+    def __init__(self, *args, **kwargs):
+        """Initialize with debug counter."""
+        super().__init__(*args, **kwargs)
+        self._debug_counter = 0
+
     def _get_operator_name(self) -> str:
         return "PickUp"
 
@@ -170,6 +175,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         robot = parsed["robot"]
         target = parsed["target_block"]
         obstructions = parsed["obstructions"]
+
+        # Debug logging every 20 steps
+        self._debug_counter += 1
+        debug = self._debug_counter % 20 == 0
 
         # Target position: above the block
         target_x = target["x"]
@@ -214,10 +223,16 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # Calculate distance to target
         distance = np.sqrt(delta_x**2 + delta_y**2)
 
+        if debug:
+            print(f"[PickUp] Distance={distance:.3f}, Held={target['held']}, "
+                  f"Gripper={robot['finger_gap']:.3f}, Arm={robot['arm_joint']:.3f}")
+
         # STAGED APPROACH: Be very gentle to avoid knocking block away
 
         # Stage 1: If far away (>0.3m), navigate closer with base only
         if distance > 0.3:
+            if debug:
+                print(f"[PickUp] Stage 1: Navigating (far)")
             # Move base slowly, no arm extension
             speed = 0.02  # Much slower
             dx = np.clip(delta_x * speed / distance, -0.02, 0.02)
@@ -228,6 +243,8 @@ class PickUpSkill(BaseDynObstruction2DSkill):
 
         # Stage 2: Medium distance (0.15-0.3m), position precisely + start extending
         if distance > 0.15:
+            if debug:
+                print(f"[PickUp] Stage 2: Approaching + extending arm")
             # Very slow base movement + gentle arm extension
             speed = 0.01
             dx = np.clip(delta_x * speed / distance, -0.01, 0.01)
@@ -237,10 +254,14 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             arm_error = desired_arm_extension - robot["arm_joint"]
             darm = np.clip(arm_error, -0.03, 0.03)  # Much slower
             dgripper = -0.02  # Keep gripper open
+            if debug:
+                print(f"[PickUp]   Desired arm={desired_arm_extension:.3f}, Current={robot['arm_joint']:.3f}, darm={darm:.3f}")
             return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
 
         # Stage 3: Close (<0.15m), STOP base, only extend arm gently
         if distance > 0.08 and not target["held"]:
+            if debug:
+                print(f"[PickUp] Stage 3: Stopped base, extending arm only")
             # Stop moving base, only extend arm very gently
             dx = 0.0
             dy = 0.0
@@ -249,13 +270,19 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             arm_error = desired_arm_extension - robot["arm_joint"]
             darm = np.clip(arm_error, -0.02, 0.02)  # Very slow
             dgripper = -0.02  # Keep gripper open
+            if debug:
+                print(f"[PickUp]   Desired arm={desired_arm_extension:.3f}, darm={darm:.3f}")
             return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
 
         # Stage 4: Very close, grasp
         if not target["held"]:
+            if debug:
+                print(f"[PickUp] Stage 4: CLOSING GRIPPER")
             # Stop everything, just close gripper
             return np.array([0.0, 0.0, 0.0, 0.0, 0.02], dtype=np.float32)
         else:
+            if debug:
+                print(f"[PickUp] SUCCESS: Block held!")
             # Already holding, maintain position
             return np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
@@ -352,7 +379,10 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
 
 class PushSkill(BaseDynObstruction2DSkill):
-    """Skill for pushing obstruction blocks off target surface."""
+    """Skill for pushing obstruction blocks off target surface.
+
+    NOTE: Currently disabled for debugging PickUpSkill.
+    """
 
     def _get_operator_name(self) -> str:
         return "Push"
@@ -364,91 +394,25 @@ class PushSkill(BaseDynObstruction2DSkill):
     ) -> NDArray[np.float32]:
         """Generate action to push obstruction block.
 
-        Args:
-            objects: [robot, obstruction, target_surface]
-            obs: Flat observation array
-
-        Returns:
-            Action [dx, dy, dtheta, darm, dgripper]
+        CURRENTLY DISABLED - focusing on fixing PickUpSkill first.
         """
-        parsed = self._parse_obs(obs)
-        robot = parsed["robot"]
-        surface = parsed["target_surface"]
+        # TODO: Re-enable after PickUpSkill works
+        raise NotImplementedError("PushSkill temporarily disabled for debugging")
 
-        # Determine which obstruction to push
-        obstruction_obj = objects[1]  # Second object is the obstruction
-        obstruction_idx = int(obstruction_obj.name[-1])  # Extract index from "obstructionX"
-        obstruction = parsed["obstructions"][obstruction_idx]
-
-        robot_x, robot_y = robot["x"], robot["y"]
-
-        # Calculate push direction: away from target surface center
-        push_dir_x = obstruction["x"] - surface["x"]
-        if abs(push_dir_x) < 0.01:
-            # If directly above, push to the right
-            push_dir_x = 1.0
-
-        # Normalize direction
-        push_dir_x = push_dir_x / abs(push_dir_x) if push_dir_x != 0 else 1.0
-
-        # Position behind obstruction (opposite to push direction)
-        approach_offset = 0.2
-        target_x = obstruction["x"] - push_dir_x * approach_offset
-        target_y = obstruction["y"]
-
-        # Calculate angle to approach position
-        delta_x = target_x - robot_x
-        delta_y = target_y - robot_y
-        distance_to_position = np.sqrt(delta_x**2 + delta_y**2)
-
-        # If far from position, navigate there
-        if distance_to_position > 0.1:
-            # Calculate angle to approach position
-            target_angle = np.arctan2(delta_y, delta_x)
-            angle_error = target_angle - robot["theta"]
-
-            # Normalize angle
-            while angle_error > np.pi:
-                angle_error -= 2 * np.pi
-            while angle_error < -np.pi:
-                angle_error += 2 * np.pi
-
-            # ROTATION: Orient toward approach position
-            if abs(angle_error) > 0.1:
-                dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
-                return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
-
-            # NAVIGATION: Move to approach position SLOWLY
-            speed = 0.02  # Much slower
-            dx = np.clip(delta_x * speed / distance_to_position, -0.02, 0.02)
-            dy = np.clip(delta_y * speed / distance_to_position, -0.02, 0.02)
-            return np.array([dx, dy, 0.0, 0.0, 0.0], dtype=np.float32)
-
-        # In position - now push GENTLY!
-        # Orient toward push direction (toward obstruction)
-        push_angle = np.arctan2(0.0, push_dir_x)  # Pushing horizontally
-        angle_error = push_angle - robot["theta"]
-
-        # Normalize angle
-        while angle_error > np.pi:
-            angle_error -= 2 * np.pi
-        while angle_error < -np.pi:
-            angle_error += 2 * np.pi
-
-        # ROTATION: Orient in push direction
-        if abs(angle_error) > 0.05:
-            dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
-            return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
-
-        # ARM EXTENSION: Extend arm SLOWLY to push
-        distance_to_obs = abs(robot_x - obstruction["x"])
-        desired_arm = min(distance_to_obs * 0.7, robot["arm_length"])
-        darm = np.clip(desired_arm - robot["arm_joint"], -0.03, 0.03)  # Much slower
-
-        # PUSH: Move forward GENTLY to nudge, not slam
-        dx = np.clip(push_dir_x * 0.01, -0.01, 0.01)  # 5x slower!
-
-        return np.array([dx, 0.0, 0.0, darm, 0.0], dtype=np.float32)
+        # ORIGINAL IMPLEMENTATION (commented out):
+        # """Generate action to push obstruction block.
+        #
+        # Args:
+        #     objects: [robot, obstruction, target_surface]
+        #     obs: Flat observation array
+        #
+        # Returns:
+        #     Action [dx, dy, dtheta, darm, dgripper]
+        # """
+        # parsed = self._parse_obs(obs)
+        # robot = parsed["robot"]
+        # surface = parsed["target_surface"]
+        # ... (rest of implementation preserved for future use)
 
 
 class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
@@ -758,20 +722,21 @@ class BaseDynObstruction2DTAMPSystem(
                     predicates["Clear"]([surface]),
                 },
             ),
-            LiftedOperator(
-                "Push",
-                [robot, obstruction, surface],
-                preconditions={
-                    predicates["Obstructing"]([obstruction, surface]),
-                    predicates["GripperEmpty"]([robot]),
-                },
-                add_effects={
-                    predicates["ObstructionClear"]([obstruction, surface]),
-                },
-                delete_effects={
-                    predicates["Obstructing"]([obstruction, surface]),
-                },
-            ),
+            # NOTE: Push operator disabled while debugging PickUpSkill
+            # LiftedOperator(
+            #     "Push",
+            #     [robot, obstruction, surface],
+            #     preconditions={
+            #         predicates["Obstructing"]([obstruction, surface]),
+            #         predicates["GripperEmpty"]([robot]),
+            #     },
+            #     add_effects={
+            #         predicates["ObstructionClear"]([obstruction, surface]),
+            #     },
+            #     delete_effects={
+            #         predicates["Obstructing"]([obstruction, surface]),
+            #     },
+            # ),
         }
 
         return PlanningComponents(
@@ -800,7 +765,7 @@ class BaseDynObstruction2DTAMPSystem(
         skills = {
             PickUpSkill(system.components),  # type: ignore[arg-type]
             PlaceOnTargetSkill(system.components),  # type: ignore[arg-type]
-            PushSkill(system.components),  # type: ignore[arg-type]
+            # PushSkill(system.components),  # Disabled while debugging PickUpSkill
         }
         system.components.skills.update(skills)
         return system
@@ -855,7 +820,7 @@ class DynObstruction2DTAMPSystem(
         skills = {
             PickUpSkill(system.components),  # type: ignore[arg-type]
             PlaceOnTargetSkill(system.components),  # type: ignore[arg-type]
-            PushSkill(system.components),  # type: ignore[arg-type]
+            # PushSkill(system.components),  # Disabled while debugging PickUpSkill
         }
         system.components.skills.update(skills)
         return system

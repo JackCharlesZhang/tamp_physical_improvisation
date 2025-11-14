@@ -18,8 +18,8 @@ def test_dyn_obstruction2d_system_creation():
     assert tamp_system is not None
     assert len(tamp_system.types) == 4  # robot, block, obstruction, surface
     assert len(tamp_system.predicates) == 6  # On, Clear, Holding, GripperEmpty, Obstructing, ObstructionClear
-    assert len(tamp_system.operators) == 3  # PickUp, PlaceOnTarget, Push
-    assert len(tamp_system.skills) == 3  # PickUpSkill, PlaceOnTargetSkill, PushSkill
+    assert len(tamp_system.operators) == 2  # PickUp, PlaceOnTarget (Push disabled)
+    assert len(tamp_system.skills) == 2  # PickUpSkill, PlaceOnTargetSkill (PushSkill disabled)
 
 
 def test_dyn_obstruction2d_env_reset():
@@ -81,7 +81,7 @@ def test_dyn_obstruction2d_domain():
     domain = tamp_system.get_domain()
 
     assert domain.name == "dyn-obstruction2d-domain"
-    assert len(domain.operators) == 3
+    assert len(domain.operators) == 2  # PickUp, PlaceOnTarget (Push disabled)
     assert len(domain.predicates) == 6
     assert len(domain.types) == 4
 
