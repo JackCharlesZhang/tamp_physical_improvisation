@@ -95,6 +95,53 @@ class BaseDynObstruction2DSkill(LiftedOperatorSkill[NDArray[np.float32], NDArray
         """Get the name of the operator this skill implements."""
         raise NotImplementedError
 
+    def _parse_obs(self, obs: NDArray[np.float32]) -> dict[str, Any]:
+        """Parse observation into structured data.
+
+        Observation structure (80 dims):
+        - target_surface: [0:14]
+        - target_block: [14:29]
+        - obstruction0: [29:44]
+        - obstruction1: [44:59]
+        - robot: [59:80]
+        """
+        return {
+            "target_surface": {
+                "x": float(obs[0]),
+                "y": float(obs[1]),
+                "width": float(obs[12]),
+                "height": float(obs[13]),
+            },
+            "target_block": {
+                "x": float(obs[14]),
+                "y": float(obs[15]),
+                "width": float(obs[26]),
+                "height": float(obs[27]),
+                "held": float(obs[21]) > 0.5,
+            },
+            "obstructions": [
+                {
+                    "x": float(obs[29]),
+                    "y": float(obs[30]),
+                    "width": float(obs[41]),
+                    "height": float(obs[42]),
+                },
+                {
+                    "x": float(obs[44]),
+                    "y": float(obs[45]),
+                    "width": float(obs[56]),
+                    "height": float(obs[57]),
+                },
+            ],
+            "robot": {
+                "x": float(obs[59]),
+                "y": float(obs[60]),
+                "theta": float(obs[61]),
+                "arm_joint": float(obs[73]),
+                "finger_gap": float(obs[77]),
+            },
+        }
+
 
 class PickUpSkill(BaseDynObstruction2DSkill):
     """Skill for picking up the target block."""
@@ -112,12 +159,36 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         Args:
             objects: [robot, target_block, target_surface]
             obs: Flat observation array
+
+        Returns:
+            Action [dx, dy, dtheta, darm, dgripper]
         """
-        # TODO: Parse observation to extract positions
-        # For now, return a placeholder action within action space bounds
-        # Action format: [dx, dy, dtheta, darm, dgripper]
-        # Bounds: dx/dy in [-0.05, 0.05], dtheta in [-pi/16, pi/16], darm in [-0.1, 0.1], dgripper in [-0.02, 0.02]
-        return np.array([0.0, 0.0, 0.0, 0.0, 0.02], dtype=np.float32)  # Close gripper
+        parsed = self._parse_obs(obs)
+        robot = parsed["robot"]
+        target = parsed["target_block"]
+
+        # Target position: above the block
+        target_x = target["x"]
+        target_y = target["y"] + target["height"] / 2 + 0.05  # Slightly above
+
+        # Calculate deltas
+        dx = np.clip(target_x - robot["x"], -0.05, 0.05)
+        dy = np.clip(target_y - robot["y"], -0.05, 0.05)
+
+        # Check if close enough to grasp
+        distance = np.sqrt((target_x - robot["x"]) ** 2 + (target_y - robot["y"]) ** 2)
+
+        if distance < 0.1 and not target["held"]:
+            # Close enough and not holding - close gripper
+            dgripper = 0.02
+        elif target["held"]:
+            # Already holding - keep gripper closed
+            dgripper = 0.0
+        else:
+            # Still approaching - keep gripper open
+            dgripper = -0.02
+
+        return np.array([dx, dy, 0.0, 0.0, dgripper], dtype=np.float32)
 
 
 class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
@@ -136,11 +207,37 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         Args:
             objects: [robot, target_block, target_surface]
             obs: Flat observation array
+
+        Returns:
+            Action [dx, dy, dtheta, darm, dgripper]
         """
-        # TODO: Parse observation and compute placement action
-        # Action format: [dx, dy, dtheta, darm, dgripper]
-        # Bounds: dx/dy in [-0.05, 0.05], dtheta in [-pi/16, pi/16], darm in [-0.1, 0.1], dgripper in [-0.02, 0.02]
-        return np.array([0.0, 0.0, 0.0, 0.0, -0.02], dtype=np.float32)  # Open gripper
+        parsed = self._parse_obs(obs)
+        robot = parsed["robot"]
+        surface = parsed["target_surface"]
+        target = parsed["target_block"]
+
+        # Target position: center of target surface, slightly above
+        target_x = surface["x"]
+        target_y = surface["y"] + surface["height"] / 2 + target["height"] / 2 + 0.05
+
+        # Calculate deltas
+        dx = np.clip(target_x - robot["x"], -0.05, 0.05)
+        dy = np.clip(target_y - robot["y"], -0.05, 0.05)
+
+        # Check if aligned with surface
+        distance_xy = np.sqrt((target_x - robot["x"]) ** 2 + (target_y - robot["y"]) ** 2)
+
+        if distance_xy < 0.05 and target["held"]:
+            # Close enough and holding - release gripper
+            dgripper = -0.02
+        elif target["held"]:
+            # Still moving to target - keep gripper closed
+            dgripper = 0.0
+        else:
+            # Not holding - keep gripper open
+            dgripper = -0.02
+
+        return np.array([dx, dy, 0.0, 0.0, dgripper], dtype=np.float32)
 
 
 class PushSkill(BaseDynObstruction2DSkill):
@@ -159,10 +256,48 @@ class PushSkill(BaseDynObstruction2DSkill):
         Args:
             objects: [robot, obstruction, target_surface]
             obs: Flat observation array
+
+        Returns:
+            Action [dx, dy, dtheta, darm, dgripper]
         """
-        # TODO: Parse observation and compute push direction
-        # Action format: [dx, dy, dtheta, darm, dgripper]
-        return np.array([0.05, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        parsed = self._parse_obs(obs)
+        robot = parsed["robot"]
+        surface = parsed["target_surface"]
+
+        # Determine which obstruction to push
+        obstruction_obj = objects[1]  # Second object is the obstruction
+        obstruction_idx = int(obstruction_obj.name[-1])  # Extract index from "obstructionX"
+        obstruction = parsed["obstructions"][obstruction_idx]
+
+        # Calculate push direction: away from target surface center
+        push_dir_x = obstruction["x"] - surface["x"]
+        if abs(push_dir_x) < 0.01:
+            # If directly above, push to the right
+            push_dir_x = 1.0
+
+        # Normalize direction
+        push_dir_x = push_dir_x / abs(push_dir_x) if push_dir_x != 0 else 1.0
+
+        # Position behind obstruction (opposite to push direction)
+        approach_offset = 0.15
+        target_x = obstruction["x"] - push_dir_x * approach_offset
+        target_y = obstruction["y"]
+
+        # Calculate deltas
+        distance_to_position = np.sqrt(
+            (target_x - robot["x"]) ** 2 + (target_y - robot["y"]) ** 2
+        )
+
+        if distance_to_position > 0.08:
+            # Still navigating to push position
+            dx = np.clip(target_x - robot["x"], -0.05, 0.05)
+            dy = np.clip(target_y - robot["y"], -0.05, 0.05)
+        else:
+            # In position - push!
+            dx = np.clip(push_dir_x * 0.05, -0.05, 0.05)
+            dy = 0.0
+
+        return np.array([dx, dy, 0.0, 0.0, 0.0], dtype=np.float32)
 
 
 class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
