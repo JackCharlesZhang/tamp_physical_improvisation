@@ -514,15 +514,17 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         atoms = set()
 
         # Parse observations
-        # Target surface (14 features)
+        # Target surface (14 features): x, y, theta, vx, vy, omega, static, held, r, g, b, z_order, width, height
         target_surface_x = obs[0]
         target_surface_y = obs[1]
+        target_surface_theta = obs[2]
         target_surface_width = obs[12]
         target_surface_height = obs[13]
 
-        # Target block (15 features)
+        # Target block (15 features): x, y, theta, vx, vy, omega, static, held, r, g, b, z_order, width, height, mass
         target_block_x = obs[14]
         target_block_y = obs[15]
+        target_block_theta = obs[16]
         target_block_width = obs[26]
         target_block_height = obs[27]
         target_block_held = obs[21] > 0.5  # "held" feature
@@ -557,10 +559,12 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         if self._is_on_surface(
             target_block_x,
             target_block_y,
+            target_block_theta,
             target_block_width,
             target_block_height,
             target_surface_x,
             target_surface_y,
+            target_surface_theta,
             target_surface_width,
             target_surface_height,
         ):
@@ -596,14 +600,48 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
 
         return atoms
 
+    def _rectangle_contains_point(
+        self,
+        rect_x: float,
+        rect_y: float,
+        rect_width: float,
+        rect_height: float,
+        rect_theta: float,
+        point_x: float,
+        point_y: float,
+    ) -> bool:
+        """Check if point is inside rectangle.
+
+        Matches Rectangle.contains_point from tomsgeoms2d with rotation support.
+        Rectangle (x,y) is bottom-left corner after created from center.
+        """
+        # Convert center coords to bottom-left (matching from_center logic)
+        rect_bl_x = rect_x - rect_width / 2
+        rect_bl_y = rect_y - rect_height / 2
+
+        # First invert translation
+        dx = point_x - rect_bl_x
+        dy = point_y - rect_bl_y
+
+        # Then invert rotation (multiply by inverse rotation matrix)
+        cos_theta = np.cos(-rect_theta)  # Negative for inverse
+        sin_theta = np.sin(-rect_theta)
+        rx = dx * cos_theta - dy * sin_theta
+        ry = dx * sin_theta + dy * cos_theta
+
+        # Check if rotated point is in axis-aligned rectangle
+        return 0 <= rx <= rect_width and 0 <= ry <= rect_height
+
     def _is_on_surface(
         self,
         block_x: float,
         block_y: float,
+        block_theta: float,
         block_width: float,
         block_height: float,
         surface_x: float,
         surface_y: float,
+        surface_theta: float,
         surface_width: float,
         surface_height: float,
     ) -> bool:
@@ -616,26 +654,45 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         """
         tol = 0.025  # Matches prbench default
 
-        # Bottom 2 vertices of block (assuming axis-aligned)
-        # These are bottom-left and bottom-right corners
-        bottom_left = (block_x - block_width / 2, block_y - block_height / 2)
-        bottom_right = (block_x + block_width / 2, block_y - block_height / 2)
+        # Bottom 2 vertices of block (in world coordinates, accounting for rotation)
+        # For axis-aligned: bottom-left and bottom-right
+        # For rotated: need to compute actual bottom vertices
+        block_bl_x = block_x - block_width / 2
+        block_bl_y = block_y - block_height / 2
 
-        # Surface rectangle bounds (Rectangle origin is bottom-left corner)
-        surface_left = surface_x - surface_width / 2
-        surface_right = surface_x + surface_width / 2
-        surface_bottom = surface_y - surface_height / 2
-        surface_top = surface_y + surface_height / 2
+        # Get block's 4 vertices in local coords (before rotation)
+        local_vertices = [
+            (0, 0),  # bottom-left
+            (block_width, 0),  # bottom-right
+            (block_width, block_height),  # top-right
+            (0, block_height),  # top-left
+        ]
+
+        # Rotate and translate to world coords
+        cos_b = np.cos(block_theta)
+        sin_b = np.sin(block_theta)
+        world_vertices = []
+        for lx, ly in local_vertices:
+            wx = lx * cos_b - ly * sin_b + block_bl_x
+            wy = lx * sin_b + ly * cos_b + block_bl_y
+            world_vertices.append((wx, wy))
+
+        # Sort by y coordinate to get bottom 2 vertices
+        sorted_vertices = sorted(world_vertices, key=lambda v: v[1])
+        bottom_two = sorted_vertices[:2]
 
         # Check both bottom vertices with y offset
-        for vertex_x, vertex_y in [bottom_left, bottom_right]:
+        for vertex_x, vertex_y in bottom_two:
             offset_y = vertex_y - tol
-            # Check if point (vertex_x, offset_y) is contained in surface rectangle
-            # For Rectangle.contains_point with theta=0:
-            # point is in rectangle if x in [rect.x, rect.x + width] and y in [rect.y, rect.y + height]
-            if not (surface_left <= vertex_x <= surface_right):
-                return False
-            if not (surface_bottom <= offset_y <= surface_top):
+            if not self._rectangle_contains_point(
+                surface_x,
+                surface_y,
+                surface_width,
+                surface_height,
+                surface_theta,
+                vertex_x,
+                offset_y,
+            ):
                 return False
 
         return True
