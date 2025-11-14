@@ -213,24 +213,50 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # Calculate distance to target
         distance = np.sqrt(delta_x**2 + delta_y**2)
 
-        # ARM EXTENSION: Extend arm to reach target
-        desired_arm_extension = min(distance * 0.8, robot["arm_length"])
-        arm_error = desired_arm_extension - robot["arm_joint"]
-        darm = np.clip(arm_error, -0.099, 0.099)
+        # STAGED APPROACH: Be very gentle to avoid knocking block away
 
-        # NAVIGATION: Move base toward target
-        dx = np.clip(delta_x, -0.049, 0.049)
-        dy = np.clip(delta_y, -0.049, 0.049)
+        # Stage 1: If far away (>0.3m), navigate closer with base only
+        if distance > 0.3:
+            # Move base slowly, no arm extension
+            speed = 0.02  # Much slower
+            dx = np.clip(delta_x * speed / distance, -0.02, 0.02)
+            dy = np.clip(delta_y * speed / distance, -0.02, 0.02)
+            darm = 0.0  # Don't extend arm yet
+            dgripper = -0.02  # Keep gripper open
+            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
 
-        # GRIPPER: Close when aligned and close enough
-        if distance < 0.15 and abs(angle_error) < 0.1 and not target["held"]:
-            dgripper = 0.02  # Close gripper
-        elif target["held"]:
-            dgripper = 0.0  # Keep closed
+        # Stage 2: Medium distance (0.15-0.3m), position precisely + start extending
+        if distance > 0.15:
+            # Very slow base movement + gentle arm extension
+            speed = 0.01
+            dx = np.clip(delta_x * speed / distance, -0.01, 0.01)
+            dy = np.clip(delta_y * speed / distance, -0.01, 0.01)
+            # Extend arm slowly to 60% of distance
+            desired_arm_extension = min(distance * 0.6, robot["arm_length"])
+            arm_error = desired_arm_extension - robot["arm_joint"]
+            darm = np.clip(arm_error, -0.03, 0.03)  # Much slower
+            dgripper = -0.02  # Keep gripper open
+            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
+
+        # Stage 3: Close (<0.15m), STOP base, only extend arm gently
+        if distance > 0.08 and not target["held"]:
+            # Stop moving base, only extend arm very gently
+            dx = 0.0
+            dy = 0.0
+            # Extend arm to reach target
+            desired_arm_extension = min(distance * 0.9, robot["arm_length"])
+            arm_error = desired_arm_extension - robot["arm_joint"]
+            darm = np.clip(arm_error, -0.02, 0.02)  # Very slow
+            dgripper = -0.02  # Keep gripper open
+            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
+
+        # Stage 4: Very close, grasp
+        if not target["held"]:
+            # Stop everything, just close gripper
+            return np.array([0.0, 0.0, 0.0, 0.0, 0.02], dtype=np.float32)
         else:
-            dgripper = -0.02  # Keep open
-
-        return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
+            # Already holding, maintain position
+            return np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
 
 class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
@@ -286,24 +312,42 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         # Calculate distance
         distance = np.sqrt(delta_x**2 + delta_y**2)
 
-        # ARM EXTENSION: Extend arm toward placement
-        desired_arm_extension = min(distance * 0.8, robot["arm_length"])
-        arm_error = desired_arm_extension - robot["arm_joint"]
-        darm = np.clip(arm_error, -0.099, 0.099)
+        # STAGED GENTLE PLACEMENT
 
-        # NAVIGATION: Move toward target
-        dx = np.clip(delta_x, -0.049, 0.049)
-        dy = np.clip(delta_y, -0.049, 0.049)
+        # Stage 1: Far away, navigate slowly
+        if distance > 0.3:
+            speed = 0.02
+            dx = np.clip(delta_x * speed / distance, -0.02, 0.02)
+            dy = np.clip(delta_y * speed / distance, -0.02, 0.02)
+            darm = 0.0
+            dgripper = 0.0 if target["held"] else -0.02
+            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
 
-        # GRIPPER: Release when close and aligned
-        if distance < 0.1 and abs(angle_error) < 0.1 and target["held"]:
-            dgripper = -0.02  # Release
-        elif target["held"]:
-            dgripper = 0.0  # Keep closed
+        # Stage 2: Medium distance, slow approach
+        if distance > 0.15:
+            speed = 0.01
+            dx = np.clip(delta_x * speed / distance, -0.01, 0.01)
+            dy = np.clip(delta_y * speed / distance, -0.01, 0.01)
+            darm = 0.0
+            dgripper = 0.0 if target["held"] else -0.02
+            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
+
+        # Stage 3: Close, position precisely above surface
+        if distance > 0.08:
+            speed = 0.005  # Very slow
+            dx = np.clip(delta_x * speed / distance, -0.005, 0.005)
+            dy = np.clip(delta_y * speed / distance, -0.005, 0.005)
+            darm = 0.0
+            dgripper = 0.0 if target["held"] else -0.02
+            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
+
+        # Stage 4: In position, release gently
+        if target["held"]:
+            # Release gripper
+            return np.array([0.0, 0.0, 0.0, 0.0, -0.02], dtype=np.float32)
         else:
-            dgripper = -0.02  # Keep open
-
-        return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
+            # Already placed
+            return np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
 
 class PushSkill(BaseDynObstruction2DSkill):
@@ -373,12 +417,13 @@ class PushSkill(BaseDynObstruction2DSkill):
                 dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
                 return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
 
-            # NAVIGATION: Move to approach position
-            dx = np.clip(delta_x, -0.049, 0.049)
-            dy = np.clip(delta_y, -0.049, 0.049)
+            # NAVIGATION: Move to approach position SLOWLY
+            speed = 0.02  # Much slower
+            dx = np.clip(delta_x * speed / distance_to_position, -0.02, 0.02)
+            dy = np.clip(delta_y * speed / distance_to_position, -0.02, 0.02)
             return np.array([dx, dy, 0.0, 0.0, 0.0], dtype=np.float32)
 
-        # In position - now push!
+        # In position - now push GENTLY!
         # Orient toward push direction (toward obstruction)
         push_angle = np.arctan2(0.0, push_dir_x)  # Pushing horizontally
         angle_error = push_angle - robot["theta"]
@@ -394,13 +439,13 @@ class PushSkill(BaseDynObstruction2DSkill):
             dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
             return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
 
-        # ARM EXTENSION: Extend arm to push
+        # ARM EXTENSION: Extend arm SLOWLY to push
         distance_to_obs = abs(robot_x - obstruction["x"])
-        desired_arm = min(distance_to_obs * 0.9, robot["arm_length"])
-        darm = np.clip(desired_arm - robot["arm_joint"], -0.099, 0.099)
+        desired_arm = min(distance_to_obs * 0.7, robot["arm_length"])
+        darm = np.clip(desired_arm - robot["arm_joint"], -0.03, 0.03)  # Much slower
 
-        # PUSH: Move forward
-        dx = np.clip(push_dir_x * 0.049, -0.049, 0.049)
+        # PUSH: Move forward GENTLY to nudge, not slam
+        dx = np.clip(push_dir_x * 0.01, -0.01, 0.01)  # 5x slower!
 
         return np.array([dx, 0.0, 0.0, darm, 0.0], dtype=np.float32)
 
