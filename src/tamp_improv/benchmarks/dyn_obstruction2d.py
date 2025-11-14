@@ -205,7 +205,7 @@ class PickUpSkill(BaseDynObstruction2DSkill):
 
         # ROTATION: Orient toward target first
         if abs(angle_error) > 0.1:  # ~5.7 degrees
-            dtheta = np.clip(angle_error, -np.pi / 16, np.pi / 16)
+            dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
             return np.array([0.0, 0.0, dtheta, 0.0, -0.02], dtype=np.float32)
 
         # Calculate distance to target
@@ -276,7 +276,7 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
         # ROTATION: Orient toward target
         if abs(angle_error) > 0.1:
-            dtheta = np.clip(angle_error, -np.pi / 16, np.pi / 16)
+            dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
             return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
 
         # Calculate distance
@@ -366,7 +366,7 @@ class PushSkill(BaseDynObstruction2DSkill):
 
             # ROTATION: Orient toward approach position
             if abs(angle_error) > 0.1:
-                dtheta = np.clip(angle_error, -np.pi / 16, np.pi / 16)
+                dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
                 return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
 
             # NAVIGATION: Move to approach position
@@ -387,7 +387,7 @@ class PushSkill(BaseDynObstruction2DSkill):
 
         # ROTATION: Orient in push direction
         if abs(angle_error) > 0.05:
-            dtheta = np.clip(angle_error, -np.pi / 16, np.pi / 16)
+            dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
             return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
 
         # ARM EXTENSION: Extend arm to push
