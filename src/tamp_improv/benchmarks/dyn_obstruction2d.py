@@ -607,22 +607,38 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         surface_width: float,
         surface_height: float,
     ) -> bool:
-        """Check if block is completely on surface."""
-        # Block bottom must be touching surface top
-        block_bottom = block_y - block_height / 2
-        surface_top = surface_y + surface_height / 2
+        """Check if block is on surface.
 
-        # Check vertical alignment (block sitting on surface)
-        if not np.isclose(block_bottom, surface_top, atol=0.05):
-            return False
+        Exactly matches prbench's is_on logic from geom2d/utils.py:
+        - Gets bottom 2 vertices of block
+        - Offsets y by -tol
+        - Checks if offset points are contained in surface rectangle
+        """
+        tol = 0.025  # Matches prbench default
 
-        # Check horizontal containment
-        block_left = block_x - block_width / 2
-        block_right = block_x + block_width / 2
+        # Bottom 2 vertices of block (assuming axis-aligned)
+        # These are bottom-left and bottom-right corners
+        bottom_left = (block_x - block_width / 2, block_y - block_height / 2)
+        bottom_right = (block_x + block_width / 2, block_y - block_height / 2)
+
+        # Surface rectangle bounds (Rectangle origin is bottom-left corner)
         surface_left = surface_x - surface_width / 2
         surface_right = surface_x + surface_width / 2
+        surface_bottom = surface_y - surface_height / 2
+        surface_top = surface_y + surface_height / 2
 
-        return block_left >= surface_left and block_right <= surface_right
+        # Check both bottom vertices with y offset
+        for vertex_x, vertex_y in [bottom_left, bottom_right]:
+            offset_y = vertex_y - tol
+            # Check if point (vertex_x, offset_y) is contained in surface rectangle
+            # For Rectangle.contains_point with theta=0:
+            # point is in rectangle if x in [rect.x, rect.x + width] and y in [rect.y, rect.y + height]
+            if not (surface_left <= vertex_x <= surface_right):
+                return False
+            if not (surface_bottom <= offset_y <= surface_top):
+                return False
+
+        return True
 
     def _is_obstructing(
         self,
