@@ -379,16 +379,17 @@ class BaseDynObstruction2DTAMPSystem(
         )
 
     def _create_env(self) -> gym.Env:
-        """Create base environment."""
-        # Import here to avoid circular dependency and allow installation without prbench
+        """Create base environment.
+
+        NOTE: Requires prbench to be installed.
+        Install with: pip install -e 'path/to/prbench[dynamic2d]'
+        """
         try:
-            import sys
-            sys.path.insert(0, "/Users/jackzhang/Desktop/slapo/prpl-mono/prbench/src")
             from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv
         except ImportError as e:
             raise ImportError(
                 "DynObstruction2DEnv requires prbench to be installed. "
-                "Please install it from prpl-mono/prbench"
+                "Install with: pip install -e 'path/to/prbench[dynamic2d]'"
             ) from e
 
         return DynObstruction2DEnv(
