@@ -180,9 +180,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         self._debug_counter += 1
         debug = self._debug_counter % 20 == 0
 
-        # Target position: above the block
-        target_x = target["x"]
-        target_y = target["y"] + target["height"] / 2 + 0.1
+        # Target position: SIDE of block (grab at corner)
+        # Approach horizontally at block's center height, offset to the left side
+        target_x = target["x"] - target["width"] / 2 - 0.05  # Offset to left of block
+        target_y = target["y"]  # Same height as block center
 
         robot_x, robot_y = robot["x"], robot["y"]
 
@@ -241,16 +242,17 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             dgripper = -0.02  # Keep gripper open
             return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
 
-        # Stage 2: Medium distance (0.15-0.3m), position precisely + start extending
-        if distance > 0.15:
+        # Stage 2: Medium distance (0.1-0.3m), position precisely + start extending
+        if distance > 0.1:
             if debug:
                 print(f"[PickUp] Stage 2: Approaching + extending arm")
             # Very slow base movement + gentle arm extension
             speed = 0.01
             dx = np.clip(delta_x * speed / distance, -0.01, 0.01)
             dy = np.clip(delta_y * speed / distance, -0.01, 0.01)
-            # Extend arm slowly to 60% of distance
-            desired_arm_extension = min(distance * 0.6, robot["arm_length"])
+            # Extend arm to reach - we need to extend MORE not less
+            # The arm should reach out to the block's edge
+            desired_arm_extension = min(robot["arm_length"] * 0.9, robot["arm_length"])
             arm_error = desired_arm_extension - robot["arm_joint"]
             darm = np.clip(arm_error, -0.03, 0.03)  # Much slower
             dgripper = -0.02  # Keep gripper open
@@ -258,32 +260,34 @@ class PickUpSkill(BaseDynObstruction2DSkill):
                 print(f"[PickUp]   Desired arm={desired_arm_extension:.3f}, Current={robot['arm_joint']:.3f}, darm={darm:.3f}")
             return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
 
-        # Stage 3: Close (<0.15m), STOP base, only extend arm gently
-        if distance > 0.08 and not target["held"]:
+        # Stage 3: Close (<0.1m), position for grasp
+        # At this point we're at the side of the block, arm should be extended
+        if distance > 0.06 and not target["held"]:
             if debug:
-                print(f"[PickUp] Stage 3: Stopped base, extending arm only")
-            # Stop moving base, only extend arm very gently
-            dx = 0.0
-            dy = 0.0
-            # Extend arm to reach target
-            desired_arm_extension = min(distance * 0.9, robot["arm_length"])
+                print(f"[PickUp] Stage 3: Positioning for grasp, extending arm fully")
+            # Move very slowly to final position
+            speed = 0.005
+            dx = np.clip(delta_x * speed / distance, -0.005, 0.005)
+            dy = np.clip(delta_y * speed / distance, -0.005, 0.005)
+            # Extend arm fully
+            desired_arm_extension = robot["arm_length"]
             arm_error = desired_arm_extension - robot["arm_joint"]
             darm = np.clip(arm_error, -0.02, 0.02)  # Very slow
             dgripper = -0.02  # Keep gripper open
             if debug:
-                print(f"[PickUp]   Desired arm={desired_arm_extension:.3f}, darm={darm:.3f}")
+                print(f"[PickUp]   Arm ext={robot['arm_joint']:.3f}/{robot['arm_length']:.3f}, darm={darm:.3f}")
             return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
 
         # Stage 4: Very close, grasp
         if not target["held"]:
             if debug:
-                print(f"[PickUp] Stage 4: CLOSING GRIPPER")
-            # Stop everything, just close gripper
+                print(f"[PickUp] Stage 4: CLOSING GRIPPER (dist={distance:.3f})")
+            # Stop base movement, close gripper
             return np.array([0.0, 0.0, 0.0, 0.0, 0.02], dtype=np.float32)
         else:
             if debug:
                 print(f"[PickUp] SUCCESS: Block held!")
-            # Already holding, maintain position
+            # Already holding, maintain grip
             return np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
 
