@@ -137,7 +137,9 @@ class BaseDynObstruction2DSkill(LiftedOperatorSkill[NDArray[np.float32], NDArray
                 "x": float(obs[59]),
                 "y": float(obs[60]),
                 "theta": float(obs[61]),
-                "arm_joint": float(obs[73]),
+                "base_radius": float(obs[72]),
+                "arm_joint": float(obs[73]),  # Current arm extension
+                "arm_length": float(obs[74]),  # Max arm extension
                 "finger_gap": float(obs[77]),
             },
         }
@@ -166,29 +168,67 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         parsed = self._parse_obs(obs)
         robot = parsed["robot"]
         target = parsed["target_block"]
+        obstructions = parsed["obstructions"]
 
         # Target position: above the block
         target_x = target["x"]
-        target_y = target["y"] + target["height"] / 2 + 0.05  # Slightly above
+        target_y = target["y"] + target["height"] / 2 + 0.1
 
-        # Calculate deltas
-        dx = np.clip(target_x - robot["x"], -0.049, 0.049)
-        dy = np.clip(target_y - robot["y"], -0.049, 0.049)
+        robot_x, robot_y = robot["x"], robot["y"]
 
-        # Check if close enough to grasp
-        distance = np.sqrt((target_x - robot["x"]) ** 2 + (target_y - robot["y"]) ** 2)
+        # COLLISION AVOIDANCE: Check if too close to obstructions
+        for obs_block in obstructions:
+            obs_x, obs_y = obs_block["x"], obs_block["y"]
+            obs_width = obs_block["width"]
 
-        if distance < 0.1 and not target["held"]:
-            # Close enough and not holding - close gripper
-            dgripper = 0.02
+            # If at same y-level and too close, move away first
+            if (
+                np.isclose(robot_y, obs_y, atol=0.05)
+                and abs(robot_x - obs_x) < (robot["base_radius"] + obs_width / 2 + 0.1)
+                and not np.isclose(robot_x, obs_x, atol=0.05)
+            ):
+                # Move away from obstruction
+                dx = np.clip(robot_x - obs_x, -0.049, 0.049)
+                return np.array([dx, 0.0, 0.0, 0.0, -0.02], dtype=np.float32)
+
+        # Calculate angle to target
+        delta_x = target_x - robot_x
+        delta_y = target_y - robot_y
+        target_angle = np.arctan2(delta_y, delta_x)
+        angle_error = target_angle - robot["theta"]
+
+        # Normalize angle to [-pi, pi]
+        while angle_error > np.pi:
+            angle_error -= 2 * np.pi
+        while angle_error < -np.pi:
+            angle_error += 2 * np.pi
+
+        # ROTATION: Orient toward target first
+        if abs(angle_error) > 0.1:  # ~5.7 degrees
+            dtheta = np.clip(angle_error, -np.pi / 16, np.pi / 16)
+            return np.array([0.0, 0.0, dtheta, 0.0, -0.02], dtype=np.float32)
+
+        # Calculate distance to target
+        distance = np.sqrt(delta_x**2 + delta_y**2)
+
+        # ARM EXTENSION: Extend arm to reach target
+        desired_arm_extension = min(distance * 0.8, robot["arm_length"])
+        arm_error = desired_arm_extension - robot["arm_joint"]
+        darm = np.clip(arm_error, -0.099, 0.099)
+
+        # NAVIGATION: Move base toward target
+        dx = np.clip(delta_x, -0.049, 0.049)
+        dy = np.clip(delta_y, -0.049, 0.049)
+
+        # GRIPPER: Close when aligned and close enough
+        if distance < 0.15 and abs(angle_error) < 0.1 and not target["held"]:
+            dgripper = 0.02  # Close gripper
         elif target["held"]:
-            # Already holding - keep gripper closed
-            dgripper = 0.0
+            dgripper = 0.0  # Keep closed
         else:
-            # Still approaching - keep gripper open
-            dgripper = -0.02
+            dgripper = -0.02  # Keep open
 
-        return np.array([dx, dy, 0.0, 0.0, dgripper], dtype=np.float32)
+        return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
 
 
 class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
@@ -218,26 +258,48 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
         # Target position: center of target surface, slightly above
         target_x = surface["x"]
-        target_y = surface["y"] + surface["height"] / 2 + target["height"] / 2 + 0.05
+        target_y = surface["y"] + surface["height"] / 2 + target["height"] / 2 + 0.1
 
-        # Calculate deltas
-        dx = np.clip(target_x - robot["x"], -0.049, 0.049)
-        dy = np.clip(target_y - robot["y"], -0.049, 0.049)
+        robot_x, robot_y = robot["x"], robot["y"]
 
-        # Check if aligned with surface
-        distance_xy = np.sqrt((target_x - robot["x"]) ** 2 + (target_y - robot["y"]) ** 2)
+        # Calculate angle to target
+        delta_x = target_x - robot_x
+        delta_y = target_y - robot_y
+        target_angle = np.arctan2(delta_y, delta_x)
+        angle_error = target_angle - robot["theta"]
 
-        if distance_xy < 0.05 and target["held"]:
-            # Close enough and holding - release gripper
-            dgripper = -0.02
+        # Normalize angle to [-pi, pi]
+        while angle_error > np.pi:
+            angle_error -= 2 * np.pi
+        while angle_error < -np.pi:
+            angle_error += 2 * np.pi
+
+        # ROTATION: Orient toward target
+        if abs(angle_error) > 0.1:
+            dtheta = np.clip(angle_error, -np.pi / 16, np.pi / 16)
+            return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
+
+        # Calculate distance
+        distance = np.sqrt(delta_x**2 + delta_y**2)
+
+        # ARM EXTENSION: Extend arm toward placement
+        desired_arm_extension = min(distance * 0.8, robot["arm_length"])
+        arm_error = desired_arm_extension - robot["arm_joint"]
+        darm = np.clip(arm_error, -0.099, 0.099)
+
+        # NAVIGATION: Move toward target
+        dx = np.clip(delta_x, -0.049, 0.049)
+        dy = np.clip(delta_y, -0.049, 0.049)
+
+        # GRIPPER: Release when close and aligned
+        if distance < 0.1 and abs(angle_error) < 0.1 and target["held"]:
+            dgripper = -0.02  # Release
         elif target["held"]:
-            # Still moving to target - keep gripper closed
-            dgripper = 0.0
+            dgripper = 0.0  # Keep closed
         else:
-            # Not holding - keep gripper open
-            dgripper = -0.02
+            dgripper = -0.02  # Keep open
 
-        return np.array([dx, dy, 0.0, 0.0, dgripper], dtype=np.float32)
+        return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
 
 
 class PushSkill(BaseDynObstruction2DSkill):
@@ -269,6 +331,8 @@ class PushSkill(BaseDynObstruction2DSkill):
         obstruction_idx = int(obstruction_obj.name[-1])  # Extract index from "obstructionX"
         obstruction = parsed["obstructions"][obstruction_idx]
 
+        robot_x, robot_y = robot["x"], robot["y"]
+
         # Calculate push direction: away from target surface center
         push_dir_x = obstruction["x"] - surface["x"]
         if abs(push_dir_x) < 0.01:
@@ -279,25 +343,62 @@ class PushSkill(BaseDynObstruction2DSkill):
         push_dir_x = push_dir_x / abs(push_dir_x) if push_dir_x != 0 else 1.0
 
         # Position behind obstruction (opposite to push direction)
-        approach_offset = 0.15
+        approach_offset = 0.2
         target_x = obstruction["x"] - push_dir_x * approach_offset
         target_y = obstruction["y"]
 
-        # Calculate deltas
-        distance_to_position = np.sqrt(
-            (target_x - robot["x"]) ** 2 + (target_y - robot["y"]) ** 2
-        )
+        # Calculate angle to approach position
+        delta_x = target_x - robot_x
+        delta_y = target_y - robot_y
+        distance_to_position = np.sqrt(delta_x**2 + delta_y**2)
 
-        if distance_to_position > 0.08:
-            # Still navigating to push position
-            dx = np.clip(target_x - robot["x"], -0.049, 0.049)
-            dy = np.clip(target_y - robot["y"], -0.049, 0.049)
-        else:
-            # In position - push!
-            dx = np.clip(push_dir_x * 0.049, -0.049, 0.049)
-            dy = 0.0
+        # If far from position, navigate there
+        if distance_to_position > 0.1:
+            # Calculate angle to approach position
+            target_angle = np.arctan2(delta_y, delta_x)
+            angle_error = target_angle - robot["theta"]
 
-        return np.array([dx, dy, 0.0, 0.0, 0.0], dtype=np.float32)
+            # Normalize angle
+            while angle_error > np.pi:
+                angle_error -= 2 * np.pi
+            while angle_error < -np.pi:
+                angle_error += 2 * np.pi
+
+            # ROTATION: Orient toward approach position
+            if abs(angle_error) > 0.1:
+                dtheta = np.clip(angle_error, -np.pi / 16, np.pi / 16)
+                return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
+
+            # NAVIGATION: Move to approach position
+            dx = np.clip(delta_x, -0.049, 0.049)
+            dy = np.clip(delta_y, -0.049, 0.049)
+            return np.array([dx, dy, 0.0, 0.0, 0.0], dtype=np.float32)
+
+        # In position - now push!
+        # Orient toward push direction (toward obstruction)
+        push_angle = np.arctan2(0.0, push_dir_x)  # Pushing horizontally
+        angle_error = push_angle - robot["theta"]
+
+        # Normalize angle
+        while angle_error > np.pi:
+            angle_error -= 2 * np.pi
+        while angle_error < -np.pi:
+            angle_error += 2 * np.pi
+
+        # ROTATION: Orient in push direction
+        if abs(angle_error) > 0.05:
+            dtheta = np.clip(angle_error, -np.pi / 16, np.pi / 16)
+            return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
+
+        # ARM EXTENSION: Extend arm to push
+        distance_to_obs = abs(robot_x - obstruction["x"])
+        desired_arm = min(distance_to_obs * 0.9, robot["arm_length"])
+        darm = np.clip(desired_arm - robot["arm_joint"], -0.099, 0.099)
+
+        # PUSH: Move forward
+        dx = np.clip(push_dir_x * 0.049, -0.049, 0.049)
+
+        return np.array([dx, 0.0, 0.0, darm, 0.0], dtype=np.float32)
 
 
 class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
