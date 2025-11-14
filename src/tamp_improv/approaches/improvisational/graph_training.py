@@ -1,5 +1,6 @@
 """Graph-based training data collection."""
 
+import heapq
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any, TypeVar
@@ -168,6 +169,94 @@ def find_path_to_node(
                 visited.add(next_node)
                 queue.append((next_node, path + [edge]))
     return []
+
+
+def compute_graph_distances(
+    planning_graph: PlanningGraph,
+    exclude_shortcuts: bool = True,
+) -> dict[tuple[int, int], float]:
+    """Compute shortest path distances between all node pairs using path-dependent costs.
+
+    Uses Dijkstra's algorithm with path-dependent edge costs to compute D(s, s') for
+    all pairs of nodes. Edge costs are looked up using edge.get_cost(path), which
+    matches the same logic used during evaluation.
+
+    This accounts for the fact that edge execution time depends on which path was
+    taken to reach the source node.
+
+    Args:
+        planning_graph: Planning graph with computed edge costs
+        exclude_shortcuts: If True, only use non-shortcut edges (default)
+
+    Returns:
+        Dictionary mapping (source_id, target_id) -> distance
+    """
+    import itertools
+    distances = {}
+
+    # Run Dijkstra from each source node
+    for source_node in planning_graph.nodes:
+        # Priority queue: (cost, counter, node_id, path_tuple)
+        # path_tuple stores node IDs visited so far (for path-dependent cost lookup)
+        counter = itertools.count()
+        pq = [(0.0, next(counter), source_node.id, tuple())]
+
+        # Track best cost to reach each (node_id, path_tuple) state
+        node_distances: dict[tuple[int, tuple[int, ...]], float] = {}
+        node_distances[(source_node.id, tuple())] = 0.0
+
+        # Track minimum cost to reach each node_id (regardless of path)
+        best_distances: dict[int, float] = {source_node.id: 0.0}
+
+        while pq:
+            current_cost, _, current_id, current_path = heapq.heappop(pq)
+
+            # Skip if we've found a better path to this state
+            state_key = (current_id, current_path)
+            if state_key in node_distances and current_cost > node_distances[state_key]:
+                continue
+
+            # Find the current node object
+            current_node = None
+            for node in planning_graph.nodes:
+                if node.id == current_id:
+                    current_node = node
+                    break
+
+            if current_node is None:
+                continue
+
+            # Explore outgoing edges
+            for edge in planning_graph.node_to_outgoing_edges.get(current_node, []):
+                # Skip shortcuts if requested
+                if exclude_shortcuts and edge.is_shortcut:
+                    continue
+
+                # Get path-dependent edge cost using the same logic as evaluation
+                edge_cost = edge.get_cost(current_path)
+
+                new_cost = current_cost + edge_cost
+                target_id = edge.target.id
+
+                # Create new path tuple for target
+                new_path = current_path + (current_id,)
+
+                # Only explore this path if it improves the best distance to target node
+                # This prevents infinite exploration of redundant paths
+                if target_id not in best_distances or new_cost < best_distances[target_id]:
+                    best_distances[target_id] = new_cost
+
+                    # Track this specific (node, path) state
+                    new_state_key = (target_id, new_path)
+                    node_distances[new_state_key] = new_cost
+
+                    heapq.heappush(pq, (new_cost, next(counter), target_id, new_path))
+
+        # Store best distances from this source to all reachable targets
+        for target_id, dist in best_distances.items():
+            distances[(source_node.id, target_id)] = dist
+
+    return distances
 
 
 def collect_graph_based_training_data(

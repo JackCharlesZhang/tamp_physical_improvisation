@@ -113,6 +113,9 @@ class MultiRLPolicy(Policy[ObsType, ActType]):
         assert train_data is not None
         print("\n=== Training Multi-Policy RL ===")
         print(f"Total training examples: {len(train_data.states)}")
+        if len(train_data.states) == 0:
+            print("No training data provided, skipping training.")
+            return
 
         grouped_data = self._group_training_data(train_data)
 
