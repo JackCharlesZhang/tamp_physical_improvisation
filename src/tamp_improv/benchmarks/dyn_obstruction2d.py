@@ -172,8 +172,8 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         target_y = target["y"] + target["height"] / 2 + 0.05  # Slightly above
 
         # Calculate deltas
-        dx = np.clip(target_x - robot["x"], -0.05, 0.05)
-        dy = np.clip(target_y - robot["y"], -0.05, 0.05)
+        dx = np.clip(target_x - robot["x"], -0.049, 0.049)
+        dy = np.clip(target_y - robot["y"], -0.049, 0.049)
 
         # Check if close enough to grasp
         distance = np.sqrt((target_x - robot["x"]) ** 2 + (target_y - robot["y"]) ** 2)
@@ -221,8 +221,8 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         target_y = surface["y"] + surface["height"] / 2 + target["height"] / 2 + 0.05
 
         # Calculate deltas
-        dx = np.clip(target_x - robot["x"], -0.05, 0.05)
-        dy = np.clip(target_y - robot["y"], -0.05, 0.05)
+        dx = np.clip(target_x - robot["x"], -0.049, 0.049)
+        dy = np.clip(target_y - robot["y"], -0.049, 0.049)
 
         # Check if aligned with surface
         distance_xy = np.sqrt((target_x - robot["x"]) ** 2 + (target_y - robot["y"]) ** 2)
@@ -290,11 +290,11 @@ class PushSkill(BaseDynObstruction2DSkill):
 
         if distance_to_position > 0.08:
             # Still navigating to push position
-            dx = np.clip(target_x - robot["x"], -0.05, 0.05)
-            dy = np.clip(target_y - robot["y"], -0.05, 0.05)
+            dx = np.clip(target_x - robot["x"], -0.049, 0.049)
+            dy = np.clip(target_y - robot["y"], -0.049, 0.049)
         else:
             # In position - push!
-            dx = np.clip(push_dir_x * 0.05, -0.05, 0.05)
+            dx = np.clip(push_dir_x * 0.049, -0.049, 0.049)
             dy = 0.0
 
         return np.array([dx, dy, 0.0, 0.0, 0.0], dtype=np.float32)
