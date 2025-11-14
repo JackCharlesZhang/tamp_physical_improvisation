@@ -18,6 +18,7 @@ from relational_structs import (
     Variable,
 )
 from task_then_motion_planning.structs import LiftedOperatorSkill, Perceiver
+from tomsgeoms2d.structs import Rectangle
 
 from tamp_improv.benchmarks.base import (
     BaseTAMPSystem,
@@ -600,38 +601,6 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
 
         return atoms
 
-    def _rectangle_contains_point(
-        self,
-        rect_x: float,
-        rect_y: float,
-        rect_width: float,
-        rect_height: float,
-        rect_theta: float,
-        point_x: float,
-        point_y: float,
-    ) -> bool:
-        """Check if point is inside rectangle.
-
-        Matches Rectangle.contains_point from tomsgeoms2d with rotation support.
-        Rectangle (x,y) is bottom-left corner after created from center.
-        """
-        # Convert center coords to bottom-left (matching from_center logic)
-        rect_bl_x = rect_x - rect_width / 2
-        rect_bl_y = rect_y - rect_height / 2
-
-        # First invert translation
-        dx = point_x - rect_bl_x
-        dy = point_y - rect_bl_y
-
-        # Then invert rotation (multiply by inverse rotation matrix)
-        cos_theta = np.cos(-rect_theta)  # Negative for inverse
-        sin_theta = np.sin(-rect_theta)
-        rx = dx * cos_theta - dy * sin_theta
-        ry = dx * sin_theta + dy * cos_theta
-
-        # Check if rotated point is in axis-aligned rectangle
-        return 0 <= rx <= rect_width and 0 <= ry <= rect_height
-
     def _is_on_surface(
         self,
         block_x: float,
@@ -647,52 +616,26 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
     ) -> bool:
         """Check if block is on surface.
 
-        Exactly matches prbench's is_on logic from geom2d/utils.py:
-        - Gets bottom 2 vertices of block
-        - Offsets y by -tol
-        - Checks if offset points are contained in surface rectangle
+        Exactly matches prbench's is_on logic from geom2d/utils.py using tomsgeoms2d.
         """
         tol = 0.025  # Matches prbench default
 
-        # Bottom 2 vertices of block (in world coordinates, accounting for rotation)
-        # For axis-aligned: bottom-left and bottom-right
-        # For rotated: need to compute actual bottom vertices
-        block_bl_x = block_x - block_width / 2
-        block_bl_y = block_y - block_height / 2
+        # Create Rectangle objects using tomsgeoms2d (same as prbench)
+        block_geom = Rectangle.from_center(
+            block_x, block_y, block_width, block_height, block_theta
+        )
+        surface_geom = Rectangle.from_center(
+            surface_x, surface_y, surface_width, surface_height, surface_theta
+        )
 
-        # Get block's 4 vertices in local coords (before rotation)
-        local_vertices = [
-            (0, 0),  # bottom-left
-            (block_width, 0),  # bottom-right
-            (block_width, block_height),  # top-right
-            (0, block_height),  # top-left
-        ]
-
-        # Rotate and translate to world coords
-        cos_b = np.cos(block_theta)
-        sin_b = np.sin(block_theta)
-        world_vertices = []
-        for lx, ly in local_vertices:
-            wx = lx * cos_b - ly * sin_b + block_bl_x
-            wy = lx * sin_b + ly * cos_b + block_bl_y
-            world_vertices.append((wx, wy))
-
-        # Sort by y coordinate to get bottom 2 vertices
-        sorted_vertices = sorted(world_vertices, key=lambda v: v[1])
+        # Get bottom 2 vertices of block (sorted by y coordinate)
+        sorted_vertices = sorted(block_geom.vertices, key=lambda v: v[1])
         bottom_two = sorted_vertices[:2]
 
-        # Check both bottom vertices with y offset
-        for vertex_x, vertex_y in bottom_two:
-            offset_y = vertex_y - tol
-            if not self._rectangle_contains_point(
-                surface_x,
-                surface_y,
-                surface_width,
-                surface_height,
-                surface_theta,
-                vertex_x,
-                offset_y,
-            ):
+        # Check if both bottom vertices (with offset) are contained in surface
+        for x, y in bottom_two:
+            offset_y = y - tol
+            if not surface_geom.contains_point(x, offset_y):
                 return False
 
         return True
