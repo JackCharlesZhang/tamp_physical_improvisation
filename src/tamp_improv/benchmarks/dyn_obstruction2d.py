@@ -340,7 +340,7 @@ class Dynamic2dRobotController(GroundParameterizedController, abc.ABC):
             darm = total_darm / num_steps
             dgripper = total_dgripper / num_steps
 
-            action = np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
+            action = np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float64)
 
             for _ in range(num_steps):
                 plan.append(action)
