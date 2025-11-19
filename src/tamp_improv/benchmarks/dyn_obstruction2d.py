@@ -836,21 +836,28 @@ def create_transition_fn(
     assert isinstance(env.observation_space, ObjectCentricBoxSpace)
     env_objects = env.observation_space.constant_objects
 
-    def transition_fn(state: NDArray[np.float32], action: Any) -> NDArray[np.float32]:
+    def transition_fn(state: Any, action: Any) -> Any:
         """Simulate state transition.
 
         Resets the environment to the given state, executes the action,
         and returns the resulting state.
 
         Args:
-            state: Vectorized state (numpy array)
+            state: State (either ObjectCentricState or vectorized numpy array)
             action: Action to execute
 
         Returns:
-            Next state as vectorized observation (numpy array)
+            Next state (same type as input state)
         """
-        # Convert vectorized state to ObjectCentricState
-        state_ocs = observation_to_state(state)
+        # Check if state is already ObjectCentricState or needs conversion
+        if isinstance(state, np.ndarray):
+            # Convert vectorized state to ObjectCentricState
+            state_ocs = observation_to_state(state)
+            is_vectorized = True
+        else:
+            # Already an ObjectCentricState
+            state_ocs = state
+            is_vectorized = False
 
         # Remap state to use environment's object instances
         # The state might have different object instances with the same names
@@ -869,8 +876,13 @@ def create_transition_fn(
         # Execute action in the simulator
         obs, _, _, _, _ = env.step(action)
 
-        # Return the new state as vectorized observation
-        return obs
+        # Return the new state in the same format as input
+        # obs is already vectorized from env.step()
+        if is_vectorized:
+            return obs
+        else:
+            # Convert back to ObjectCentricState if input was ObjectCentricState
+            return observation_to_state(obs)
 
     return transition_fn
 
