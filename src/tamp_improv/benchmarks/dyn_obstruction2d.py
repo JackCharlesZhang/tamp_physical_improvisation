@@ -874,6 +874,19 @@ def create_transition_fn(
         env.reset(options={"init_state": remapped_state})
 
         # Execute action in the simulator
+        # Debug: print action details if assertion fails
+        import logging
+        logger = logging.getLogger(__name__)
+        if not env.action_space.contains(action):
+            logger.error(f"Action validation failed!")
+            logger.error(f"  Action: {action}")
+            logger.error(f"  Action type: {type(action)}")
+            logger.error(f"  Action dtype: {action.dtype if hasattr(action, 'dtype') else 'N/A'}")
+            logger.error(f"  Action shape: {action.shape if hasattr(action, 'shape') else 'N/A'}")
+            logger.error(f"  Action space: {env.action_space}")
+            logger.error(f"  Action space low: {env.action_space.low}")
+            logger.error(f"  Action space high: {env.action_space.high}")
+            logger.error(f"  Action space dtype: {env.action_space.dtype}")
         obs, _, _, _, _ = env.step(action)
 
         # Return the new state in the same format as input
