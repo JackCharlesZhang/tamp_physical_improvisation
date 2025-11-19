@@ -818,33 +818,50 @@ def create_goal_deriver(
     return goal_deriver
 
 
-def create_transition_fn(env: gym.Env) -> callable:
+def create_transition_fn(
+    env: gym.Env,
+    observation_to_state: callable,
+) -> callable:
     """Create transition function for SESAME planner.
 
     This function simulates state transitions by resetting the environment
     to a given state and stepping forward.
+
+    Args:
+        env: The gymnasium environment
+        observation_to_state: Function to convert observation (numpy array) to ObjectCentricState
     """
     # Get the environment's observation space to access constant_objects
     from relational_structs.spaces import ObjectCentricBoxSpace
     assert isinstance(env.observation_space, ObjectCentricBoxSpace)
     env_objects = env.observation_space.constant_objects
 
-    def transition_fn(state: ObjectCentricState, action: Any) -> ObjectCentricState:
+    def transition_fn(state: NDArray[np.float32], action: Any) -> NDArray[np.float32]:
         """Simulate state transition.
 
         Resets the environment to the given state, executes the action,
         and returns the resulting state.
+
+        Args:
+            state: Vectorized state (numpy array)
+            action: Action to execute
+
+        Returns:
+            Next state as vectorized observation (numpy array)
         """
+        # Convert vectorized state to ObjectCentricState
+        state_ocs = observation_to_state(state)
+
         # Remap state to use environment's object instances
         # The state might have different object instances with the same names
         remapped_data = {}
         for env_obj in env_objects:
             # Find matching object in state by name
-            state_obj = state.get_object_from_name(env_obj.name)
-            remapped_data[env_obj] = state.data[state_obj].copy()
+            state_obj = state_ocs.get_object_from_name(env_obj.name)
+            remapped_data[env_obj] = state_ocs.data[state_obj].copy()
 
         # Create new state with environment's objects
-        remapped_state = ObjectCentricState(remapped_data, state.type_features)
+        remapped_state = ObjectCentricState(remapped_data, state_ocs.type_features)
 
         # Reset environment to the remapped state
         env.reset(options={"init_state": remapped_state})
@@ -852,8 +869,8 @@ def create_transition_fn(env: gym.Env) -> callable:
         # Execute action in the simulator
         obs, _, _, _, _ = env.step(action)
 
-        # Return the new state (obs is already an ObjectCentricState for dynamic2d)
-        return obs.copy()
+        # Return the new state as vectorized observation
+        return obs
 
     return transition_fn
 
@@ -1135,9 +1152,6 @@ class BaseDynObstruction2DTAMPSystem(
         # Create goal deriver function
         goal_deriver_fn = create_goal_deriver(perceiver, state_abstractor_fn)
 
-        # Create transition function
-        transition_fn = create_transition_fn(self.env)
-
         # Create observation_to_state function
         # Get the objects for state conversion
         objects = [perceiver._robot, perceiver._target_block, perceiver._target_surface]
@@ -1146,6 +1160,9 @@ class BaseDynObstruction2DTAMPSystem(
         def observation_to_state(obs: NDArray[np.float32]) -> ObjectCentricState:
             """Convert observation to ObjectCentricState."""
             return _obs_to_state(obs, objects)
+
+        # Create transition function (needs observation_to_state for conversion)
+        transition_fn = create_transition_fn(self.env, observation_to_state)
 
         # Create SesameModels
         sesame_models = SesameModels(
