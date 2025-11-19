@@ -824,15 +824,30 @@ def create_transition_fn(env: gym.Env) -> callable:
     This function simulates state transitions by resetting the environment
     to a given state and stepping forward.
     """
+    # Get the environment's observation space to access constant_objects
+    from relational_structs.spaces import ObjectCentricBoxSpace
+    assert isinstance(env.observation_space, ObjectCentricBoxSpace)
+    env_objects = env.observation_space.constant_objects
+
     def transition_fn(state: ObjectCentricState, action: Any) -> ObjectCentricState:
         """Simulate state transition.
 
         Resets the environment to the given state, executes the action,
         and returns the resulting state.
         """
-        # Reset environment to the given state
-        state_copy = state.copy()
-        env.reset(options={"init_state": state_copy})
+        # Remap state to use environment's object instances
+        # The state might have different object instances with the same names
+        remapped_data = {}
+        for env_obj in env_objects:
+            # Find matching object in state by name
+            state_obj = state.get_object_from_name(env_obj.name)
+            remapped_data[env_obj] = state.data[state_obj].copy()
+
+        # Create new state with environment's objects
+        remapped_state = ObjectCentricState(remapped_data, state.type_features)
+
+        # Reset environment to the remapped state
+        env.reset(options={"init_state": remapped_state})
 
         # Execute action in the simulator
         obs, _, _, _, _ = env.step(action)
