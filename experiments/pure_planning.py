@@ -321,7 +321,7 @@ def run_dyn_obstruction2d_sesame_planning(
         samples_per_step=samples_per_step,
         max_skill_horizon=max_skill_horizon,
         heuristic_name="hff",
-        planning_timeout=30.0,
+        planning_timeout=120.0,  # Increased from 30 to 120 seconds
     )
 
     obs, info = system.env.reset(seed=seed)
@@ -357,6 +357,13 @@ def run_dyn_obstruction2d_sesame_planning(
     print(f"\nDEBUG - Operators available:")
     for op in sesame_models.operators:
         print(f"  - {op.name}: params={[v.name for v in op.parameters]}")
+        print(f"    Preconditions: {op.preconditions}")
+        print(f"    Add effects: {op.add_effects}")
+        print(f"    Delete effects: {op.delete_effects}")
+
+    print(f"\nDEBUG - Object types:")
+    for obj in initial_abstract.objects:
+        print(f"  - {obj.name}: {obj.type.name}")
 
     try:
         agent.reset(obs, info)
