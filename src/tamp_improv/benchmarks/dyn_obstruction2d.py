@@ -585,26 +585,18 @@ class GroundPlaceOnTargetController(Dynamic2dRobotController):
 def create_parameterized_skills(
     types_container: DynObstruction2DTypes,
     operators: dict[str, LiftedOperator],
+    action_space: Box,
 ) -> dict[str, LiftedSkill]:
     """Create lifted skills (operator + controller pairs) for DynObstruction2D.
 
     Args:
         types_container: Container with PDDL types
         operators: Dictionary mapping operator names to LiftedOperator instances
+        action_space: The environment's action space (must match env.action_space)
 
     Returns:
         Dictionary mapping skill names to LiftedSkill instances
     """
-    # Get action space from environment
-    try:
-        from prbench.envs.dynamic2d.utils import KinRobotActionSpace
-    except ImportError as e:
-        raise ImportError(
-            "prbench required for action space. "
-            "Install with: pip install -e 'path/to/prbench[dynamic2d]'"
-        ) from e
-
-    action_space = KinRobotActionSpace()
 
     # Define parameter spaces
     pick_params_space = Box(
@@ -1203,6 +1195,14 @@ class BaseDynObstruction2DTAMPSystem(
         # Create transition function (needs observation_to_state for conversion)
         transition_fn = create_transition_fn(self.env, observation_to_state)
 
+        # Create skills with the environment's action space
+        # (Must happen after env is created to get correct action space)
+        types_container = DynObstruction2DTypes()
+        operators_dict = {op.name: op for op in self.components.operators}
+        lifted_skills = create_parameterized_skills(
+            types_container, operators_dict, self.env.action_space
+        )
+
         # Create SesameModels
         sesame_models = SesameModels(
             observation_space=self.env.observation_space,
@@ -1214,7 +1214,7 @@ class BaseDynObstruction2DTAMPSystem(
             observation_to_state=observation_to_state,
             state_abstractor=state_abstractor_fn,
             goal_deriver=goal_deriver_fn,
-            skills=self.components.skills,  # Set of LiftedSkill objects
+            skills=set(lifted_skills.values()),  # Set of LiftedSkill objects
         )
 
         return sesame_models
@@ -1287,14 +1287,14 @@ class BaseDynObstruction2DTAMPSystem(
             "PlaceOnTarget": place_on_target_operator,
         }
 
-        # Create parameterized skills (LiftedSkill = operator + controller pairs)
-        lifted_skills = create_parameterized_skills(types_container, operators_dict)
+        # NOTE: Skills will be created later after environment is initialized
+        # so we can use the correct action space from the environment
 
         return PlanningComponents(
             types=types_set,
             predicate_container=predicates,
             operators=set(operators_dict.values()),
-            skills=set(lifted_skills.values()),  # Now contains LiftedSkill objects
+            skills=set(),  # Empty - will be populated after env creation
             perceiver=perceiver,
         )
 
