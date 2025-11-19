@@ -342,6 +342,20 @@ class Dynamic2dRobotController(GroundParameterizedController, abc.ABC):
 
             action = np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float64)
 
+            # Debug: Check if action is within bounds
+            import logging
+            logger = logging.getLogger(__name__)
+            if not self._action_space.contains(action):
+                logger.error(f"Controller generated invalid action!")
+                logger.error(f"  Waypoint: {i} -> {i+1}")
+                logger.error(f"  Start: {start}")
+                logger.error(f"  End: {end}")
+                logger.error(f"  Deltas: dx={total_dx:.4f}, dy={total_dy:.4f}, dtheta={total_dtheta:.4f}")
+                logger.error(f"  Num steps: {num_steps}")
+                logger.error(f"  Action: {action}")
+                logger.error(f"  Max deltas: dx={self._max_delta_x}, dy={self._max_delta_y}")
+                logger.error(f"  Action space: {self._action_space}")
+
             for _ in range(num_steps):
                 plan.append(action)
 
