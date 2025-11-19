@@ -1,6 +1,7 @@
 """Pure planning baselines for PyBullet environments."""
 
 import argparse
+import logging
 from pathlib import Path
 
 from gymnasium.wrappers import RecordVideo
@@ -13,6 +14,11 @@ try:
     SESAME_AVAILABLE = True
 except ImportError:
     SESAME_AVAILABLE = False
+
+# Enable logging for debugging
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("bilevel_planning").setLevel(logging.DEBUG)
+logging.getLogger("relational_structs").setLevel(logging.DEBUG)
 # from tamp_improv.benchmarks.pybullet_cleanup_table import (
 #     BaseCleanupTableTAMPSystem,
 # )
@@ -379,6 +385,14 @@ def run_dyn_obstruction2d_sesame_planning(
     print(f"    Needs: GripperEmpty(robot) - {'YES' if any('GripperEmpty robot' in str(a) for a in initial_abstract.atoms) else 'NO'}")
     print(f"  After PickUp, can PlaceOnTarget(robot, target_block, target_surface)?")
     print(f"    Needs: Clear(target_surface) - {'YES' if any('Clear target_surface' in str(a) for a in initial_abstract.atoms) else 'NO'}")
+
+    # Try to test pyperplan directly
+    print(f"\nDEBUG - Testing pyperplan directly...")
+    from relational_structs import PDDLDomain, PDDLProblem
+    domain = PDDLDomain("test", sesame_models.operators, sesame_models.predicates, sesame_models.types)
+    problem = PDDLProblem("test", "test-problem", initial_abstract.objects, initial_abstract.atoms, goal.atoms)
+    print(f"  Domain: {domain.name}, {len(domain.operators)} operators")
+    print(f"  Problem: {problem.name}, {len(problem.objects)} objects, {len(problem.init_atoms)} init, {len(problem.goal)} goal")
 
     try:
         agent.reset(obs, info)
