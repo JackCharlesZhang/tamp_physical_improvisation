@@ -49,14 +49,25 @@ if not hasattr(tomsgeoms2d.structs, "Tobject"):
 
 @dataclass
 class DynObstruction2DTypes:
-    """Container for DynObstruction2D types."""
+    """Container for DynObstruction2D types.
+
+    Uses the same types as prbench's DynObstruction2DEnv for compatibility.
+    """
 
     def __init__(self) -> None:
-        """Initialize types."""
-        self.robot = Type("robot")
-        self.block = Type("block")  # target block
-        self.obstruction = Type("obstruction")  # obstruction blocks
-        self.surface = Type("surface")  # target surface
+        """Initialize types using prbench types."""
+        # Import prbench types
+        from prbench.envs.dynamic2d.object_types import (
+            DynRectangleType,
+            KinRectangleType,
+            KinRobotType,
+        )
+
+        # Use prbench's type system
+        self.robot = KinRobotType
+        self.block = DynRectangleType  # target block (dynamic)
+        self.obstruction = DynRectangleType  # obstruction blocks (dynamic)
+        self.surface = KinRectangleType  # target surface (kinematic)
 
     def as_set(self) -> set[Type]:
         """Convert to set of types."""
@@ -211,46 +222,14 @@ def _obs_to_state(obs: NDArray[np.float32], objects: Sequence[Object]) -> Object
             "finger_width": float(obs[robot_offset + 20]),
         }
 
-    # Define type features (feature names for each object type)
-    # Following the pattern from prbench/src/prbench/envs/dynamic2d/object_types.py
-    type_features = {}
-
-    # KinRobotType features (lines 72-94 in object_types.py)
-    if robot:
-        type_features[robot.type] = [
-            "x", "y", "theta", "vx_base", "vy_base", "omega_base",
-            "vx_arm", "vy_arm", "omega_arm", "vx_gripper", "vy_gripper", "omega_gripper",
-            "static", "base_radius", "arm_joint", "arm_length",
-            "gripper_base_width", "gripper_base_height", "finger_gap",
-            "finger_height", "finger_width",
-        ]
-
-    # KinRectangleType features (lines 30-36 in object_types.py)
-    if target_surface:
-        type_features[target_surface.type] = [
-            "x", "y", "theta", "vx", "vy", "omega", "static", "held",
-            "color_r", "color_g", "color_b", "z_order", "width", "height",
-        ]
-
-    # DynRectangleType features (lines 38-45 in object_types.py)
-    if target_block:
-        type_features[target_block.type] = [
-            "x", "y", "theta", "vx", "vy", "omega", "static", "held",
-            "color_r", "color_g", "color_b", "z_order", "width", "height", "mass",
-        ]
-
-    # Obstruction type (also DynRectangleType)
-    if obstructions:
-        type_features[obstructions[0].type] = [
-            "x", "y", "theta", "vx", "vy", "omega", "static", "held",
-            "color_r", "color_g", "color_b", "z_order", "width", "height", "mass",
-        ]
+    # Use prbench's type features (already defined globally)
+    from prbench.envs.dynamic2d.object_types import Dynamic2DRobotEnvTypeFeatures
 
     # Convert state_dict values from dicts to numpy arrays
     data_arrays = {obj: np.array(list(features.values()), dtype=np.float32)
                    for obj, features in state_dict.items()}
 
-    return ObjectCentricState(data_arrays, type_features)
+    return ObjectCentricState(data_arrays, Dynamic2DRobotEnvTypeFeatures)
 
 
 class Dynamic2dRobotController(GroundParameterizedController, abc.ABC):
