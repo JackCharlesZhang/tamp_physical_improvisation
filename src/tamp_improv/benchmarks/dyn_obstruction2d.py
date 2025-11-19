@@ -726,18 +726,24 @@ def create_state_abstractor(
         robot = perceiver._robot
         target_block = perceiver._target_block
 
-        # Check if robot is holding target block
-        # We need to check the "held" attribute in the state
+        # Helper to get feature value from state
+        def get_feature(obj: Object, feature_name: str) -> float:
+            """Get a specific feature value from the state."""
+            if obj not in state.data:
+                return 0.0
+            feature_idx = type_features[obj.type].index(feature_name)
+            return float(state.data[obj][feature_idx])
+
+        # Get type_features from the state (assumes it's already set)
+        type_features = state.type_features
+
+        # Check gripper status
         if target_block in state.data:
-            block_data = state.data[target_block]
-            # Check if block is being held (this is environment-specific)
-            # For now, we'll use a heuristic based on available state data
-            if hasattr(block_data, "held") or (isinstance(block_data, dict) and "held" in block_data):
-                held = block_data.get("held", 0.0) if isinstance(block_data, dict) else getattr(block_data, "held", 0.0)
-                if held > 0.5:
-                    atoms.add(predicates["Holding"]([robot, target_block]))
-                else:
-                    atoms.add(predicates["GripperEmpty"]([robot]))
+            held = get_feature(target_block, "held")
+            finger_gap = get_feature(robot, "finger_gap")
+
+            if held > 0.5 and finger_gap < 0.1:
+                atoms.add(predicates["Holding"]([robot, target_block]))
             else:
                 atoms.add(predicates["GripperEmpty"]([robot]))
         else:
@@ -746,17 +752,55 @@ def create_state_abstractor(
         # Check On predicate (target_block on target_surface)
         target_surface = perceiver._target_surface
         if target_block in state.data and target_surface in state.data:
-            # This would require geometric checking - for now simplified
-            # In practice, you'd call perceiver's _is_on_surface method
-            # We'll mark this as a TODO and add a placeholder
-            pass  # Will be determined by perceiver logic
+            # Extract geometric features
+            block_x = get_feature(target_block, "x")
+            block_y = get_feature(target_block, "y")
+            block_theta = get_feature(target_block, "theta")
+            block_width = get_feature(target_block, "width")
+            block_height = get_feature(target_block, "height")
+
+            surface_x = get_feature(target_surface, "x")
+            surface_y = get_feature(target_surface, "y")
+            surface_theta = get_feature(target_surface, "theta")
+            surface_width = get_feature(target_surface, "width")
+            surface_height = get_feature(target_surface, "height")
+
+            # Use perceiver's geometric checking method
+            if perceiver._is_on_surface(
+                block_x, block_y, block_theta, block_width, block_height,
+                surface_x, surface_y, surface_theta, surface_width, surface_height,
+            ):
+                atoms.add(predicates["On"]([target_block, target_surface]))
 
         # Check obstruction predicates
         for obstruction in perceiver._obstructions:
-            if obstruction in state.data:
-                # Check if obstructing the surface
-                # This would require geometric checking
-                pass  # Will be determined by perceiver logic
+            if obstruction in state.data and target_surface in state.data:
+                obs_x = get_feature(obstruction, "x")
+                obs_y = get_feature(obstruction, "y")
+
+                surface_x = get_feature(target_surface, "x")
+                surface_y = get_feature(target_surface, "y")
+                surface_width = get_feature(target_surface, "width")
+                surface_height = get_feature(target_surface, "height")
+
+                # Use perceiver's geometric checking method
+                if perceiver._is_obstructing(
+                    obs_x, obs_y,
+                    surface_x, surface_y, surface_width, surface_height,
+                ):
+                    atoms.add(predicates["Obstructing"]([obstruction, target_surface]))
+                else:
+                    atoms.add(predicates["ObstructionClear"]([obstruction, target_surface]))
+
+        # Check Clear predicate for surface
+        if target_surface in state.data:
+            # Surface is Clear if no obstructions are blocking it
+            surface_obstructed = any(
+                predicates["Obstructing"]([obs, target_surface]) in atoms
+                for obs in perceiver._obstructions
+            )
+            if not surface_obstructed:
+                atoms.add(predicates["Clear"]([target_surface]))
 
         return RelationalAbstractState(atoms=atoms, objects=objects)
 
