@@ -211,7 +211,46 @@ def _obs_to_state(obs: NDArray[np.float32], objects: Sequence[Object]) -> Object
             "finger_width": float(obs[robot_offset + 20]),
         }
 
-    return ObjectCentricState(state_dict)
+    # Define type features (feature names for each object type)
+    # Following the pattern from prbench/src/prbench/envs/dynamic2d/object_types.py
+    type_features = {}
+
+    # KinRobotType features (lines 72-94 in object_types.py)
+    if robot:
+        type_features[robot.type] = [
+            "x", "y", "theta", "vx_base", "vy_base", "omega_base",
+            "vx_arm", "vy_arm", "omega_arm", "vx_gripper", "vy_gripper", "omega_gripper",
+            "static", "base_radius", "arm_joint", "arm_length",
+            "gripper_base_width", "gripper_base_height", "finger_gap",
+            "finger_height", "finger_width",
+        ]
+
+    # KinRectangleType features (lines 30-36 in object_types.py)
+    if target_surface:
+        type_features[target_surface.type] = [
+            "x", "y", "theta", "vx", "vy", "omega", "static", "held",
+            "color_r", "color_g", "color_b", "z_order", "width", "height",
+        ]
+
+    # DynRectangleType features (lines 38-45 in object_types.py)
+    if target_block:
+        type_features[target_block.type] = [
+            "x", "y", "theta", "vx", "vy", "omega", "static", "held",
+            "color_r", "color_g", "color_b", "z_order", "width", "height", "mass",
+        ]
+
+    # Obstruction type (also DynRectangleType)
+    if obstructions:
+        type_features[obstructions[0].type] = [
+            "x", "y", "theta", "vx", "vy", "omega", "static", "held",
+            "color_r", "color_g", "color_b", "z_order", "width", "height", "mass",
+        ]
+
+    # Convert state_dict values from dicts to numpy arrays
+    data_arrays = {obj: np.array(list(features.values()), dtype=np.float32)
+                   for obj, features in state_dict.items()}
+
+    return ObjectCentricState(data_arrays, type_features)
 
 
 class Dynamic2dRobotController(GroundParameterizedController, abc.ABC):
