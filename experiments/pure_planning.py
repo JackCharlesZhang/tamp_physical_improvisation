@@ -389,10 +389,40 @@ def run_dyn_obstruction2d_sesame_planning(
     # Try to test pyperplan directly
     print(f"\nDEBUG - Testing pyperplan directly...")
     from relational_structs import PDDLDomain, PDDLProblem
+    from bilevel_planning.abstract_plan_generators.heuristic_search_plan_generator import (
+        RelationalHeuristicSearchAbstractPlanGenerator,
+    )
+
     domain = PDDLDomain("test", sesame_models.operators, sesame_models.predicates, sesame_models.types)
     problem = PDDLProblem("test", "test-problem", initial_abstract.objects, initial_abstract.atoms, goal.atoms)
     print(f"  Domain: {domain.name}, {len(domain.operators)} operators")
     print(f"  Problem: {len(problem.objects)} objects, {len(problem.init_atoms)} init, {len(problem.goal)} goal")
+
+    # Try to manually generate a plan
+    print(f"\nDEBUG - Attempting manual abstract plan generation...")
+    try:
+        plan_gen = RelationalHeuristicSearchAbstractPlanGenerator(
+            sesame_models.types,
+            sesame_models.predicates,
+            sesame_models.operators,
+            "hff",
+            seed=seed,
+        )
+        from bilevel_planning.bilevel_planning_graph import BilevelPlanningGraph
+        bpg = BilevelPlanningGraph()
+
+        gen_iter = plan_gen(initial_state, initial_abstract, goal, timeout=10.0, bpg=bpg)
+        print(f"  Plan generator created, attempting to get first plan...")
+        s_plan, a_plan = next(gen_iter)
+        print(f"  SUCCESS! Found plan with {len(a_plan)} actions:")
+        for i, action in enumerate(a_plan):
+            print(f"    {i+1}. {action}")
+    except StopIteration:
+        print(f"  ERROR: Plan generator returned no plans (StopIteration)")
+    except Exception as e:
+        print(f"  ERROR during plan generation: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
 
     try:
         agent.reset(obs, info)
