@@ -9,16 +9,16 @@ import gymnasium as gym
 import numpy as np
 from gymnasium.spaces import GraphInstance
 from numpy.typing import NDArray
-from pybullet_blocks.envs.cleanup_table_env import (
-    CleanupTablePyBulletObjectsEnv,
-    CleanupTableSceneDescription,
-)
-from pybullet_blocks.planning_models.action import OPERATORS_CLEANUP, SKILLS_CLEANUP
-from pybullet_blocks.planning_models.perception import (
-    CLEANUP_PREDICATES,
-    TYPES,
-    CleanupTablePyBulletObjectsPerceiver,
-)
+# from pybullet_blocks.envs.cleanup_table_env import (
+#     CleanupTablePyBulletObjectsEnv,
+#     CleanupTableSceneDescription,
+# )
+# from pybullet_blocks.planning_models.action import OPERATORS_CLEANUP, SKILLS_CLEANUP
+# from pybullet_blocks.planning_models.perception import (
+#     CLEANUP_PREDICATES,
+#     TYPES,
+#     CleanupTablePyBulletObjectsPerceiver,
+# )
 from relational_structs import PDDLDomain, Predicate
 from task_then_motion_planning.structs import Skill
 

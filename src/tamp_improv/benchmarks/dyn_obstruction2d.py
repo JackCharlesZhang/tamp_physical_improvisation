@@ -2,22 +2,29 @@
 
 from __future__ import annotations
 
+import abc
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Sequence, Union
 
 import gymnasium as gym
 import numpy as np
+from bilevel_planning.structs import (
+    GroundParameterizedController,
+    LiftedParameterizedController,
+)
+from gymnasium.spaces import Box
 from numpy.typing import NDArray
 from relational_structs import (
     GroundAtom,
     LiftedOperator,
     Object,
+    ObjectCentricState,
     PDDLDomain,
     Predicate,
     Type,
     Variable,
 )
-from task_then_motion_planning.structs import LiftedOperatorSkill, Perceiver
+from task_then_motion_planning.structs import Perceiver
 from tomsgeoms2d.structs import Rectangle
 
 from tamp_improv.benchmarks.base import (
@@ -75,348 +82,552 @@ class DynObstruction2DPredicates:
         }
 
 
-class BaseDynObstruction2DSkill(LiftedOperatorSkill[NDArray[np.float32], NDArray[np.float32]]):
-    """Base class for DynObstruction2D environment skills."""
+def _obs_to_state(obs: NDArray[np.float32], objects: Sequence[Object]) -> ObjectCentricState:
+    """Convert flat observation array to ObjectCentricState.
 
-    def __init__(self, components: PlanningComponents[NDArray[np.float32]]) -> None:
-        """Initialize skill."""
-        super().__init__()
-        self._components = components
-        self._lifted_operator = self._get_lifted_operator()
+    This allows us to use the same controller interface as other environments.
+    Observation structure (80 dims):
+    - target_surface: [0:14]
+    - target_block: [14:29]
+    - obstruction0: [29:44]
+    - obstruction1: [44:59]
+    - robot: [59:80]
+    """
+    # Create mapping from object names to features
+    state_dict: dict[Object, dict[str, float]] = {}
 
-    def _get_lifted_operator(self) -> LiftedOperator:
-        """Get the operator this skill implements."""
-        return next(
-            op
-            for op in self._components.operators
-            if op.name == self._get_operator_name()
-        )
+    # Find objects by type
+    robot = None
+    target_block = None
+    target_surface = None
+    obstructions = []
 
-    def _get_operator_name(self) -> str:
-        """Get the name of the operator this skill implements."""
-        raise NotImplementedError
+    for obj in objects:
+        if obj.name == "robot":
+            robot = obj
+        elif obj.name == "target_block":
+            target_block = obj
+        elif obj.name == "target_surface":
+            target_surface = obj
+        elif obj.name.startswith("obstruction"):
+            obstructions.append(obj)
 
-    def _parse_obs(self, obs: NDArray[np.float32]) -> dict[str, Any]:
-        """Parse observation into structured data.
-
-        Observation structure (80 dims):
-        - target_surface: [0:14]
-        - target_block: [14:29]
-        - obstruction0: [29:44]
-        - obstruction1: [44:59]
-        - robot: [59:80]
-        """
-        return {
-            "target_surface": {
-                "x": float(obs[0]),
-                "y": float(obs[1]),
-                "width": float(obs[12]),
-                "height": float(obs[13]),
-            },
-            "target_block": {
-                "x": float(obs[14]),
-                "y": float(obs[15]),
-                "width": float(obs[26]),
-                "height": float(obs[27]),
-                "held": float(obs[21]) > 0.5,
-            },
-            "obstructions": [
-                {
-                    "x": float(obs[29]),
-                    "y": float(obs[30]),
-                    "width": float(obs[41]),
-                    "height": float(obs[42]),
-                },
-                {
-                    "x": float(obs[44]),
-                    "y": float(obs[45]),
-                    "width": float(obs[56]),
-                    "height": float(obs[57]),
-                },
-            ],
-            "robot": {
-                "x": float(obs[59]),
-                "y": float(obs[60]),
-                "theta": float(obs[61]),
-                "base_radius": float(obs[72]),
-                "arm_joint": float(obs[73]),  # Current arm extension
-                "arm_length": float(obs[74]),  # Max arm extension
-                "finger_gap": float(obs[77]),
-            },
+    # Parse target surface (14 features)
+    if target_surface is not None:
+        state_dict[target_surface] = {
+            "x": float(obs[0]),
+            "y": float(obs[1]),
+            "theta": float(obs[2]),
+            "vx": float(obs[3]),
+            "vy": float(obs[4]),
+            "omega": float(obs[5]),
+            "static": float(obs[6]),
+            "held": float(obs[7]),
+            "color_r": float(obs[8]),
+            "color_g": float(obs[9]),
+            "color_b": float(obs[10]),
+            "z_order": float(obs[11]),
+            "width": float(obs[12]),
+            "height": float(obs[13]),
         }
 
+    # Parse target block (15 features)
+    if target_block is not None:
+        state_dict[target_block] = {
+            "x": float(obs[14]),
+            "y": float(obs[15]),
+            "theta": float(obs[16]),
+            "vx": float(obs[17]),
+            "vy": float(obs[18]),
+            "omega": float(obs[19]),
+            "static": float(obs[20]),
+            "held": float(obs[21]),
+            "color_r": float(obs[22]),
+            "color_g": float(obs[23]),
+            "color_b": float(obs[24]),
+            "z_order": float(obs[25]),
+            "width": float(obs[26]),
+            "height": float(obs[27]),
+            "mass": float(obs[28]),
+        }
 
-class PickUpSkill(BaseDynObstruction2DSkill):
-    """Skill for picking up the target block."""
+    # Parse obstructions (15 features each)
+    for i, obstruction_obj in enumerate(sorted(obstructions, key=lambda o: o.name)):
+        offset = 29 + i * 15
+        state_dict[obstruction_obj] = {
+            "x": float(obs[offset]),
+            "y": float(obs[offset + 1]),
+            "theta": float(obs[offset + 2]),
+            "vx": float(obs[offset + 3]),
+            "vy": float(obs[offset + 4]),
+            "omega": float(obs[offset + 5]),
+            "static": float(obs[offset + 6]),
+            "held": float(obs[offset + 7]),
+            "color_r": float(obs[offset + 8]),
+            "color_g": float(obs[offset + 9]),
+            "color_b": float(obs[offset + 10]),
+            "z_order": float(obs[offset + 11]),
+            "width": float(obs[offset + 12]),
+            "height": float(obs[offset + 13]),
+            "mass": float(obs[offset + 14]),
+        }
 
-    def __init__(self, *args, **kwargs):
-        """Initialize with debug counter."""
-        super().__init__(*args, **kwargs)
-        self._debug_counter = 0
+    # Parse robot (21 features)
+    if robot is not None:
+        robot_offset = 29 + len(obstructions) * 15
+        state_dict[robot] = {
+            "x": float(obs[robot_offset]),
+            "y": float(obs[robot_offset + 1]),
+            "theta": float(obs[robot_offset + 2]),
+            "vx_base": float(obs[robot_offset + 3]),
+            "vy_base": float(obs[robot_offset + 4]),
+            "omega_base": float(obs[robot_offset + 5]),
+            "vx_arm": float(obs[robot_offset + 6]),
+            "vy_arm": float(obs[robot_offset + 7]),
+            "omega_arm": float(obs[robot_offset + 8]),
+            "vx_gripper": float(obs[robot_offset + 9]),
+            "vy_gripper": float(obs[robot_offset + 10]),
+            "omega_gripper": float(obs[robot_offset + 11]),
+            "static": float(obs[robot_offset + 12]),
+            "base_radius": float(obs[robot_offset + 13]),
+            "arm_joint": float(obs[robot_offset + 14]),
+            "arm_length": float(obs[robot_offset + 15]),
+            "gripper_base_width": float(obs[robot_offset + 16]),
+            "gripper_base_height": float(obs[robot_offset + 17]),
+            "finger_gap": float(obs[robot_offset + 18]),
+            "finger_height": float(obs[robot_offset + 19]),
+            "finger_width": float(obs[robot_offset + 20]),
+        }
 
-    def _get_operator_name(self) -> str:
-        return "PickUp"
-
-    def _get_action_given_objects(
-        self,
-        objects: Sequence[Object],
-        obs: NDArray[np.float32],  # type: ignore[override]
-    ) -> NDArray[np.float32]:
-        """Generate action to pick up target block.
-
-        Args:
-            objects: [robot, target_block, target_surface]
-            obs: Flat observation array
-
-        Returns:
-            Action [dx, dy, dtheta, darm, dgripper]
-        """
-        parsed = self._parse_obs(obs)
-        robot = parsed["robot"]
-        target = parsed["target_block"]
-        obstructions = parsed["obstructions"]
-
-        # Debug logging every 20 steps
-        self._debug_counter += 1
-        debug = self._debug_counter % 20 == 0
-
-        # Target position: SIDE of block (grab at corner)
-        # Approach horizontally at block's center height, offset to the left side
-        target_x = target["x"] - target["width"] / 2 - 0.05  # Offset to left of block
-        target_y = target["y"]  # Same height as block center
-
-        robot_x, robot_y = robot["x"], robot["y"]
-
-        # COLLISION AVOIDANCE: Check if too close to obstructions
-        for obs_block in obstructions:
-            obs_x, obs_y = obs_block["x"], obs_block["y"]
-            obs_width = obs_block["width"]
-
-            # If at same y-level and too close, move away first
-            if (
-                np.isclose(robot_y, obs_y, atol=0.05)
-                and abs(robot_x - obs_x) < (robot["base_radius"] + obs_width / 2 + 0.1)
-                and not np.isclose(robot_x, obs_x, atol=0.05)
-            ):
-                # Move away from obstruction
-                dx = np.clip(robot_x - obs_x, -0.049, 0.049)
-                return np.array([dx, 0.0, 0.0, 0.0, -0.02], dtype=np.float32)
-
-        # Calculate angle to target
-        delta_x = target_x - robot_x
-        delta_y = target_y - robot_y
-        target_angle = np.arctan2(delta_y, delta_x)
-        angle_error = target_angle - robot["theta"]
-
-        # Normalize angle to [-pi, pi]
-        while angle_error > np.pi:
-            angle_error -= 2 * np.pi
-        while angle_error < -np.pi:
-            angle_error += 2 * np.pi
-
-        # ROTATION: Orient toward target first
-        if abs(angle_error) > 0.1:  # ~5.7 degrees
-            dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
-            return np.array([0.0, 0.0, dtheta, 0.0, -0.02], dtype=np.float32)
-
-        dtheta = 0.0  # Already aligned
-
-        # Calculate distance to target
-        distance = np.sqrt(delta_x**2 + delta_y**2)
-
-        if debug:
-            print(f"[PickUp] Distance={distance:.3f}, Held={target['held']}, "
-                  f"Gripper={robot['finger_gap']:.3f}, Arm={robot['arm_joint']:.3f}")
-
-        # STAGED APPROACH: Be very gentle to avoid knocking block away
-
-        # Stage 1: If far away (>0.3m), navigate closer with base only
-        if distance > 0.3:
-            if debug:
-                print(f"[PickUp] Stage 1: Navigating (far)")
-            # Move base slowly, no arm extension
-            speed = 0.02  # Much slower
-            dx = np.clip(delta_x * speed / distance, -0.02, 0.02)
-            dy = np.clip(delta_y * speed / distance, -0.02, 0.02)
-            darm = 0.0  # Don't extend arm yet
-            dgripper = -0.02  # Keep gripper open
-            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
-
-        # Stage 2: Medium distance (0.1-0.3m), position precisely + start extending
-        if distance > 0.1:
-            if debug:
-                print(f"[PickUp] Stage 2: Approaching + extending arm")
-            # Very slow base movement + gentle arm extension
-            speed = 0.01
-            dx = np.clip(delta_x * speed / distance, -0.01, 0.01)
-            dy = np.clip(delta_y * speed / distance, -0.01, 0.01)
-            # Extend arm to reach - we need to extend MORE not less
-            # The arm should reach out to the block's edge
-            desired_arm_extension = min(robot["arm_length"] * 0.9, robot["arm_length"])
-            arm_error = desired_arm_extension - robot["arm_joint"]
-            darm = np.clip(arm_error, -0.03, 0.03)  # Much slower
-            dgripper = -0.02  # Keep gripper open
-            if debug:
-                print(f"[PickUp]   Desired arm={desired_arm_extension:.3f}, Current={robot['arm_joint']:.3f}, darm={darm:.3f}")
-            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
-
-        # Stage 3: Close (<0.1m), position for grasp
-        # At this point we're at the side of the block, arm should be extended
-        if distance > 0.06 and not target["held"]:
-            if debug:
-                print(f"[PickUp] Stage 3: Positioning for grasp, extending arm fully")
-            # Move very slowly to final position
-            speed = 0.005
-            dx = np.clip(delta_x * speed / distance, -0.005, 0.005)
-            dy = np.clip(delta_y * speed / distance, -0.005, 0.005)
-            # Extend arm fully
-            desired_arm_extension = robot["arm_length"]
-            arm_error = desired_arm_extension - robot["arm_joint"]
-            darm = np.clip(arm_error, -0.02, 0.02)  # Very slow
-            dgripper = -0.02  # Keep gripper open
-            if debug:
-                print(f"[PickUp]   Arm ext={robot['arm_joint']:.3f}/{robot['arm_length']:.3f}, darm={darm:.3f}")
-            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
-
-        # Stage 4: Very close, grasp
-        if not target["held"]:
-            if debug:
-                print(f"[PickUp] Stage 4: CLOSING GRIPPER (dist={distance:.3f})")
-            # Stop base movement, close gripper
-            return np.array([0.0, 0.0, 0.0, 0.0, 0.02], dtype=np.float32)
-        else:
-            if debug:
-                print(f"[PickUp] SUCCESS: Block held!")
-            # Already holding, maintain grip
-            return np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    return ObjectCentricState(state_dict)
 
 
-class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
-    """Skill for placing target block on target surface."""
+class Dynamic2dRobotController(GroundParameterizedController, abc.ABC):
+    """Base controller for dynamic 2D robot manipulation tasks.
 
-    def _get_operator_name(self) -> str:
-        return "PlaceOnTarget"
-
-    def _get_action_given_objects(
-        self,
-        objects: Sequence[Object],
-        obs: NDArray[np.float32],  # type: ignore[override]
-    ) -> NDArray[np.float32]:
-        """Generate action to place block on target surface.
-
-        Args:
-            objects: [robot, target_block, target_surface]
-            obs: Flat observation array
-
-        Returns:
-            Action [dx, dy, dtheta, darm, dgripper]
-        """
-        parsed = self._parse_obs(obs)
-        robot = parsed["robot"]
-        surface = parsed["target_surface"]
-        target = parsed["target_block"]
-
-        # Target position: center of target surface, slightly above
-        target_x = surface["x"]
-        target_y = surface["y"] + surface["height"] / 2 + target["height"] / 2 + 0.1
-
-        robot_x, robot_y = robot["x"], robot["y"]
-
-        # Calculate angle to target
-        delta_x = target_x - robot_x
-        delta_y = target_y - robot_y
-        target_angle = np.arctan2(delta_y, delta_x)
-        angle_error = target_angle - robot["theta"]
-
-        # Normalize angle to [-pi, pi]
-        while angle_error > np.pi:
-            angle_error -= 2 * np.pi
-        while angle_error < -np.pi:
-            angle_error += 2 * np.pi
-
-        # ROTATION: Orient toward target
-        if abs(angle_error) > 0.1:
-            dtheta = np.clip(angle_error, -np.pi / 16 + 0.001, np.pi / 16 - 0.001)
-            return np.array([0.0, 0.0, dtheta, 0.0, 0.0], dtype=np.float32)
-
-        dtheta = 0.0  # Already aligned
-
-        # Calculate distance
-        distance = np.sqrt(delta_x**2 + delta_y**2)
-
-        # STAGED GENTLE PLACEMENT
-
-        # Stage 1: Far away, navigate slowly
-        if distance > 0.3:
-            speed = 0.02
-            dx = np.clip(delta_x * speed / distance, -0.02, 0.02)
-            dy = np.clip(delta_y * speed / distance, -0.02, 0.02)
-            darm = 0.0
-            dgripper = 0.0 if target["held"] else -0.02
-            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
-
-        # Stage 2: Medium distance, slow approach
-        if distance > 0.15:
-            speed = 0.01
-            dx = np.clip(delta_x * speed / distance, -0.01, 0.01)
-            dy = np.clip(delta_y * speed / distance, -0.01, 0.01)
-            darm = 0.0
-            dgripper = 0.0 if target["held"] else -0.02
-            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
-
-        # Stage 3: Close, position precisely above surface
-        if distance > 0.08:
-            speed = 0.005  # Very slow
-            dx = np.clip(delta_x * speed / distance, -0.005, 0.005)
-            dy = np.clip(delta_y * speed / distance, -0.005, 0.005)
-            darm = 0.0
-            dgripper = 0.0 if target["held"] else -0.02
-            return np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
-
-        # Stage 4: In position, release gently
-        if target["held"]:
-            # Release gripper
-            return np.array([0.0, 0.0, 0.0, 0.0, -0.02], dtype=np.float32)
-        else:
-            # Already placed
-            return np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
-
-
-class PushSkill(BaseDynObstruction2DSkill):
-    """Skill for pushing obstruction blocks off target surface.
-
-    NOTE: Currently disabled for debugging PickUpSkill.
+    Similar to Geom2dRobotController but adapted for dynamic physics environments.
+    Uses waypoint-based planning to generate action sequences.
     """
 
-    def _get_operator_name(self) -> str:
-        return "Push"
-
-    def _get_action_given_objects(
+    def __init__(
         self,
         objects: Sequence[Object],
-        obs: NDArray[np.float32],  # type: ignore[override]
-    ) -> NDArray[np.float32]:
-        """Generate action to push obstruction block.
+        action_space: Box,
+        safe_y: float = 1.0,
+    ) -> None:
+        """Initialize controller.
 
-        CURRENTLY DISABLED - focusing on fixing PickUpSkill first.
+        Args:
+            objects: Sequence of objects involved in the skill
+            action_space: Box action space with bounds for [dx, dy, dtheta, darm, dgripper]
+            safe_y: Safe height for horizontal navigation
         """
-        # TODO: Re-enable after PickUpSkill works
-        raise NotImplementedError("PushSkill temporarily disabled for debugging")
+        super().__init__(objects)
+        self._robot = objects[0]
+        self._action_space = action_space
+        self._safe_y = safe_y
 
-        # ORIGINAL IMPLEMENTATION (commented out):
-        # """Generate action to push obstruction block.
-        #
-        # Args:
-        #     objects: [robot, obstruction, target_surface]
-        #     obs: Flat observation array
-        #
-        # Returns:
-        #     Action [dx, dy, dtheta, darm, dgripper]
-        # """
-        # parsed = self._parse_obs(obs)
-        # robot = parsed["robot"]
-        # surface = parsed["target_surface"]
-        # ... (rest of implementation preserved for future use)
+        # Extract max deltas from action space bounds
+        self._max_delta_x = float(action_space.high[0])
+        self._max_delta_y = float(action_space.high[1])
+        self._max_delta_theta = float(action_space.high[2])
+        self._max_delta_arm = float(action_space.high[3])
+        self._max_delta_gripper = float(action_space.high[4])
+
+        # State tracking
+        self._current_params: Union[NDArray[np.float32], float] = 0.0
+        self._current_plan: Union[list[NDArray[np.float32]], None] = None
+        self._current_state: Union[ObjectCentricState, None] = None
+
+    @abc.abstractmethod
+    def _generate_waypoints(
+        self, state: ObjectCentricState
+    ) -> list[tuple[float, float, float, float, float]]:
+        """Generate waypoints as (x, y, theta, arm, gripper) tuples."""
+
+    def _waypoints_to_plan(
+        self,
+        state: ObjectCentricState,
+        waypoints: list[tuple[float, float, float, float, float]],
+    ) -> list[NDArray[np.float32]]:
+        """Convert waypoints to discrete action sequence.
+
+        Each waypoint is (x, y, theta, arm, gripper).
+        Returns a list of actions [dx, dy, dtheta, darm, dgripper].
+        """
+        # Get current robot state
+        curr_x = state.get(self._robot, "x")
+        curr_y = state.get(self._robot, "y")
+        curr_theta = state.get(self._robot, "theta")
+        curr_arm = state.get(self._robot, "arm_joint")
+        curr_gripper = state.get(self._robot, "finger_gap")
+
+        current_pose = (curr_x, curr_y, curr_theta, curr_arm, curr_gripper)
+        all_waypoints = [current_pose] + waypoints
+
+        plan: list[NDArray[np.float32]] = []
+
+        for start, end in zip(all_waypoints[:-1], all_waypoints[1:]):
+            # Calculate total deltas
+            total_dx = end[0] - start[0]
+            total_dy = end[1] - start[1]
+            total_dtheta = end[2] - start[2]
+
+            # Handle angle wrapping for shortest path
+            if abs(total_dtheta) > np.pi:
+                if total_dtheta > 0:
+                    total_dtheta -= 2 * np.pi
+                else:
+                    total_dtheta += 2 * np.pi
+
+            total_darm = end[3] - start[3]
+            total_dgripper = end[4] - start[4]
+
+            # Skip if already at waypoint
+            if np.allclose(
+                [total_dx, total_dy, total_dtheta, total_darm, total_dgripper],
+                [0, 0, 0, 0, 0],
+                atol=1e-4,
+            ):
+                continue
+
+            # Calculate number of steps needed (based on max deltas)
+            num_steps = int(
+                max(
+                    np.ceil(abs(total_dx) / self._max_delta_x),
+                    np.ceil(abs(total_dy) / self._max_delta_y),
+                    np.ceil(abs(total_dtheta) / self._max_delta_theta),
+                    np.ceil(abs(total_darm) / self._max_delta_arm),
+                    np.ceil(abs(total_dgripper) / self._max_delta_gripper),
+                    1,  # At least 1 step
+                )
+            )
+
+            # Create action for each step
+            dx = total_dx / num_steps
+            dy = total_dy / num_steps
+            dtheta = total_dtheta / num_steps
+            darm = total_darm / num_steps
+            dgripper = total_dgripper / num_steps
+
+            action = np.array([dx, dy, dtheta, darm, dgripper], dtype=np.float32)
+
+            for _ in range(num_steps):
+                plan.append(action)
+
+        return plan
+
+    def reset(
+        self, x: ObjectCentricState, params: Union[NDArray[np.float32], float]
+    ) -> None:
+        """Reset the controller with new state and parameters."""
+        self._current_params = params
+        self._current_plan = None
+        self._current_state = x
+
+    def terminated(self) -> bool:
+        """Check if the controller has finished executing its plan."""
+        return self._current_plan is not None and len(self._current_plan) == 0
+
+    def step(self) -> NDArray[np.float32]:
+        """Execute the next action in the controller's plan."""
+        assert self._current_state is not None
+        if self._current_plan is None:
+            self._current_plan = self._generate_plan(self._current_state)
+        return self._current_plan.pop(0)
+
+    def observe(self, x: ObjectCentricState) -> None:
+        """Update the controller with a new observed state."""
+        self._current_state = x
+
+    def _generate_plan(self, x: ObjectCentricState) -> list[NDArray[np.float32]]:
+        """Generate full action sequence from waypoints."""
+        waypoints = self._generate_waypoints(x)
+        return self._waypoints_to_plan(x, waypoints)
+
+
+class GroundPickController(Dynamic2dRobotController):
+    """Controller for picking up blocks.
+
+    Waypoint sequence:
+    1. Rotate to theta=0 (gripper alignment with blocks)
+    2. Extend arm fully
+    3. Move to safe height
+    4. Move horizontally above block
+    5. Descend to grasp height
+    6. Close gripper
+    7. Lift block
+    """
+
+    def __init__(self, objects: Sequence[Object], action_space: Box) -> None:
+        """Initialize pick controller."""
+        super().__init__(objects, action_space, safe_y=1.0)
+        self._block = objects[1]  # Block to pick
+
+    def sample_parameters(
+        self, x: ObjectCentricState, rng: np.random.Generator
+    ) -> float:
+        """No parameters needed for basic pick - always grasp at center."""
+        return 0.0
+
+    def _generate_waypoints(
+        self, state: ObjectCentricState
+    ) -> list[tuple[float, float, float, float, float]]:
+        """Generate waypoints for picking up block."""
+        # Get current robot state
+        robot_x = state.get(self._robot, "x")
+        robot_y = state.get(self._robot, "y")
+        robot_theta = state.get(self._robot, "theta")
+        arm_length = state.get(self._robot, "arm_length")
+        gripper_base_height = state.get(self._robot, "gripper_base_height")
+
+        # Get block state
+        block_x = state.get(self._block, "x")
+        block_y = state.get(self._block, "y")
+        block_width = state.get(self._block, "width")
+
+        # Target gripper positions
+        target_theta = 0.0  # Align with blocks (always at theta=0)
+        extended_arm = arm_length * 0.95
+        closed_gripper = block_width * 0.7  # Close around block
+        open_gripper = gripper_base_height * 1.0  # Fully open
+
+        waypoints = [
+            # Waypoint 1: Rotate to align gripper, extend arm, open gripper
+            (robot_x, robot_y, target_theta, extended_arm, open_gripper),
+            # Waypoint 2: Move to safe height (maintain orientation)
+            (robot_x, self._safe_y, target_theta, extended_arm, open_gripper),
+            # Waypoint 3: Move horizontally above block
+            (block_x, self._safe_y, target_theta, extended_arm, open_gripper),
+            # Waypoint 4: Descend to grasp height
+            (block_x, block_y, target_theta, extended_arm, open_gripper),
+            # Waypoint 5: Close gripper
+            (block_x, block_y, target_theta, extended_arm, closed_gripper),
+            # Waypoint 6: Lift block to safe height
+            (block_x, self._safe_y, target_theta, extended_arm, closed_gripper),
+        ]
+
+        return waypoints
+
+
+class GroundPlaceController(Dynamic2dRobotController):
+    """Controller for placing blocks at arbitrary (x, y) coordinates.
+
+    Parameters: [target_x, target_y] - where to place the block
+    """
+
+    def __init__(self, objects: Sequence[Object], action_space: Box) -> None:
+        """Initialize place controller."""
+        super().__init__(objects, action_space, safe_y=1.0)
+        self._block = objects[1]  # Block being held
+
+    def sample_parameters(
+        self, x: ObjectCentricState, rng: np.random.Generator
+    ) -> NDArray[np.float32]:
+        """Sample random placement location on table.
+
+        For obstruction clearing, we want to place away from target surface.
+        Sample from table area excluding target surface region.
+        """
+        # Table bounds (hardcoded for dyn_obstruction2d environment)
+        table_min_x = -2.0
+        table_max_x = 2.0
+        table_y = 0.2  # Placement height
+
+        # Sample random x position
+        target_x = rng.uniform(table_min_x, table_max_x)
+        target_y = table_y
+
+        return np.array([target_x, target_y], dtype=np.float32)
+
+    def _generate_waypoints(
+        self, state: ObjectCentricState
+    ) -> list[tuple[float, float, float, float, float]]:
+        """Generate waypoints for placing block at parameterized location."""
+        # Get target placement from parameters
+        target_x, target_y = self._current_params  # type: ignore
+
+        # Get current robot state
+        robot_theta = state.get(self._robot, "theta")
+        arm_length = state.get(self._robot, "arm_length")
+        gripper_base_height = state.get(self._robot, "gripper_base_height")
+        finger_gap = state.get(self._robot, "finger_gap")
+
+        # Gripper positions
+        target_theta = 0.0
+        extended_arm = arm_length * 0.95
+        open_gripper = gripper_base_height * 1.0
+
+        waypoints = [
+            # Waypoint 1: Move to safe height (maintain current x)
+            (state.get(self._robot, "x"), self._safe_y, target_theta, extended_arm, finger_gap),
+            # Waypoint 2: Move horizontally to target x
+            (target_x, self._safe_y, target_theta, extended_arm, finger_gap),
+            # Waypoint 3: Descend to placement height
+            (target_x, target_y, target_theta, extended_arm, finger_gap),
+            # Waypoint 4: Open gripper to release
+            (target_x, target_y, target_theta, extended_arm, open_gripper),
+            # Waypoint 5: Lift away
+            (target_x, self._safe_y, target_theta, extended_arm, open_gripper),
+        ]
+
+        return waypoints
+
+
+class GroundPlaceOnTargetController(Dynamic2dRobotController):
+    """Controller for placing blocks on the target surface.
+
+    Parameters: float in [0, 1] - relative x position on target surface
+    """
+
+    def __init__(self, objects: Sequence[Object], action_space: Box) -> None:
+        """Initialize place-on-target controller."""
+        super().__init__(objects, action_space, safe_y=1.0)
+        self._block = objects[1]  # Block being held
+        self._surface = objects[2]  # Target surface
+
+    def sample_parameters(
+        self, x: ObjectCentricState, rng: np.random.Generator
+    ) -> float:
+        """Sample random relative x position on target surface [0, 1]."""
+        return float(rng.uniform(0.2, 0.8))  # Avoid edges
+
+    def _generate_waypoints(
+        self, state: ObjectCentricState
+    ) -> list[tuple[float, float, float, float, float]]:
+        """Generate waypoints for placing block on target surface."""
+        # Get surface state
+        surface_x = state.get(self._surface, "x")
+        surface_y = state.get(self._surface, "y")
+        surface_width = state.get(self._surface, "width")
+        surface_height = state.get(self._surface, "height")
+
+        # Get block state
+        block_height = state.get(self._block, "height")
+
+        # Calculate target position from parameter (relative position on surface)
+        relative_x = self._current_params  # type: ignore # float in [0, 1]
+        target_x = surface_x - surface_width / 2 + relative_x * surface_width
+
+        # Place block on top of surface
+        target_y = surface_y + surface_height / 2 + block_height / 2
+
+        # Get current robot state
+        arm_length = state.get(self._robot, "arm_length")
+        gripper_base_height = state.get(self._robot, "gripper_base_height")
+        finger_gap = state.get(self._robot, "finger_gap")
+
+        # Gripper positions
+        target_theta = 0.0
+        extended_arm = arm_length * 0.95
+        open_gripper = gripper_base_height * 1.0
+
+        waypoints = [
+            # Waypoint 1: Move to safe height
+            (state.get(self._robot, "x"), self._safe_y, target_theta, extended_arm, finger_gap),
+            # Waypoint 2: Move horizontally to surface
+            (target_x, self._safe_y, target_theta, extended_arm, finger_gap),
+            # Waypoint 3: Descend to placement height
+            (target_x, target_y, target_theta, extended_arm, finger_gap),
+            # Waypoint 4: Open gripper to release
+            (target_x, target_y, target_theta, extended_arm, open_gripper),
+            # Waypoint 5: Lift away
+            (target_x, self._safe_y, target_theta, extended_arm, open_gripper),
+        ]
+
+        return waypoints
+
+
+def create_parameterized_skills(
+    types_container: DynObstruction2DTypes,
+) -> dict[str, LiftedParameterizedController]:
+    """Create lifted parameterized controllers for DynObstruction2D.
+
+    Returns:
+        Dictionary mapping skill names to LiftedParameterizedController instances
+    """
+    # Get action space from environment
+    try:
+        from prbench.envs.dynamic2d.utils import KinRobotActionSpace
+    except ImportError as e:
+        raise ImportError(
+            "prbench required for action space. "
+            "Install with: pip install -e 'path/to/prbench[dynamic2d]'"
+        ) from e
+
+    action_space = KinRobotActionSpace()
+
+    # Define parameter spaces
+    pick_params_space = Box(
+        low=np.array([0.0]),
+        high=np.array([1.0]),
+        dtype=np.float32,
+    )
+
+    place_params_space = Box(
+        low=np.array([-2.0, 0.0]),  # [min_x, min_y]
+        high=np.array([2.0, 2.0]),  # [max_x, max_y]
+        dtype=np.float32,
+    )
+
+    place_on_target_params_space = Box(
+        low=np.array([0.0]),
+        high=np.array([1.0]),
+        dtype=np.float32,
+    )
+
+    # Create partial controller classes with pre-configured action space
+    class PickController(GroundPickController):
+        """Pick controller with pre-configured action space."""
+
+        def __init__(self, objects: Sequence[Object]) -> None:
+            super().__init__(objects, action_space)
+
+    class PlaceController(GroundPlaceController):
+        """Place controller with pre-configured action space."""
+
+        def __init__(self, objects: Sequence[Object]) -> None:
+            super().__init__(objects, action_space)
+
+    class PlaceOnTargetController(GroundPlaceOnTargetController):
+        """Place on target controller with pre-configured action space."""
+
+        def __init__(self, objects: Sequence[Object]) -> None:
+            super().__init__(objects, action_space)
+
+    # Create variables for lifted controllers
+    robot = Variable("?robot", types_container.robot)
+    block = Variable("?block", types_container.block)
+    obstruction = Variable("?obstruction", types_container.obstruction)
+    surface = Variable("?surface", types_container.surface)
+
+    # Create lifted controllers
+    # PickUp can work on both block and obstruction types
+    pick_controller = LiftedParameterizedController(
+        [robot, block],  # robot, block (can be target or obstruction)
+        PickController,
+        pick_params_space,
+    )
+
+    # Place can work on any block, places at arbitrary location
+    place_controller = LiftedParameterizedController(
+        [robot, block],  # robot, block being placed
+        PlaceController,
+        place_params_space,
+    )
+
+    # PlaceOnTarget specifically places on target surface
+    place_on_target_controller = LiftedParameterizedController(
+        [robot, block, surface],  # robot, block, target surface
+        PlaceOnTargetController,
+        place_on_target_params_space,
+    )
+
+    return {
+        "PickUp": pick_controller,
+        "Place": place_controller,
+        "PlaceOnTarget": place_on_target_controller,
+    }
 
 
 class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
@@ -699,7 +910,7 @@ class BaseDynObstruction2DTAMPSystem(
         operators = {
             LiftedOperator(
                 "PickUp",
-                [robot, block, surface],
+                [robot, block],
                 preconditions={
                     predicates["GripperEmpty"]([robot]),
                 },
@@ -708,6 +919,19 @@ class BaseDynObstruction2DTAMPSystem(
                 },
                 delete_effects={
                     predicates["GripperEmpty"]([robot]),
+                },
+            ),
+            LiftedOperator(
+                "Place",
+                [robot, block],
+                preconditions={
+                    predicates["Holding"]([robot, block]),
+                },
+                add_effects={
+                    predicates["GripperEmpty"]([robot]),
+                },
+                delete_effects={
+                    predicates["Holding"]([robot, block]),
                 },
             ),
             LiftedOperator(
@@ -726,28 +950,16 @@ class BaseDynObstruction2DTAMPSystem(
                     predicates["Clear"]([surface]),
                 },
             ),
-            # NOTE: Push operator disabled while debugging PickUpSkill
-            # LiftedOperator(
-            #     "Push",
-            #     [robot, obstruction, surface],
-            #     preconditions={
-            #         predicates["Obstructing"]([obstruction, surface]),
-            #         predicates["GripperEmpty"]([robot]),
-            #     },
-            #     add_effects={
-            #         predicates["ObstructionClear"]([obstruction, surface]),
-            #     },
-            #     delete_effects={
-            #         predicates["Obstructing"]([obstruction, surface]),
-            #     },
-            # ),
         }
+
+        # Create parameterized skills
+        parameterized_skills = create_parameterized_skills(types_container)
 
         return PlanningComponents(
             types=types_set,
             predicate_container=predicates,
             operators=operators,
-            skills=set(),
+            skills=set(parameterized_skills.values()),
             perceiver=perceiver,
         )
 
@@ -766,12 +978,7 @@ class BaseDynObstruction2DTAMPSystem(
             seed=seed,
             render_mode=render_mode,
         )
-        skills = {
-            PickUpSkill(system.components),  # type: ignore[arg-type]
-            PlaceOnTargetSkill(system.components),  # type: ignore[arg-type]
-            # PushSkill(system.components),  # Disabled while debugging PickUpSkill
-        }
-        system.components.skills.update(skills)
+        # Skills are already created in _create_planning_components
         return system
 
 
@@ -821,10 +1028,5 @@ class DynObstruction2DTAMPSystem(
             seed=seed,
             render_mode=render_mode,
         )
-        skills = {
-            PickUpSkill(system.components),  # type: ignore[arg-type]
-            PlaceOnTargetSkill(system.components),  # type: ignore[arg-type]
-            # PushSkill(system.components),  # Disabled while debugging PickUpSkill
-        }
-        system.components.skills.update(skills)
+        # Skills are already created in _create_planning_components
         return system
