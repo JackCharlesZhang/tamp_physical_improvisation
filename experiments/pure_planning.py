@@ -339,11 +339,32 @@ def run_dyn_obstruction2d_sesame_planning(
 
     # Reset agent
     print("\nPlanning...")
+
+    # Debug: Print what SESAME models sees
+    sesame_models = system.create_sesame_models()
+    initial_state = sesame_models.observation_to_state(obs)
+    initial_abstract = sesame_models.state_abstractor(initial_state)
+    goal = sesame_models.goal_deriver(initial_state)
+
+    print(f"\nDEBUG - Initial abstract state atoms ({len(initial_abstract.atoms)}):")
+    for atom in sorted(initial_abstract.atoms, key=str):
+        print(f"  - {atom}")
+
+    print(f"\nDEBUG - Goal atoms ({len(goal.atoms)}):")
+    for atom in sorted(goal.atoms, key=str):
+        print(f"  - {atom}")
+
+    print(f"\nDEBUG - Operators available:")
+    for op in sesame_models.operators:
+        print(f"  - {op.name}: params={[v.name for v in op.parameters]}")
+
     try:
         agent.reset(obs, info)
         print("Planning completed successfully!")
     except Exception as e:
         print(f"Planning failed: {e}")
+        import traceback
+        traceback.print_exc()
         system.env.close()  # type: ignore[no-untyped-call]
         return
 
