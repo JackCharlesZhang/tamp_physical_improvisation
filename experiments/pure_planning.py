@@ -392,7 +392,7 @@ def run_dyn_obstruction2d_sesame_planning(
     domain = PDDLDomain("test", sesame_models.operators, sesame_models.predicates, sesame_models.types)
     problem = PDDLProblem("test", "test-problem", initial_abstract.objects, initial_abstract.atoms, goal.atoms)
     print(f"  Domain: {domain.name}, {len(domain.operators)} operators")
-    print(f"  Problem: {problem.name}, {len(problem.objects)} objects, {len(problem.init_atoms)} init, {len(problem.goal)} goal")
+    print(f"  Problem: {len(problem.objects)} objects, {len(problem.init_atoms)} init, {len(problem.goal)} goal")
 
     try:
         agent.reset(obs, info)
