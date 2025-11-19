@@ -365,6 +365,21 @@ def run_dyn_obstruction2d_sesame_planning(
     for obj in initial_abstract.objects:
         print(f"  - {obj.name}: {obj.type.name}")
 
+    print(f"\nDEBUG - Types in domain:")
+    for t in sesame_models.types:
+        print(f"  - {t.name}")
+
+    print(f"\nDEBUG - Predicates in domain:")
+    for p in sesame_models.predicates:
+        print(f"  - {p.name}: {[t.name for t in p.types]}")
+
+    # Try to manually check if a plan exists
+    print(f"\nDEBUG - Manual plan check:")
+    print(f"  Can PickUp(robot, target_block)?")
+    print(f"    Needs: GripperEmpty(robot) - {'YES' if any('GripperEmpty robot' in str(a) for a in initial_abstract.atoms) else 'NO'}")
+    print(f"  After PickUp, can PlaceOnTarget(robot, target_block, target_surface)?")
+    print(f"    Needs: Clear(target_surface) - {'YES' if any('Clear target_surface' in str(a) for a in initial_abstract.atoms) else 'NO'}")
+
     try:
         agent.reset(obs, info)
         print("Planning completed successfully!")
