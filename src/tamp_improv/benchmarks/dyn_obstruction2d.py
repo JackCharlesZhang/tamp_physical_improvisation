@@ -34,6 +34,14 @@ from tamp_improv.benchmarks.base import (
 )
 from tamp_improv.benchmarks.wrappers import ImprovWrapper
 
+# Monkey-patch Tobject into tomsgeoms2d if it doesn't exist
+# (prbench imports it but dyn_obstruction2d doesn't actually use it)
+import tomsgeoms2d.structs
+if not hasattr(tomsgeoms2d.structs, "Tobject"):
+    # Create a dummy Tobject class to satisfy prbench imports
+    from tomsgeoms2d.structs import Lobject
+    tomsgeoms2d.structs.Tobject = Lobject  # Use Lobject as a stand-in
+
 
 @dataclass
 class DynObstruction2DTypes:
