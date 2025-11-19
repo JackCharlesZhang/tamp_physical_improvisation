@@ -57,9 +57,9 @@ class DynObstruction2DTypes:
     def __init__(self) -> None:
         """Initialize types using prbench types."""
         # Import prbench types
+        from prbench.envs.dynamic2d.dyn_obstruction2d import TargetSurfaceType
         from prbench.envs.dynamic2d.object_types import (
             DynRectangleType,
-            KinRectangleType,
             KinRobotType,
         )
 
@@ -67,7 +67,7 @@ class DynObstruction2DTypes:
         self.robot = KinRobotType
         self.block = DynRectangleType  # target block (dynamic)
         self.obstruction = DynRectangleType  # obstruction blocks (dynamic)
-        self.surface = KinRectangleType  # target surface (kinematic)
+        self.surface = TargetSurfaceType  # target surface (kinematic, special type)
 
     def as_set(self) -> set[Type]:
         """Convert to set of types."""
