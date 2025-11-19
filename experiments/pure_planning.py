@@ -7,6 +7,12 @@ from gymnasium.wrappers import RecordVideo
 from task_then_motion_planning.planning import TaskThenMotionPlanner
 
 from tamp_improv.benchmarks.dyn_obstruction2d import BaseDynObstruction2DTAMPSystem
+
+try:
+    from prbench_bilevel_planning.agent import BilevelPlanningAgent
+    SESAME_AVAILABLE = True
+except ImportError:
+    SESAME_AVAILABLE = False
 # from tamp_improv.benchmarks.pybullet_cleanup_table import (
 #     BaseCleanupTableTAMPSystem,
 # )
@@ -253,6 +259,119 @@ def run_dyn_obstruction2d_planning(
     system.env.close()  # type: ignore[no-untyped-call]
 
 
+def run_dyn_obstruction2d_sesame_planning(
+    seed: int = 42,
+    render_mode: str | None = None,
+    max_steps: int = 200,
+    num_obstructions: int = 2,
+    record_video: bool = False,
+    video_folder: str = "videos/dyn_obstruction2d_sesame",
+    max_abstract_plans: int = 10,
+    samples_per_step: int = 10,
+    max_skill_horizon: int = 100,
+) -> None:
+    """Run SESAME bilevel planning baseline on DynObstruction2D environment."""
+    if not SESAME_AVAILABLE:
+        print("ERROR: SESAME planner not available!")
+        print("Install with: pip install -e 'path/to/prbench-bilevel-planning'")
+        return
+
+    print("\n" + "=" * 80)
+    print("Running SESAME Bilevel Planning on DynObstruction2D Environment")
+    print("=" * 80)
+    print(f"Number of obstructions: {num_obstructions}")
+    print(f"Seed: {seed}")
+    print(f"Max steps: {max_steps}")
+    print(f"Max abstract plans: {max_abstract_plans}")
+    print(f"Samples per step: {samples_per_step}")
+    print(f"Max skill horizon: {max_skill_horizon}")
+    if record_video:
+        print(f"Recording video to: {video_folder}")
+    print("=" * 80)
+
+    system = BaseDynObstruction2DTAMPSystem.create_default(
+        seed=seed,
+        render_mode=render_mode,
+        num_obstructions=num_obstructions,
+    )
+
+    # Wrap with video recording if requested
+    if record_video:
+        if render_mode is None:
+            print("WARNING: --record-video requires --render to be enabled!")
+            print("Enabling render mode automatically...")
+            system.env.render_mode = "rgb_array"
+
+        Path(video_folder).mkdir(parents=True, exist_ok=True)
+        system.env = RecordVideo(
+            system.env,
+            video_folder,
+            episode_trigger=lambda _: True,
+            name_prefix=f"seed_{seed}",
+        )
+
+    # Create SESAME models
+    sesame_models = system.create_sesame_models()
+
+    # Create SESAME agent
+    agent = BilevelPlanningAgent(
+        env_models=sesame_models,
+        seed=seed,
+        max_abstract_plans=max_abstract_plans,
+        samples_per_step=samples_per_step,
+        max_skill_horizon=max_skill_horizon,
+        heuristic_name="hff",
+        planning_timeout=30.0,
+    )
+
+    obs, info = system.env.reset(seed=seed)
+    objects, atoms, goal = system.perceiver.reset(obs, info)
+
+    print(f"\nObjects: {[obj.name for obj in objects]}")
+    print(f"Initial atoms ({len(atoms)}):")
+    for atom in sorted(atoms, key=str)[:10]:  # Show first 10
+        print(f"  - {atom}")
+    if len(atoms) > 10:
+        print(f"  ... and {len(atoms) - 10} more")
+    print(f"Goal ({len(goal)}):")
+    for atom in sorted(goal, key=str):
+        print(f"  - {atom}")
+
+    # Reset agent
+    print("\nPlanning...")
+    try:
+        agent.reset(obs, info)
+        print("Planning completed successfully!")
+    except Exception as e:
+        print(f"Planning failed: {e}")
+        system.env.close()  # type: ignore[no-untyped-call]
+        return
+
+    # Execute plan
+    for step in range(max_steps):
+        try:
+            action = agent.get_action()
+        except Exception as e:
+            print(f"\nAgent failed at step {step}: {e}")
+            break
+
+        obs, reward, done, _, info = system.env.step(action)
+
+        if step % 20 == 0:
+            print(f"Step {step}: reward={reward:.3f}")
+
+        if done:
+            print(f"\nGoal reached in {step + 1} steps!")
+            print(f"Final reward: {reward}")
+            if float(reward) > 0:
+                print("SUCCESS: Task completed successfully!")
+            break
+    else:
+        print(f"\nFAILED: Goal not reached within {max_steps} steps")
+
+    system.env.close()  # type: ignore[no-untyped-call]
+
+
 def main() -> None:
     """Main function to run pure planning baselines."""
     parser = argparse.ArgumentParser(
@@ -304,6 +423,31 @@ def main() -> None:
         default="videos",
         help="Folder to save videos (default: videos/)",
     )
+    parser.add_argument(
+        "--planner",
+        type=str,
+        default="task-then-motion",
+        choices=["task-then-motion", "sesame"],
+        help="Planner type (for dyn_obstruction2d): task-then-motion or sesame",
+    )
+    parser.add_argument(
+        "--max-abstract-plans",
+        type=int,
+        default=10,
+        help="Max abstract plans for SESAME planner",
+    )
+    parser.add_argument(
+        "--samples-per-step",
+        type=int,
+        default=10,
+        help="Samples per step for SESAME planner",
+    )
+    parser.add_argument(
+        "--max-skill-horizon",
+        type=int,
+        default=100,
+        help="Max skill horizon for SESAME planner",
+    )
 
     args = parser.parse_args()
     render_mode = "rgb_array" if (args.render or args.record_video) else None
@@ -327,15 +471,29 @@ def main() -> None:
             max_steps=args.max_steps,
         )
     elif args.env == "dyn_obstruction2d":
-        video_folder = f"{args.video_folder}/dyn_obstruction2d_planning"
-        run_dyn_obstruction2d_planning(
-            seed=args.seed,
-            render_mode=render_mode,
-            max_steps=args.max_steps,
-            num_obstructions=args.num_obstructions,
-            record_video=args.record_video,
-            video_folder=video_folder,
-        )
+        if args.planner == "sesame":
+            video_folder = f"{args.video_folder}/dyn_obstruction2d_sesame"
+            run_dyn_obstruction2d_sesame_planning(
+                seed=args.seed,
+                render_mode=render_mode,
+                max_steps=args.max_steps,
+                num_obstructions=args.num_obstructions,
+                record_video=args.record_video,
+                video_folder=video_folder,
+                max_abstract_plans=args.max_abstract_plans,
+                samples_per_step=args.samples_per_step,
+                max_skill_horizon=args.max_skill_horizon,
+            )
+        else:  # task-then-motion
+            video_folder = f"{args.video_folder}/dyn_obstruction2d_planning"
+            run_dyn_obstruction2d_planning(
+                seed=args.seed,
+                render_mode=render_mode,
+                max_steps=args.max_steps,
+                num_obstructions=args.num_obstructions,
+                record_video=args.record_video,
+                video_folder=video_folder,
+            )
 
 
 if __name__ == "__main__":

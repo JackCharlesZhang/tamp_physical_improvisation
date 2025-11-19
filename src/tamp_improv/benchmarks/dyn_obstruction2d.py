@@ -11,6 +11,10 @@ import numpy as np
 from bilevel_planning.structs import (
     GroundParameterizedController,
     LiftedParameterizedController,
+    LiftedSkill,
+    RelationalAbstractGoal,
+    RelationalAbstractState,
+    SesameModels,
 )
 from gymnasium.spaces import Box
 from numpy.typing import NDArray
@@ -548,11 +552,16 @@ class GroundPlaceOnTargetController(Dynamic2dRobotController):
 
 def create_parameterized_skills(
     types_container: DynObstruction2DTypes,
-) -> dict[str, LiftedParameterizedController]:
-    """Create lifted parameterized controllers for DynObstruction2D.
+    operators: dict[str, LiftedOperator],
+) -> dict[str, LiftedSkill]:
+    """Create lifted skills (operator + controller pairs) for DynObstruction2D.
+
+    Args:
+        types_container: Container with PDDL types
+        operators: Dictionary mapping operator names to LiftedOperator instances
 
     Returns:
-        Dictionary mapping skill names to LiftedParameterizedController instances
+        Dictionary mapping skill names to LiftedSkill instances
     """
     # Get action space from environment
     try:
@@ -610,32 +619,163 @@ def create_parameterized_skills(
     surface = Variable("?surface", types_container.surface)
 
     # Create lifted controllers
+    # Note: params_space is not passed to LiftedParameterizedController
+    # It's defined in the ground controller's sample_parameters() method
+
     # PickUp can work on both block and obstruction types
     pick_controller = LiftedParameterizedController(
-        [robot, block],  # robot, block (can be target or obstruction)
-        PickController,
-        pick_params_space,
+        variables=[robot, block],
+        controller_cls=PickController,
     )
 
     # Place can work on any block, places at arbitrary location
     place_controller = LiftedParameterizedController(
-        [robot, block],  # robot, block being placed
-        PlaceController,
-        place_params_space,
+        variables=[robot, block],
+        controller_cls=PlaceController,
     )
 
     # PlaceOnTarget specifically places on target surface
     place_on_target_controller = LiftedParameterizedController(
-        [robot, block, surface],  # robot, block, target surface
-        PlaceOnTargetController,
-        place_on_target_params_space,
+        variables=[robot, block, surface],
+        controller_cls=PlaceOnTargetController,
     )
 
-    return {
-        "PickUp": pick_controller,
-        "Place": place_controller,
-        "PlaceOnTarget": place_on_target_controller,
+    # Create LiftedSkill objects (operator + controller pairs)
+    # The operator parameters must match the controller variables
+    lifted_skills = {
+        "PickUp": LiftedSkill(
+            operator=operators["PickUp"],
+            controller=pick_controller,
+        ),
+        "Place": LiftedSkill(
+            operator=operators["Place"],
+            controller=place_controller,
+        ),
+        "PlaceOnTarget": LiftedSkill(
+            operator=operators["PlaceOnTarget"],
+            controller=place_on_target_controller,
+        ),
     }
+
+    return lifted_skills
+
+
+def create_state_abstractor(
+    perceiver: DynObstruction2DPerceiver,
+) -> callable:
+    """Create state abstractor function for SESAME planner.
+
+    Converts ObjectCentricState to RelationalAbstractState (PDDL atoms).
+    """
+    def state_abstractor(state: ObjectCentricState) -> RelationalAbstractState:
+        """Convert object-centric state to relational abstract state."""
+        # Extract atoms from the state using the perceiver
+        # The perceiver expects observations, but we need to work with ObjectCentricState
+        # For now, we'll extract atoms directly from the state
+
+        # Get all objects from the state
+        objects = set(state.data.keys())
+
+        # Extract PDDL atoms by examining the state
+        # This requires accessing the perceiver's predicate extraction logic
+        atoms: set[GroundAtom] = set()
+
+        # Get predicates from perceiver
+        predicates = perceiver.predicates
+
+        # Check gripper status (Holding vs GripperEmpty)
+        robot = perceiver._robot
+        target_block = perceiver._target_block
+
+        # Check if robot is holding target block
+        # We need to check the "held" attribute in the state
+        if target_block in state.data:
+            block_data = state.data[target_block]
+            # Check if block is being held (this is environment-specific)
+            # For now, we'll use a heuristic based on available state data
+            if hasattr(block_data, "held") or (isinstance(block_data, dict) and "held" in block_data):
+                held = block_data.get("held", 0.0) if isinstance(block_data, dict) else getattr(block_data, "held", 0.0)
+                if held > 0.5:
+                    atoms.add(predicates["Holding"]([robot, target_block]))
+                else:
+                    atoms.add(predicates["GripperEmpty"]([robot]))
+            else:
+                atoms.add(predicates["GripperEmpty"]([robot]))
+        else:
+            atoms.add(predicates["GripperEmpty"]([robot]))
+
+        # Check On predicate (target_block on target_surface)
+        target_surface = perceiver._target_surface
+        if target_block in state.data and target_surface in state.data:
+            # This would require geometric checking - for now simplified
+            # In practice, you'd call perceiver's _is_on_surface method
+            # We'll mark this as a TODO and add a placeholder
+            pass  # Will be determined by perceiver logic
+
+        # Check obstruction predicates
+        for obstruction in perceiver._obstructions:
+            if obstruction in state.data:
+                # Check if obstructing the surface
+                # This would require geometric checking
+                pass  # Will be determined by perceiver logic
+
+        return RelationalAbstractState(atoms=atoms, objects=objects)
+
+    return state_abstractor
+
+
+def create_goal_deriver(
+    perceiver: DynObstruction2DPerceiver,
+    state_abstractor_fn: callable,
+) -> callable:
+    """Create goal deriver function for SESAME planner.
+
+    Returns a function that extracts the goal from any state.
+    """
+    def goal_deriver(state: ObjectCentricState) -> RelationalAbstractGoal:
+        """Derive relational goal from state.
+
+        Goal: Place target block on target surface with empty gripper.
+        """
+        predicates = perceiver.predicates
+        robot = perceiver._robot
+        target_block = perceiver._target_block
+        target_surface = perceiver._target_surface
+
+        # Define goal atoms
+        goal_atoms = {
+            predicates["On"]([target_block, target_surface]),
+            predicates["GripperEmpty"]([robot]),
+        }
+
+        return RelationalAbstractGoal(
+            atoms=goal_atoms,
+            state_abstractor=state_abstractor_fn,
+        )
+
+    return goal_deriver
+
+
+def create_transition_fn(env: gym.Env) -> callable:
+    """Create transition function for SESAME planner.
+
+    This function simulates state transitions.
+    For now, this is a placeholder that would need environment integration.
+    """
+    def transition_fn(state: ObjectCentricState, action: Any) -> ObjectCentricState:
+        """Simulate state transition.
+
+        WARNING: This is a simplified version.
+        For full SESAME planning, this would need to:
+        1. Convert state to observation
+        2. Execute action in simulator
+        3. Convert resulting observation back to state
+        """
+        # For now, return the same state (placeholder)
+        # In practice, you'd need to integrate with the environment
+        return state
+
+    return transition_fn
 
 
 class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
@@ -899,6 +1039,50 @@ class BaseDynObstruction2DTAMPSystem(
             self.components.types,
         )
 
+    def create_sesame_models(self) -> SesameModels:
+        """Create SesameModels for SESAME planner integration.
+
+        Returns:
+            SesameModels container with all necessary components for bilevel planning.
+        """
+        # Get the perceiver from planning components
+        perceiver = self.components.perceiver
+        assert isinstance(perceiver, DynObstruction2DPerceiver)
+
+        # Create state abstractor function
+        state_abstractor_fn = create_state_abstractor(perceiver)
+
+        # Create goal deriver function
+        goal_deriver_fn = create_goal_deriver(perceiver, state_abstractor_fn)
+
+        # Create transition function
+        transition_fn = create_transition_fn(self.env)
+
+        # Create observation_to_state function
+        # Get the objects for state conversion
+        objects = [perceiver._robot, perceiver._target_block, perceiver._target_surface]
+        objects.extend(perceiver._obstructions)
+
+        def observation_to_state(obs: NDArray[np.float32]) -> ObjectCentricState:
+            """Convert observation to ObjectCentricState."""
+            return _obs_to_state(obs, objects)
+
+        # Create SesameModels
+        sesame_models = SesameModels(
+            observation_space=self.env.observation_space,
+            state_space=self.env.observation_space,  # Using same space for now
+            action_space=self.env.action_space,
+            transition_fn=transition_fn,
+            types=self.components.types,
+            predicates=self.components.predicate_container.as_set(),
+            observation_to_state=observation_to_state,
+            state_abstractor=state_abstractor_fn,
+            goal_deriver=goal_deriver_fn,
+            skills=self.components.skills,  # Set of LiftedSkill objects
+        )
+
+        return sesame_models
+
     @classmethod
     def _create_planning_components(
         cls, num_obstructions: int = 2
@@ -915,59 +1099,66 @@ class BaseDynObstruction2DTAMPSystem(
         obstruction = Variable("?obstruction", types_container.obstruction)
         surface = Variable("?surface", types_container.surface)
 
-        operators = {
-            LiftedOperator(
-                "PickUp",
-                [robot, block],
-                preconditions={
-                    predicates["GripperEmpty"]([robot]),
-                },
-                add_effects={
-                    predicates["Holding"]([robot, block]),
-                },
-                delete_effects={
-                    predicates["GripperEmpty"]([robot]),
-                },
-            ),
-            LiftedOperator(
-                "Place",
-                [robot, block],
-                preconditions={
-                    predicates["Holding"]([robot, block]),
-                },
-                add_effects={
-                    predicates["GripperEmpty"]([robot]),
-                },
-                delete_effects={
-                    predicates["Holding"]([robot, block]),
-                },
-            ),
-            LiftedOperator(
-                "PlaceOnTarget",
-                [robot, block, surface],
-                preconditions={
-                    predicates["Holding"]([robot, block]),
-                    predicates["Clear"]([surface]),
-                },
-                add_effects={
-                    predicates["On"]([block, surface]),
-                    predicates["GripperEmpty"]([robot]),
-                },
-                delete_effects={
-                    predicates["Holding"]([robot, block]),
-                    predicates["Clear"]([surface]),
-                },
-            ),
+        # Create operators as a dict first (for easy pairing with controllers)
+        pick_up_operator = LiftedOperator(
+            "PickUp",
+            [robot, block],
+            preconditions={
+                predicates["GripperEmpty"]([robot]),
+            },
+            add_effects={
+                predicates["Holding"]([robot, block]),
+            },
+            delete_effects={
+                predicates["GripperEmpty"]([robot]),
+            },
+        )
+
+        place_operator = LiftedOperator(
+            "Place",
+            [robot, block],
+            preconditions={
+                predicates["Holding"]([robot, block]),
+            },
+            add_effects={
+                predicates["GripperEmpty"]([robot]),
+            },
+            delete_effects={
+                predicates["Holding"]([robot, block]),
+            },
+        )
+
+        place_on_target_operator = LiftedOperator(
+            "PlaceOnTarget",
+            [robot, block, surface],
+            preconditions={
+                predicates["Holding"]([robot, block]),
+                predicates["Clear"]([surface]),
+            },
+            add_effects={
+                predicates["On"]([block, surface]),
+                predicates["GripperEmpty"]([robot]),
+            },
+            delete_effects={
+                predicates["Holding"]([robot, block]),
+                predicates["Clear"]([surface]),
+            },
+        )
+
+        operators_dict = {
+            "PickUp": pick_up_operator,
+            "Place": place_operator,
+            "PlaceOnTarget": place_on_target_operator,
         }
 
-        # Create parameterized skills
-        parameterized_skills = create_parameterized_skills(types_container)
+        # Create parameterized skills (LiftedSkill = operator + controller pairs)
+        lifted_skills = create_parameterized_skills(types_container, operators_dict)
 
         return PlanningComponents(
             types=types_set,
             predicate_container=predicates,
-            operators=operators,
-            skills=set(parameterized_skills.values()),
+            operators=set(operators_dict.values()),
+            skills=set(lifted_skills.values()),  # Now contains LiftedSkill objects
             perceiver=perceiver,
         )
 
