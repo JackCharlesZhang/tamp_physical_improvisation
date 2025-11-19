@@ -842,21 +842,24 @@ def create_goal_deriver(
 def create_transition_fn(env: gym.Env) -> callable:
     """Create transition function for SESAME planner.
 
-    This function simulates state transitions.
-    For now, this is a placeholder that would need environment integration.
+    This function simulates state transitions by resetting the environment
+    to a given state and stepping forward.
     """
     def transition_fn(state: ObjectCentricState, action: Any) -> ObjectCentricState:
         """Simulate state transition.
 
-        WARNING: This is a simplified version.
-        For full SESAME planning, this would need to:
-        1. Convert state to observation
-        2. Execute action in simulator
-        3. Convert resulting observation back to state
+        Resets the environment to the given state, executes the action,
+        and returns the resulting state.
         """
-        # For now, return the same state (placeholder)
-        # In practice, you'd need to integrate with the environment
-        return state
+        # Reset environment to the given state
+        state_copy = state.copy()
+        env.reset(options={"init_state": state_copy})
+
+        # Execute action in the simulator
+        obs, _, _, _, _ = env.step(action)
+
+        # Return the new state (obs is already an ObjectCentricState for dynamic2d)
+        return obs.copy()
 
     return transition_fn
 
