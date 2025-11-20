@@ -1,4 +1,4 @@
-from typing import Any, TypeVar
+from typing import Any, TypeVar, Optional
 import numpy as np
 import abc
 from tamp_improv.approaches.improvisational.policies.base import GoalConditionedTrainingData
@@ -13,7 +13,7 @@ class BaseTrainingDataSampler(abc.ABC):
     def __init__(self, 
         all_state_pairs: list[tuple[ObsType, ObsType]],
         system: ImprovisationalTAMPSystem,
-        planning_graph: PlanningGraph,
+        planning_graph: Optional[PlanningGraph],
         config: dict[str, Any],
         rng: np.random.Generator,
     ):

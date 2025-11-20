@@ -1,5 +1,5 @@
 from tamp_improv.approaches.improvisational.training_data_sampler.base_training_data_sampler import BaseTrainingDataSampler
-from typing import TypeVar, Any
+from typing import TypeVar, Any, Optional
 import numpy as np
 from tamp_improv.approaches.improvisational.policies.base import GoalConditionedTrainingData
 from tamp_improv.approaches.improvisational.graph import PlanningGraph
@@ -12,7 +12,7 @@ class RandomTrainingDataSampler(BaseTrainingDataSampler):
     def __init__(self, 
         all_state_pairs: list[tuple[ObsType, ObsType]],
         system: ImprovisationalTAMPSystem, 
-        planning_graph: PlanningGraph, 
+        planning_graph: Optional[PlanningGraph], 
         config: dict[str, Any], 
         rng: np.random.Generator,
     ):
@@ -35,7 +35,7 @@ class MaxDistanceTrainingDataSampler(BaseTrainingDataSampler):
     def __init__(self, 
         all_state_pairs: list[tuple[ObsType, ObsType]],
         system: ImprovisationalTAMPSystem, 
-        planning_graph: PlanningGraph, 
+        planning_graph: Optional[PlanningGraph], 
         config: dict[str, Any], 
         rng: np.random.Generator,
     ):

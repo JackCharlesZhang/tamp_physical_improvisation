@@ -4,7 +4,7 @@ This module separates the pruning phase from data collection, allowing different
 pruning strategies to be applied to the same collected training data.
 """
 
-from typing import Any
+from typing import Any, Optional
 from collections import defaultdict
 import gymnasium as gym
 
@@ -29,6 +29,8 @@ def train_distance_heuristic(
     system: ImprovisationalTAMPSystem,
     config: dict[str, Any],
     rng: np.random.Generator,
+    planning_graph: Optional[PlanningGraph] = None,
+    sampler: Optional["BaseTrainingDataSampler"] = None,
 ) -> "GoalConditionedDistanceHeuristic":
     """Train a distance heuristic on the collected training data.
 
@@ -37,6 +39,8 @@ def train_distance_heuristic(
         system: The TAMP system
         config: Configuration with heuristic training parameters
         rng: Random number generator
+        planning_graph: Optional planning graph (for samplers that need it)
+        sampler: Optional training data sampler. If None, will create one based on config.
 
     Returns:
         Trained GoalConditionedDistanceHeuristic
@@ -44,6 +48,10 @@ def train_distance_heuristic(
     from tamp_improv.approaches.improvisational.distance_heuristic import (
         DistanceHeuristicConfig,
         GoalConditionedDistanceHeuristic,
+    )
+    from tamp_improv.approaches.improvisational.training_data_sampler.training_data_samplers import (
+        RandomTrainingDataSampler,
+        MaxDistanceTrainingDataSampler,
     )
 
     print("Training distance heuristic...")
@@ -69,11 +77,23 @@ def train_distance_heuristic(
 
     print(f"  Total available state pairs: {len(all_state_pairs)}")
 
-    # Sample training pairs
-    heuristic_training_pairs = config.get("heuristic_training_pairs", 100)
-    num_train = min(heuristic_training_pairs, len(all_state_pairs))
-    train_indices = rng.choice(len(all_state_pairs), size=num_train, replace=False)
-    training_pairs = [all_state_pairs[i] for i in train_indices]
+    # Create or use provided sampler
+    if sampler is None:
+        sampler_type = config.get("heuristic_sampler", "random")
+        if sampler_type == "random":
+            sampler = RandomTrainingDataSampler(
+                all_state_pairs, system, planning_graph, config, rng
+            )
+        elif sampler_type == "max_distance":
+            sampler = MaxDistanceTrainingDataSampler(
+                all_state_pairs, system, planning_graph, config, rng
+            )
+        else:
+            raise ValueError(f"Unknown heuristic sampler type: {sampler_type}")
+
+    # Sample training pairs using the sampler
+    assert sampler is not None, "Sampler should be created or provided"
+    training_pairs = sampler.sample()
     print(f"  Selected {len(training_pairs)} pairs for training")
 
     # Create and train heuristic
@@ -490,7 +510,7 @@ def prune_with_distance_heuristic(
     # Step 3: Train distance heuristic (if not provided)
     if heuristic is None:
         print()  # Blank line before training output
-        heuristic = train_distance_heuristic(training_data, system, config, rng)
+        heuristic = train_distance_heuristic(training_data, system, config, rng, planning_graph)
     else:
         print("\nUsing pre-trained distance heuristic")
 
