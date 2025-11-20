@@ -59,6 +59,7 @@ class DynObstruction2DTypes:
         # Import prbench types
         from prbench.envs.dynamic2d.dyn_obstruction2d import TargetSurfaceType
         from prbench.envs.dynamic2d.object_types import (
+            Dynamic2DType,
             DynRectangleType,
             KinRobotType,
         )
@@ -69,9 +70,20 @@ class DynObstruction2DTypes:
         self.obstruction = DynRectangleType  # obstruction blocks (dynamic)
         self.surface = TargetSurfaceType  # target surface (kinematic, special type)
 
+        # Store parent type for PDDL domain
+        self.dynamic2d = Dynamic2DType
+
     def as_set(self) -> set[Type]:
-        """Convert to set of types."""
-        return {self.robot, self.block, self.obstruction, self.surface}
+        """Convert to set of types, including parent types for PDDL."""
+        types = {self.robot, self.block, self.obstruction, self.surface}
+        # Add all parent types to satisfy PDDL type hierarchy
+        all_types = set(types)
+        for t in types:
+            current = t
+            while current.parent is not None:
+                all_types.add(current.parent)
+                current = current.parent
+        return all_types
 
 
 @dataclass
