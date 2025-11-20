@@ -28,7 +28,7 @@ from relational_structs import (
     Type,
     Variable,
 )
-from task_then_motion_planning.structs import Perceiver
+from task_then_motion_planning.structs import LiftedOperatorSkill, Perceiver
 from tomsgeoms2d.structs import Rectangle
 
 from tamp_improv.benchmarks.base import (
@@ -1117,6 +1117,137 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         )
 
 
+# ==============================================================================
+# SLAP-COMPATIBLE PHASE-BASED SKILLS
+# ==============================================================================
+
+class BaseDynObstruction2DSkill(
+    LiftedOperatorSkill[NDArray[np.float32], NDArray[np.float32]]
+):
+    """Base class for DynObstruction2D SLAP skills."""
+
+    # Constants
+    POSITION_TOL = 5e-2  # Looser tolerance for physics
+    SAFE_Y = 1.0
+    GARBAGE_X, GARBAGE_Y = 0.3, 0.15
+    TARGET_THETA = 0.0
+    MAX_DX = MAX_DY = 5e-2
+    MAX_DTHETA = np.pi / 16
+    MAX_DARM, MAX_DGRIPPER = 1e-1, 2e-2
+
+    def __init__(self, components: PlanningComponents[NDArray[np.float32]]) -> None:
+        super().__init__()
+        self._components = components
+        self._lifted_operator = next(op for op in components.operators if op.name == self._get_operator_name())
+
+    def _get_operator_name(self) -> str:
+        raise NotImplementedError
+
+    def _parse_obs(self, obs: NDArray[np.float32]) -> dict[str, float]:
+        """Parse observation (80 dims: surface[0:14], block[14:29], obs0[29:44], obs1[44:59], robot[59:80])."""
+        return {
+            'surface_x': obs[0], 'surface_y': obs[1], 'surface_width': obs[12], 'surface_height': obs[13],
+            'block_x': obs[14], 'block_y': obs[15], 'block_width': obs[26], 'block_height': obs[27],
+            'robot_x': obs[59], 'robot_y': obs[60], 'robot_theta': obs[61],
+            'arm_joint': obs[73], 'arm_length_max': obs[74], 'gripper_base_height': obs[76], 'finger_gap': obs[77]
+        }
+
+
+class PickUpSkill(BaseDynObstruction2DSkill):
+    """SLAP skill for picking up target block."""
+
+    def _get_operator_name(self) -> str:
+        return "PickUp"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        p = self._parse_obs(obs)
+        # Phase 1: Align & extend
+        if not np.isclose(p['robot_theta'], self.TARGET_THETA, atol=self.POSITION_TOL):
+            return np.array([0, 0, np.clip(self.TARGET_THETA - p['robot_theta'], -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+        target_arm = p['arm_length_max'] * 0.95
+        if abs(p['arm_joint'] - target_arm) > self.POSITION_TOL:
+            return np.array([0, 0, 0, np.clip(target_arm - p['arm_joint'], -self.MAX_DARM, self.MAX_DARM), 0], dtype=np.float64)
+        # Phase 2: Open gripper
+        if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
+            return np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
+        # Phase 3: To safe height
+        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        # Phase 4: Above block
+        if not np.isclose(p['robot_x'], p['block_x'], atol=self.POSITION_TOL):
+            return np.array([np.clip(p['block_x'] - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
+        # Phase 5: Descend
+        if not np.isclose(p['robot_y'], p['block_y'], atol=self.POSITION_TOL):
+            return np.array([0, np.clip(p['block_y'] - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        # Phase 6: Close gripper
+        if p['finger_gap'] > p['block_width'] * 0.7 + self.POSITION_TOL:
+            return np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
+        # Phase 7: Lift
+        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        return np.zeros(5, dtype=np.float64)
+
+
+class PlaceSkill(BaseDynObstruction2DSkill):
+    """SLAP skill for placing to garbage zone."""
+
+    def _get_operator_name(self) -> str:
+        return "Place"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        p = self._parse_obs(obs)
+        # Ensure alignment
+        if not np.isclose(p['robot_theta'], self.TARGET_THETA, atol=self.POSITION_TOL):
+            return np.array([0, 0, np.clip(self.TARGET_THETA - p['robot_theta'], -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+        # To safe height
+        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        # To garbage x
+        if not np.isclose(p['robot_x'], self.GARBAGE_X, atol=self.POSITION_TOL):
+            return np.array([np.clip(self.GARBAGE_X - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
+        # Descend
+        if not np.isclose(p['robot_y'], self.GARBAGE_Y, atol=self.POSITION_TOL):
+            return np.array([0, np.clip(self.GARBAGE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        # Open gripper
+        if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
+            return np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
+        # Lift
+        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        return np.zeros(5, dtype=np.float64)
+
+
+class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
+    """SLAP skill for placing on target surface."""
+
+    def _get_operator_name(self) -> str:
+        return "PlaceOnTarget"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        p = self._parse_obs(obs)
+        target_x = p['surface_x']
+        target_y = p['surface_y'] + p['surface_height']/2 + p['block_height']/2
+        # Ensure alignment
+        if not np.isclose(p['robot_theta'], self.TARGET_THETA, atol=self.POSITION_TOL):
+            return np.array([0, 0, np.clip(self.TARGET_THETA - p['robot_theta'], -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+        # To safe height
+        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        # To target x
+        if not np.isclose(p['robot_x'], target_x, atol=self.POSITION_TOL):
+            return np.array([np.clip(target_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
+        # Descend
+        if not np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL):
+            return np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        # Open gripper
+        if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
+            return np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
+        # Lift
+        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        return np.zeros(5, dtype=np.float64)
+
+
 class BaseDynObstruction2DTAMPSystem(
     BaseTAMPSystem[NDArray[np.float32], NDArray[np.float32]]
 ):
@@ -1313,7 +1444,12 @@ class BaseDynObstruction2DTAMPSystem(
             seed=seed,
             render_mode=render_mode,
         )
-        # Skills are already created in _create_planning_components
+        # Add SLAP skills
+        system.components.skills.update({
+            PickUpSkill(system.components),  # type: ignore
+            PlaceSkill(system.components),  # type: ignore
+            PlaceOnTargetSkill(system.components),  # type: ignore
+        })
         return system
 
 
@@ -1363,5 +1499,10 @@ class DynObstruction2DTAMPSystem(
             seed=seed,
             render_mode=render_mode,
         )
-        # Skills are already created in _create_planning_components
+        # Add SLAP skills
+        system.components.skills.update({
+            PickUpSkill(system.components),  # type: ignore
+            PlaceSkill(system.components),  # type: ignore
+            PlaceOnTargetSkill(system.components),  # type: ignore
+        })
         return system
