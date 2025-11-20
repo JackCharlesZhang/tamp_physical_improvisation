@@ -1138,9 +1138,18 @@ class BaseDynObstruction2DSkill(
     def __init__(self, components: PlanningComponents[NDArray[np.float32]]) -> None:
         super().__init__()
         self._components = components
-        self._lifted_operator = next(op for op in components.operators if op.name == self._get_operator_name())
+        self._lifted_operator = self._get_lifted_operator()
+
+    def _get_lifted_operator(self) -> LiftedOperator:
+        """Get the operator this skill implements."""
+        return next(
+            op
+            for op in self._components.operators
+            if op.name == self._get_operator_name()
+        )
 
     def _get_operator_name(self) -> str:
+        """Get the name of the operator this skill implements."""
         raise NotImplementedError
 
     def _parse_obs(self, obs: NDArray[np.float32]) -> dict[str, float]:
