@@ -57,41 +57,20 @@ def train_distance_heuristic(
 
     print("Training distance heuristic...")
 
-    # Prepare all state pairs from training data
-    all_state_pairs = []
-    for source_id, target_id in training_data.valid_shortcuts:
-        if source_id not in training_data.node_states:
-            continue
-        if target_id not in training_data.node_states:
-            continue
-
-        source_states = training_data.node_states[source_id]
-        target_states = training_data.node_states[target_id]
-
-        if not source_states or not target_states:
-            continue
-
-        # Use all combinations of states
-        for source_state in source_states:
-            for target_state in target_states:
-                all_state_pairs.append((source_state, target_state))
-
-    print(f"  Total available state pairs: {len(all_state_pairs)}")
-
     # Create or use provided sampler
     if sampler is None:
         sampler_type = config.get("heuristic_sampler", "random")
         if sampler_type == "random":
             sampler = RandomTrainingDataSampler(
-                training_data, system, planning_graph, config, rng
+                training_data, system, config, rng
             )
         elif sampler_type == "max_distance":
             sampler = MaxDistanceTrainingDataSampler(
-                training_data, system, planning_graph, config, rng
+                training_data, system, config, rng
             )
         elif sampler_type == "similarity":
             sampler = SimilarityTrainingDataSampler(
-                training_data, system, planning_graph, config, rng
+                training_data, system, config, rng
             )
         else:
             raise ValueError(f"Unknown heuristic sampler type: {sampler_type}")
