@@ -79,9 +79,13 @@ def add_bounds_checking_to_env(env, world_bounds: tuple[float, float, float, flo
         # Call original step
         result = original_step(action)
 
-        # Check bounds for all objects
+        # Check bounds for all objects (skip walls - they're intentionally outside)
         if hasattr(target_env, '_state_obj_to_pymunk_body'):
             for obj, body in target_env._state_obj_to_pymunk_body.items():
+                # Skip walls and table (static objects that are supposed to be at edges)
+                if 'wall' in obj.name.lower() or obj.name == 'table':
+                    continue
+
                 if hasattr(target_env, 'pymunk_space') and body in target_env.pymunk_space.bodies:
                     log_bounds_check(
                         obj_name=obj.name,
