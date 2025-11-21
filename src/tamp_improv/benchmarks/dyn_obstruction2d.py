@@ -1194,20 +1194,19 @@ class PickUpSkill(BaseDynObstruction2DSkill):
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
 
-        # Check if we're ready to start main pickup (positioned above block)
-        at_safe_y = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+        # Determine if we're in the descent/grasp phase (below safe height and above block horizontally)
+        # Once we're positioned above the block and start descending, don't return to safe height
         theta_aligned = abs(self._angle_diff(self.TARGET_THETA, p['robot_theta'])) <= self.POSITION_TOL
         arm_extended = abs(p['arm_joint'] - p['arm_length_max'] * 0.95) <= self.POSITION_TOL
         gripper_open = p['finger_gap'] >= p['gripper_base_height'] - self.POSITION_TOL
-        above_block = np.isclose(p['robot_x'], p['block_x'], atol=self.POSITION_TOL)
+        above_block_x = np.isclose(p['robot_x'], p['block_x'], atol=self.POSITION_TOL)
 
-        ready_to_descend = at_safe_y and theta_aligned and arm_extended and gripper_open and above_block
+        # If we're above the block horizontally and prepared (rotated, arm out, gripper open),
+        # we're committed to the descent - don't go back to Phase 0
+        in_descent_phase = theta_aligned and arm_extended and gripper_open and above_block_x
 
-        if not ready_to_descend:
-            print(f"[DEBUG] ready_to_descend=False: at_safe_y={at_safe_y}, theta_aligned={theta_aligned}, arm_extended={arm_extended}, gripper_open={gripper_open}, above_block={above_block}")
-
-        # Phase 0: Move to safe height (ONLY if we haven't started descending yet)
-        if not ready_to_descend and not at_safe_y:
+        # Phase 0: Move to safe height (ONLY during initial positioning, not during descent)
+        if not in_descent_phase and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             print(f"[PickUp Phase 0] Move to safe height: robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f}, dy={action[1]:.3f}")
             return action
