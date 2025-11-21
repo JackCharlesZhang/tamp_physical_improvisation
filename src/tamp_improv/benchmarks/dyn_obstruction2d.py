@@ -1309,7 +1309,9 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
-        target_x = p['surface_x']
+        # Clamp target_x to stay within safe bounds (table is x=-2.0 to 2.0, add margin for robot)
+        WORLD_MIN_X, WORLD_MAX_X = -1.8, 1.8  # Safety margin from edges
+        target_x = np.clip(p['surface_x'], WORLD_MIN_X, WORLD_MAX_X)
         target_y = p['surface_y'] + p['surface_height']/2 + p['block_height']/2
         # Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
