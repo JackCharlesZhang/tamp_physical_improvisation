@@ -1173,6 +1173,17 @@ class BaseDynObstruction2DSkill(
             'arm_joint': obs[73], 'arm_length_max': obs[74], 'gripper_base_height': obs[76], 'finger_gap': obs[77]
         }
 
+    @staticmethod
+    def _angle_diff(target: float, current: float) -> float:
+        """Compute shortest angular distance from current to target, handling wrapping."""
+        diff = target - current
+        # Normalize to [-π, π]
+        while diff > np.pi:
+            diff -= 2 * np.pi
+        while diff < -np.pi:
+            diff += 2 * np.pi
+        return diff
+
 
 class PickUpSkill(BaseDynObstruction2DSkill):
     """SLAP skill for picking up target block."""
@@ -1185,9 +1196,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # Phase 0: FIRST move to safe height (lift up before doing anything else!)
         if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-        # Phase 1: Align theta to 0 (rotate gripper)
-        if not np.isclose(p['robot_theta'], self.TARGET_THETA, atol=self.POSITION_TOL):
-            return np.array([0, 0, np.clip(self.TARGET_THETA - p['robot_theta'], -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+        # Phase 1: Align theta to 0 (rotate gripper) - use shortest angular path
+        angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
+        if abs(angle_error) > self.POSITION_TOL:
+            return np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
         # Phase 2: Extend arm
         target_arm = p['arm_length_max'] * 0.95
         if abs(p['arm_joint'] - target_arm) > self.POSITION_TOL:
@@ -1218,9 +1230,10 @@ class PlaceSkill(BaseDynObstruction2DSkill):
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
-        # Ensure alignment
-        if not np.isclose(p['robot_theta'], self.TARGET_THETA, atol=self.POSITION_TOL):
-            return np.array([0, 0, np.clip(self.TARGET_THETA - p['robot_theta'], -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+        # Ensure alignment - use shortest angular path
+        angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
+        if abs(angle_error) > self.POSITION_TOL:
+            return np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
         # To safe height
         if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
@@ -1249,9 +1262,10 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         p = self._parse_obs(obs)
         target_x = p['surface_x']
         target_y = p['surface_y'] + p['surface_height']/2 + p['block_height']/2
-        # Ensure alignment
-        if not np.isclose(p['robot_theta'], self.TARGET_THETA, atol=self.POSITION_TOL):
-            return np.array([0, 0, np.clip(self.TARGET_THETA - p['robot_theta'], -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+        # Ensure alignment - use shortest angular path
+        angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
+        if abs(angle_error) > self.POSITION_TOL:
+            return np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
         # To safe height
         if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
