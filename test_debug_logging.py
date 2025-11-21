@@ -34,15 +34,21 @@ def test_debug_logging():
     print()
 
     # Run some steps with random actions
+    collision_count = 0
+    bounds_warning_count = 0
+    bounds_error_count = 0
+
     for step in range(100):
         # Random action
         action = system.env.action_space.sample()
 
         # Occasionally try to move towards boundaries to trigger warnings
         if step % 20 == 0:
+            print(f"\n--- Step {step}: Forcing movement right ---")
             # Try to move right
             action = np.array([0.05, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
         elif step % 20 == 10:
+            print(f"\n--- Step {step}: Forcing movement left ---")
             # Try to move left
             action = np.array([-0.05, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
 

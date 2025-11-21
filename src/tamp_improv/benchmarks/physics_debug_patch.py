@@ -63,16 +63,19 @@ def add_bounds_checking_to_env(env, world_bounds: tuple[float, float, float, flo
         env: The prbench environment instance
         world_bounds: (min_x, max_x, min_y, max_y)
     """
-    original_step = env.step
+    # Handle both wrapper and direct env
+    target_env = env._env if hasattr(env, '_env') else env
+
+    original_step = target_env.step
 
     def patched_step(action):
         # Call original step
         result = original_step(action)
 
         # Check bounds for all objects
-        if hasattr(env, '_state_obj_to_pymunk_body'):
-            for obj, body in env._state_obj_to_pymunk_body.items():
-                if body in env.pymunk_space.bodies:
+        if hasattr(target_env, '_state_obj_to_pymunk_body'):
+            for obj, body in target_env._state_obj_to_pymunk_body.items():
+                if hasattr(target_env, 'pymunk_space') and body in target_env.pymunk_space.bodies:
                     log_bounds_check(
                         obj_name=obj.name,
                         position=(body.position.x, body.position.y),
@@ -82,12 +85,18 @@ def add_bounds_checking_to_env(env, world_bounds: tuple[float, float, float, flo
 
         return result
 
-    env.step = patched_step
+    target_env.step = patched_step
 
 
 def add_held_state_logging_to_env(env) -> None:
     """Add logging when objects transition between DYNAMIC and KINEMATIC."""
-    original_add_state = env._add_state_to_space
+    # Handle both wrapper and direct env
+    target_env = env._env if hasattr(env, '_env') else env
+
+    if not hasattr(target_env, '_add_state_to_space'):
+        raise AttributeError(f"Environment {type(target_env).__name__} does not have _add_state_to_space")
+
+    original_add_state = target_env._add_state_to_space
 
     # Track previous states
     _obj_states = {}
@@ -120,7 +129,7 @@ def add_held_state_logging_to_env(env) -> None:
         # Call original
         original_add_state(state)
 
-    env._add_state_to_space = patched_add_state
+    target_env._add_state_to_space = patched_add_state
 
 
 def patch_prbench_for_debugging(env, world_bounds: tuple[float, float, float, float]) -> None:
