@@ -1194,7 +1194,6 @@ class PickUpSkill(BaseDynObstruction2DSkill):
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
 
-        # ALWAYS print gripper orientation for debugging
         print(f"[GRIPPER ORIENTATION] theta={p['robot_theta']:.3f} rad ({np.degrees(p['robot_theta']):.1f}°), target={self.TARGET_THETA:.3f} rad ({np.degrees(self.TARGET_THETA):.1f}°)")
 
         # Determine if we're in the descent/grasp phase
@@ -1208,32 +1207,27 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # Don't check block position because block might move when we bump it
         below_safe_height = p['robot_y'] < (self.SAFE_Y - self.POSITION_TOL)
         in_descent_phase = theta_aligned and arm_extended and below_safe_height
-
         print(f"[STATE] theta_aligned={theta_aligned}, arm_extended={arm_extended}, below_safe_height={below_safe_height}, in_descent={in_descent_phase}")
 
         # Phase 0: Move to safe height (ONLY during initial positioning, not during descent)
         if not in_descent_phase and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             print(f"[PickUp Phase 0] Move to safe height: robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f}, dy={action[1]:.3f}")
             return action
 
         # Phase 1: Align theta to 0 (rotate gripper) - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         if abs(angle_error) > self.POSITION_TOL:
-            action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
             print(f"[PickUp Phase 1] Rotate gripper: theta={p['robot_theta']:.3f}, target={self.TARGET_THETA:.3f}, error={angle_error:.3f}, dtheta={action[2]:.3f}")
             return action
 
         # Phase 2: Extend arm
         target_arm = p['arm_length_max'] * 0.95
         if abs(p['arm_joint'] - target_arm) > self.POSITION_TOL:
-            action = np.array([0, 0, 0, np.clip(target_arm - p['arm_joint'], -self.MAX_DARM, self.MAX_DARM), 0], dtype=np.float64)
             print(f"[PickUp Phase 2] Extend arm: arm={p['arm_joint']:.3f}, target={target_arm:.3f}, darm={action[3]:.3f}")
             return action
 
         # Phase 3: Open gripper
         if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
-            action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
             print(f"[PickUp Phase 3] Open gripper: gap={p['finger_gap']:.3f}, target={p['gripper_base_height']:.3f}")
             return action
 
@@ -1241,32 +1235,26 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         if not np.isclose(p['robot_x'], p['block_x'], atol=self.POSITION_TOL):
             # If not at safe height, go back to safe height first
             if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-                action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
                 print(f"[PickUp Phase 4-prep] Return to safe height before horizontal move: robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f}, dy={action[1]:.3f}")
                 return action
             # At safe height, move horizontally
-            action = np.array([np.clip(p['block_x'] - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
             print(f"[PickUp Phase 4] Move to block x: robot_x={p['robot_x']:.3f}, block_x={p['block_x']:.3f}, dx={action[0]:.3f}")
             return action
 
         # Phase 5: Descend to grasp height (only after positioned above block)
         if not np.isclose(p['robot_y'], p['block_y'], atol=self.POSITION_TOL):
-            action = np.array([0, np.clip(p['block_y'] - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             print(f"[PickUp Phase 5] Descend to block: robot_y={p['robot_y']:.3f}, block_y={p['block_y']:.3f}, dy={action[1]:.3f}")
             return action
 
         # Phase 6: Close gripper
         if p['finger_gap'] > p['block_width'] * 0.7 + self.POSITION_TOL:
-            action = np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
             print(f"[PickUp Phase 6] Close gripper: gap={p['finger_gap']:.3f}, target={p['block_width'] * 0.7:.3f}")
             return action
 
         # Phase 7: Lift back to safe height
         if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             print(f"[PickUp Phase 7] Lift with block: robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f}, dy={action[1]:.3f}")
             return action
-
         print(f"[PickUp DONE] All phases complete")
         return np.zeros(5, dtype=np.float64)
 
@@ -1361,16 +1349,29 @@ class BaseDynObstruction2DTAMPSystem(
         Install with: pip install -e 'path/to/prbench[dynamic2d]'
         """
         try:
-            from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv
+            from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv, DynObstruction2DEnvConfig
         except ImportError as e:
             raise ImportError(
                 "DynObstruction2DEnv requires prbench to be installed. "
                 "Install with: pip install -e 'path/to/prbench[dynamic2d]'"
             ) from e
 
-        return DynObstruction2DEnv(
+        env = DynObstruction2DEnv(
             num_obstructions=self._num_obstructions, render_mode=self._render_mode
         )
+
+        # Apply debug patches to track collisions and state transitions
+        try:
+            from tamp_improv.benchmarks.physics_debug_patch import patch_prbench_for_debugging
+            config = DynObstruction2DEnvConfig()
+            world_bounds = (config.world_min_x, config.world_max_x, config.world_min_y, config.world_max_y)
+            # Get the actual object-centric env from the wrapper
+            obj_centric_env = env._env if hasattr(env, '_env') else env
+            patch_prbench_for_debugging(obj_centric_env, world_bounds)
+        except Exception as e:
+            print(f"[WARNING] Failed to apply debug patches: {e}")
+
+        return env
 
     def _get_domain_name(self) -> str:
         """Get domain name."""
