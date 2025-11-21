@@ -1,23 +1,21 @@
 from typing import TypeVar, Any, Optional
 import numpy as np
-from tamp_improv.approaches.improvisational.graph import PlanningGraph
+from tamp_improv.approaches.improvisational.policies.base import GoalConditionedTrainingData
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
 from tamp_improv.approaches.improvisational.base import ShortcutSignature
 from tamp_improv.approaches.improvisational.training_data_sampler.base_training_data_sampler import BaseTrainingDataSampler
-
 
 ObsType = TypeVar("ObsType")
 
 class RandomTrainingDataSampler(BaseTrainingDataSampler):
     """Sampler that selects state pairs randomly."""
     def __init__(self, 
-        all_state_pairs: list[tuple[ObsType, ObsType]],
+        training_data: GoalConditionedTrainingData,
         system: ImprovisationalTAMPSystem, 
-        planning_graph: Optional[PlanningGraph], 
         config: dict[str, Any], 
         rng: np.random.Generator,
     ):
-        super().__init__(all_state_pairs, system, planning_graph, config, rng)
+        super().__init__(training_data, system, config, rng)
 
     def sample(self) -> list[tuple[ObsType, ObsType]]:
         num_train = min(self.config.get("num_training_pairs", 100), len(self.all_state_pairs))
@@ -34,13 +32,12 @@ class MaxDistanceTrainingDataSampler(BaseTrainingDataSampler):
     """
     
     def __init__(self, 
-        all_state_pairs: list[tuple[ObsType, ObsType]],
+        training_data: GoalConditionedTrainingData,
         system: ImprovisationalTAMPSystem, 
-        planning_graph: Optional[PlanningGraph], 
         config: dict[str, Any], 
         rng: np.random.Generator,
     ):
-        super().__init__(all_state_pairs, system, planning_graph, config, rng)
+        super().__init__(training_data, system, config, rng)
 
     def _flatten_obs(self, obs: ObsType) -> np.ndarray:
         """Flatten observation to array for distance computation."""
@@ -79,13 +76,12 @@ class SimilarityTrainingDataSampler(BaseTrainingDataSampler):
     """
     
     def __init__(self, 
-        all_state_pairs: list[tuple[ObsType, ObsType]],
+        training_data: GoalConditionedTrainingData,
         system: ImprovisationalTAMPSystem, 
-        planning_graph: Optional[PlanningGraph], 
         config: dict[str, Any], 
         rng: np.random.Generator,
     ):
-        super().__init__(all_state_pairs, system, planning_graph, config, rng)
+        super().__init__(training_data, system, config, rng)
     
     def sample(self) -> list[tuple[ObsType, ObsType]]:
         """Sample training pairs with minimum collective similarity using greedy selection.
@@ -100,31 +96,15 @@ class SimilarityTrainingDataSampler(BaseTrainingDataSampler):
 
         if num_train == 0:
             return []
-        
-        assert self.planning_graph is not None, "Planning graph is required for similarity sampling"
 
         # Step 1: Map each state pair to its shortcut signature
-        # We need to find which nodes correspond to each state pair
         pair_signatures = []
-        assert self.planning_graph is not None
-        for source_node in self.planning_graph.nodes:
-            for target_node in self.planning_graph.nodes:
-                if source_node == target_node:
-                    continue
-                if any(
-                    edge.target == target_node
-                    for edge in self.planning_graph.node_to_outgoing_edges.get(source_node, [])
-                ):
-                    continue
-                if target_node.id <= source_node.id:
-                    continue
+        for source_state, target_state in self.all_state_pairs:
+            source_atoms = self.perceiver.step(source_state)
+            target_atoms = self.perceiver.step(target_state)
 
-                source_atoms = set(source_node.atoms)
-                target_atoms = set(target_node.atoms)
-
-                current_signature = ShortcutSignature.from_context(source_atoms, target_atoms)
-                pair_signatures.append(current_signature)
-        
+            current_signature = ShortcutSignature.from_context(source_atoms, target_atoms)
+            pair_signatures.append(current_signature)
         
         # Step 2: Greedy farthest-point sampling
         # Start with a random pair

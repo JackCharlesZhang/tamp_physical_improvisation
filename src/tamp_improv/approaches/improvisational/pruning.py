@@ -52,6 +52,7 @@ def train_distance_heuristic(
     from tamp_improv.approaches.improvisational.training_data_sampler.training_data_samplers import (
         RandomTrainingDataSampler,
         MaxDistanceTrainingDataSampler,
+        SimilarityTrainingDataSampler,
     )
 
     print("Training distance heuristic...")
@@ -82,11 +83,15 @@ def train_distance_heuristic(
         sampler_type = config.get("heuristic_sampler", "random")
         if sampler_type == "random":
             sampler = RandomTrainingDataSampler(
-                all_state_pairs, system, planning_graph, config, rng
+                training_data, system, planning_graph, config, rng
             )
         elif sampler_type == "max_distance":
             sampler = MaxDistanceTrainingDataSampler(
-                all_state_pairs, system, planning_graph, config, rng
+                training_data, system, planning_graph, config, rng
+            )
+        elif sampler_type == "similarity":
+            sampler = SimilarityTrainingDataSampler(
+                training_data, system, planning_graph, config, rng
             )
         else:
             raise ValueError(f"Unknown heuristic sampler type: {sampler_type}")
