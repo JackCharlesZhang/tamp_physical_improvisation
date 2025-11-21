@@ -63,8 +63,15 @@ def add_bounds_checking_to_env(env, world_bounds: tuple[float, float, float, flo
         env: The prbench environment instance
         world_bounds: (min_x, max_x, min_y, max_y)
     """
-    # Handle both wrapper and direct env
-    target_env = env._env if hasattr(env, '_env') else env
+    # Handle different wrapper types
+    if hasattr(env, '_object_centric_env'):
+        # ConstantObjectPRBenchEnv wrapper
+        target_env = env._object_centric_env
+    elif hasattr(env, '_env'):
+        # Other wrapper type
+        target_env = env._env
+    else:
+        target_env = env
 
     original_step = target_env.step
 
@@ -90,8 +97,15 @@ def add_bounds_checking_to_env(env, world_bounds: tuple[float, float, float, flo
 
 def add_held_state_logging_to_env(env) -> None:
     """Add logging when objects transition between DYNAMIC and KINEMATIC."""
-    # Handle both wrapper and direct env
-    target_env = env._env if hasattr(env, '_env') else env
+    # Handle different wrapper types
+    if hasattr(env, '_object_centric_env'):
+        # ConstantObjectPRBenchEnv wrapper
+        target_env = env._object_centric_env
+    elif hasattr(env, '_env'):
+        # Other wrapper type
+        target_env = env._env
+    else:
+        target_env = env
 
     if not hasattr(target_env, '_add_state_to_space'):
         raise AttributeError(f"Environment {type(target_env).__name__} does not have _add_state_to_space")

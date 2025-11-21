@@ -1365,9 +1365,8 @@ class BaseDynObstruction2DTAMPSystem(
             from tamp_improv.benchmarks.physics_debug_patch import patch_prbench_for_debugging
             config = DynObstruction2DEnvConfig()
             world_bounds = (config.world_min_x, config.world_max_x, config.world_min_y, config.world_max_y)
-            # Get the actual object-centric env from the wrapper
-            obj_centric_env = env._env if hasattr(env, '_env') else env
-            patch_prbench_for_debugging(obj_centric_env, world_bounds)
+            # Patch the environment (handles wrapper types internally)
+            patch_prbench_for_debugging(env, world_bounds)
         except Exception as e:
             print(f"[WARNING] Failed to apply debug patches: {e}")
 
