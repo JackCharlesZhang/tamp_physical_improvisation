@@ -1176,7 +1176,7 @@ class BaseDynObstruction2DSkill(
         """Parse observation (80 dims: surface[0:14], block[14:29], obs0[29:44], obs1[44:59], robot[59:80])."""
         return {
             'surface_x': obs[0], 'surface_y': obs[1], 'surface_width': obs[12], 'surface_height': obs[13],
-            'block_x': obs[14], 'block_y': obs[15], 'block_width': obs[26], 'block_height': obs[27],
+            'block_x': obs[14], 'block_y': obs[15], 'block_width': obs[26], 'block_height': obs[27], 'target_block_held': bool(obs[21]),
             'robot_x': obs[59], 'robot_y': obs[60], 'robot_theta': obs[61],
             'arm_joint': obs[73], 'arm_length_max': obs[74], 'gripper_base_height': obs[76], 'finger_gap': obs[77]
         }
@@ -1340,10 +1340,13 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         from tamp_improv.benchmarks.debug_physics import log_skill_action
 
         p = self._parse_obs(obs)
-        # Clamp target_x to stay within safe bounds (table is x=-2.0 to 2.0, add margin for robot)
-        WORLD_MIN_X, WORLD_MAX_X = -1.8, 1.8  # Safety margin from edges
-        target_x = np.clip(p['surface_x'], WORLD_MIN_X, WORLD_MAX_X)
-        target_y = p['surface_y'] + p['surface_height']/2 + p['block_height']/2
+        # Place at surface x-position (no clamping - assume surface is within valid bounds)
+        target_x = p['surface_x']
+        # Target: block bottom touches surface top
+        # Block center when placed = surface_y + surface_height + block_height/2
+        # robot_y - arm_length_max = block_center
+        # Therefore: robot_y = surface_y + surface_height + block_height/2 + arm_length_max
+        target_y = p['surface_y'] + p['surface_height'] + p['block_height']/2 + p['arm_length_max']
 
         # Phase 0: Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
@@ -1354,8 +1357,10 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             })
             return action
 
-        # Phase 1: To safe height
-        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+        # Phase 1: To safe height (only if we haven't reached target x yet)
+        # Once we're at target x, we proceed to descend and don't return to safe height
+        not_at_target_x = not np.isclose(p['robot_x'], target_x, atol=self.POSITION_TOL)
+        if not_at_target_x and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             log_skill_action("PlaceOnTarget", "1-SafeHeight", action, {
                 "robot_y": p['robot_y'], "safe_y": self.SAFE_Y
@@ -1363,34 +1368,41 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             return action
 
         # Phase 2: To target x
-        if not np.isclose(p['robot_x'], target_x, atol=self.POSITION_TOL):
+        if not_at_target_x:
             action = np.array([np.clip(target_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
             log_skill_action("PlaceOnTarget", "2-MoveToTarget", action, {
                 "robot_x": p['robot_x'], "target_x": target_x, "surface_x": p['surface_x']
             })
             return action
 
-        # Phase 3: Descend
-        if not np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL):
+        # Phase 3: Descend (only if gripper is still holding the object)
+        # Check if we're still holding (not if gripper is fully closed)
+        still_holding = p['target_block_held']
+        if still_holding and not np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL):
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             log_skill_action("PlaceOnTarget", "3-Descend", action, {
-                "robot_y": p['robot_y'], "target_y": target_y
+                "robot_y": p['robot_y'], "target_y": target_y, "still_holding": still_holding
             })
             return action
 
-        # Phase 4: Open gripper
-        if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
+        # Phase 4: Open gripper (only if we're at target position and still holding)
+        at_target_position = np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL)
+        still_holding_at_target = at_target_position and p['target_block_held']
+        # Open gripper if not yet fully open (check if finger_gap is less than fully open)
+        if still_holding_at_target and p['finger_gap'] < p['gripper_base_height'] * 0.95:
             action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
             log_skill_action("PlaceOnTarget", "4-OpenGripper", action, {
                 "finger_gap": p['finger_gap'], "target_gap": p['gripper_base_height']
             })
             return action
 
-        # Phase 5: Lift
-        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+        # Phase 5: Lift (only after block has been released)
+        # Check if block is no longer held (not if gripper is opened)
+        block_released = not p['target_block_held']
+        if block_released and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             log_skill_action("PlaceOnTarget", "5-Lift", action, {
-                "robot_y": p['robot_y'], "safe_y": self.SAFE_Y
+                "robot_y": p['robot_y'], "safe_y": self.SAFE_Y, "block_released": block_released
             })
             return action
 
