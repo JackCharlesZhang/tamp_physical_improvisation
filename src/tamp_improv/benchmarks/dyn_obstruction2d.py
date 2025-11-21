@@ -1142,7 +1142,7 @@ class BaseDynObstruction2DSkill(
     POSITION_TOL = 5e-2  # Looser tolerance for physics
     SAFE_Y = 1.5  # Higher safe navigation height for better clearance
     GARBAGE_X, GARBAGE_Y = 0.3, 0.15
-    TARGET_THETA = 0.0
+    TARGET_THETA = -np.pi / 2  # -90° = pointing down (theta=0 is pointing right)
     MAX_DX = MAX_DY = 5e-2
     MAX_DTHETA = np.pi / 16
     MAX_DARM, MAX_DGRIPPER = 1e-1, 2e-2
