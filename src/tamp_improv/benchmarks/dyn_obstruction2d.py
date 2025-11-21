@@ -1257,7 +1257,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
 
         # Phase 5: Descend to block (only if gripper is still open - haven't grasped yet)
         gripper_is_open = p['finger_gap'] > p['block_width'] * 0.8  # Still open if wider than block
-        target_y = p['block_y'] + p['block_height']/2 + p['gripper_base_height']/2 + p['arm_length_max']
+        # Target: gripper fingers at block center height
+        # robot_y - arm_length = block_y + block_height/2
+        # Therefore: robot_y = block_y + block_height/2 + arm_length
+        target_y = p['block_y'] + p['block_height']/2 + p['arm_length_max']
         if gripper_is_open and p['robot_y'] > target_y + self.POSITION_TOL:
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             log_skill_action("PickUp", "5-Descend", action, {
