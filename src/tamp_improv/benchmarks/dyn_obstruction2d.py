@@ -1194,8 +1194,17 @@ class PickUpSkill(BaseDynObstruction2DSkill):
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
 
-        # Phase 0: FIRST move to safe height (lift up before doing anything else!)
-        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+        # Check if we're ready to start main pickup (positioned above block)
+        ready_to_descend = (
+            np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL) and
+            abs(self._angle_diff(self.TARGET_THETA, p['robot_theta'])) <= self.POSITION_TOL and
+            abs(p['arm_joint'] - p['arm_length_max'] * 0.95) <= self.POSITION_TOL and
+            p['finger_gap'] >= p['gripper_base_height'] - self.POSITION_TOL and
+            np.isclose(p['robot_x'], p['block_x'], atol=self.POSITION_TOL)
+        )
+
+        # Phase 0: Move to safe height (ONLY if we haven't started descending yet)
+        if not ready_to_descend and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             print(f"[PickUp Phase 0] Move to safe height: robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f}, dy={action[1]:.3f}")
             return action
