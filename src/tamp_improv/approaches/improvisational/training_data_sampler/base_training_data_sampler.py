@@ -1,4 +1,4 @@
-from typing import Any, TypeVar, Optional
+from typing import Any, TypeVar, Optional, Generic
 import numpy as np
 import abc
 from tamp_improv.approaches.improvisational.policies.base import GoalConditionedTrainingData
@@ -8,7 +8,7 @@ from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
 
 ObsType = TypeVar("ObsType")
 
-class BaseTrainingDataSampler(abc.ABC):
+class BaseTrainingDataSampler(Generic[ObsType], abc.ABC):
 
     def __init__(self, 
         all_state_pairs: list[tuple[ObsType, ObsType]],
@@ -17,7 +17,7 @@ class BaseTrainingDataSampler(abc.ABC):
         config: dict[str, Any],
         rng: np.random.Generator,
     ):
-        self.all_state_pairs = all_state_pairs
+        self.all_state_pairs: list[tuple[ObsType, ObsType]] = all_state_pairs
         self.system = system
         self.planning_graph = planning_graph
         self.config = config
