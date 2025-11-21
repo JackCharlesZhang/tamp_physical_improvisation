@@ -1014,13 +1014,21 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         robot_y = obs[robot_offset + 1]
         finger_gap = obs[robot_offset + 18]  # gripper finger_gap
 
-        # Determine gripper status
-        gripper_closed = finger_gap < 0.1  # Threshold for closed gripper
+        # DEBUG: Log held status and gripper state
+        from tamp_improv.benchmarks.debug_physics import DEBUG_SKILL_PHASES
+        if DEBUG_SKILL_PHASES:
+            print(f"[Perceiver] target_block_held={target_block_held}, finger_gap={finger_gap:.3f}")
 
         # Check if robot is holding target block
-        if target_block_held and gripper_closed:
+        # If target_block_held is True (physics says it's in hand), then it's holding it
+        # regardless of finger gap (the gripper grasp callback already verified proper grasping)
+        if target_block_held:
+            if DEBUG_SKILL_PHASES:
+                print(f"[Perceiver] Adding Holding predicate")
             atoms.add(self.predicates["Holding"]([self._robot, self._target_block]))
         else:
+            if DEBUG_SKILL_PHASES:
+                print(f"[Perceiver] Adding GripperEmpty predicate")
             atoms.add(self.predicates["GripperEmpty"]([self._robot]))
 
         # Check if target block is on target surface
