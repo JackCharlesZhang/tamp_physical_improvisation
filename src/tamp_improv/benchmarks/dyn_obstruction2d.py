@@ -1329,30 +1329,66 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         return "PlaceOnTarget"
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        from tamp_improv.benchmarks.debug_physics import log_skill_action
+
         p = self._parse_obs(obs)
         # Clamp target_x to stay within safe bounds (table is x=-2.0 to 2.0, add margin for robot)
         WORLD_MIN_X, WORLD_MAX_X = -1.8, 1.8  # Safety margin from edges
         target_x = np.clip(p['surface_x'], WORLD_MIN_X, WORLD_MAX_X)
         target_y = p['surface_y'] + p['surface_height']/2 + p['block_height']/2
-        # Ensure alignment - use shortest angular path
+
+        # Phase 0: Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         if abs(angle_error) > self.POSITION_TOL:
-            return np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
-        # To safe height
+            action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+            log_skill_action("PlaceOnTarget", "0-Rotate", action, {
+                "robot_theta": p['robot_theta'], "target_theta": self.TARGET_THETA, "error": angle_error
+            })
+            return action
+
+        # Phase 1: To safe height
         if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-        # To target x
+            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+            log_skill_action("PlaceOnTarget", "1-SafeHeight", action, {
+                "robot_y": p['robot_y'], "safe_y": self.SAFE_Y
+            })
+            return action
+
+        # Phase 2: To target x
         if not np.isclose(p['robot_x'], target_x, atol=self.POSITION_TOL):
-            return np.array([np.clip(target_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
-        # Descend
+            action = np.array([np.clip(target_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
+            log_skill_action("PlaceOnTarget", "2-MoveToTarget", action, {
+                "robot_x": p['robot_x'], "target_x": target_x, "surface_x": p['surface_x']
+            })
+            return action
+
+        # Phase 3: Descend
         if not np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL):
-            return np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-        # Open gripper
+            action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+            log_skill_action("PlaceOnTarget", "3-Descend", action, {
+                "robot_y": p['robot_y'], "target_y": target_y
+            })
+            return action
+
+        # Phase 4: Open gripper
         if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
-            return np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
-        # Lift
+            action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
+            log_skill_action("PlaceOnTarget", "4-OpenGripper", action, {
+                "finger_gap": p['finger_gap'], "target_gap": p['gripper_base_height']
+            })
+            return action
+
+        # Phase 5: Lift
         if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+            log_skill_action("PlaceOnTarget", "5-Lift", action, {
+                "robot_y": p['robot_y'], "safe_y": self.SAFE_Y
+            })
+            return action
+
+        log_skill_action("PlaceOnTarget", "DONE", np.zeros(5, dtype=np.float64), {
+            "robot_y": p['robot_y'], "robot_x": p['robot_x']
+        })
         return np.zeros(5, dtype=np.float64)
 
 
