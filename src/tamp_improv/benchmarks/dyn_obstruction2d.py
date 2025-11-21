@@ -1268,8 +1268,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             })
             return action
 
-        # Phase 6: Close gripper
-        if p['finger_gap'] > p['block_width'] * 0.7:
+        # Phase 6: Close gripper (only after we've finished descending)
+        target_y = p['block_y'] + p['block_height']/2 + p['arm_length_max']
+        at_grasp_position = abs(p['robot_y'] - target_y) <= self.POSITION_TOL
+        if at_grasp_position and p['finger_gap'] > p['block_width'] * 0.7:
             action = np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
             log_skill_action("PickUp", "6-CloseGripper", action, {
                 "finger_gap": p['finger_gap'], "block_width": p['block_width'], "target": p['block_width'] * 0.7
