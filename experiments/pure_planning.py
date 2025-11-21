@@ -9,7 +9,7 @@ from task_then_motion_planning.planning import TaskThenMotionPlanner
 
 from tamp_improv.benchmarks.dyn_obstruction2d import BaseDynObstruction2DTAMPSystem
 
-try:
+try: 
     from prbench_bilevel_planning.agent import BilevelPlanningAgent
     SESAME_AVAILABLE = True
 except ImportError:
