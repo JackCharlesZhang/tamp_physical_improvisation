@@ -1193,45 +1193,61 @@ class PickUpSkill(BaseDynObstruction2DSkill):
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
+
         # Determine if we're in the descent/grasp phase
-        # Once preparation is complete (rotation + arm extension) AND we've moved below safe height,
-        # we're committed to descent - don't return to Phase 0 even if block moves
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         theta_aligned = abs(angle_error) <= self.POSITION_TOL
         arm_extended = abs(p['arm_joint'] - p['arm_length_max'] * 0.95) <= self.POSITION_TOL
-
-        # If we're below safe height and prepared, we must be in descent/grasp phase
-        # Don't check block position because block might move when we bump it
         below_safe_height = p['robot_y'] < (self.SAFE_Y - self.POSITION_TOL)
         in_descent_phase = theta_aligned and arm_extended and below_safe_height
-        # Phase 0: Move to safe height (ONLY during initial positioning, not during descent)
-        if not in_descent_phase and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):            return action
 
-        # Phase 1: Align theta to 0 (rotate gripper) - use shortest angular path
+        # Phase 0: Move to safe height
+        if not in_descent_phase and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 1: Rotate gripper
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
-        if abs(angle_error) > self.POSITION_TOL:            return action
+        if abs(angle_error) > self.POSITION_TOL:
+            action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+            return action
 
         # Phase 2: Extend arm
         target_arm = p['arm_length_max'] * 0.95
-        if abs(p['arm_joint'] - target_arm) > self.POSITION_TOL:            return action
+        if abs(p['arm_joint'] - target_arm) > self.POSITION_TOL:
+            action = np.array([0, 0, 0, np.clip(target_arm - p['arm_joint'], -self.MAX_DARM, self.MAX_DARM), 0], dtype=np.float64)
+            return action
 
         # Phase 3: Open gripper
-        if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:            return action
+        if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
+            action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
+            return action
 
-        # Phase 4: Move horizontally above block (ONLY at safe height - before descent)
+        # Phase 4: Move horizontally to block x
         if not np.isclose(p['robot_x'], p['block_x'], atol=self.POSITION_TOL):
-            # If not at safe height, go back to safe height first
-            if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):                return action
-            # At safe height, move horizontally            return action
+            if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+                action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+                return action
+            action = np.array([np.clip(p['block_x'] - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
+            return action
 
-        # Phase 5: Descend to grasp height (only after positioned above block)
-        if not np.isclose(p['robot_y'], p['block_y'], atol=self.POSITION_TOL):            return action
+        # Phase 5: Descend to block
+        target_y = p['block_y'] + p['block_height']/2 + p['gripper_base_height']/2 + p['arm_length_max']
+        if p['robot_y'] > target_y + self.POSITION_TOL:
+            action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+            return action
 
         # Phase 6: Close gripper
-        if p['finger_gap'] > p['block_width'] * 0.7 + self.POSITION_TOL:            return action
+        if p['finger_gap'] > p['block_width'] * 0.7:
+            action = np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
+            return action
 
-        # Phase 7: Lift back to safe height
-        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):            return action        return np.zeros(5, dtype=np.float64)
+        # Phase 7: Lift with block
+        if p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
+            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+            return action
+
+        return np.array([0, 0, 0, 0, 0], dtype=np.float64)
 
 
 class PlaceSkill(BaseDynObstruction2DSkill):
