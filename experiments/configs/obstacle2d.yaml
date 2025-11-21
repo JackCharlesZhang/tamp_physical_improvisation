@@ -10,7 +10,10 @@ max_steps: 50
 max_training_steps_per_shortcut: 50
 collect_episodes: 5
 episodes_per_scenario: 200
-force_collect: true
+force_collect: false
+force_train_policy: false
+force_train_heuristic: false
+force_prune: false
 render: false
 training_record_interval: 10
 batch_size: 32
@@ -29,6 +32,8 @@ n_epochs: 10
 gamma: 0.99
 ent_coef: 0.01
 deterministic: false
+early_stopping: true
+fast_eval: false
 
 training_data_dir: training_data/multi_rl
 save_dir: trained_policies/multi_rl

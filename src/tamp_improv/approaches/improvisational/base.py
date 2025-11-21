@@ -437,6 +437,9 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
     def _try_add_shortcuts(self, graph: PlanningGraph) -> None:
         """Try to add shortcut edges to the graph."""
         using_goal_env, _ = self._using_goal_env(self.system.wrapped_env)
+        if not self.training_mode and self.trained_signatures:
+            print(f"DEBUG: Attempting to add shortcuts with {len(self.trained_signatures)} trained signatures")
+        shortcuts_added = 0
         for source_node in graph.nodes:
             for target_node in graph.nodes:
                 if source_node == target_node:
@@ -468,6 +471,8 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                             best_similarity = max(best_similarity, similarity)
 
                     if not can_handle:
+                        # if self.training_mode:
+                        #     print(f"  DEBUG: Skipping {source_node.id}→{target_node.id} - no matching signature (best sim: {best_similarity:.2f})")
                         continue
 
                 self.policy.configure_context(
@@ -481,10 +486,15 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                     )
                 )
                 if self.policy.can_initiate():
-                    # print(
-                    #     f"Trying to add shortcut: {source_node.id} to {target_node.id}"
-                    # )
+                    # if not self.training_mode:
+                    #     print(f"  DEBUG: Adding shortcut {source_node.id}→{target_node.id} (sim: {best_similarity:.2f})")
                     graph.add_edge(source_node, target_node, None, is_shortcut=True)
+                    shortcuts_added += 1
+                elif not self.training_mode:
+                    print(f"  DEBUG: Matched signature for {source_node.id}→{target_node.id} but policy.can_initiate() = False")
+
+        if not self.training_mode and self.trained_signatures:
+            print(f"DEBUG: Added {shortcuts_added} shortcuts to graph")
 
     def _compute_eval_path(
         self,
@@ -662,6 +672,8 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         goal_atoms = set(edge.target.atoms)
         actions: list[Any] = []
 
+        # print("Executing edge:", edge, init_atoms, goal_atoms)
+
         if edge.is_shortcut:
             self.policy.configure_context(
                 PolicyContext(
@@ -702,12 +714,14 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             skill = self._get_skill(edge.operator)
             skill.reset(edge.operator)
             aug_obs = start_state  # type: ignore[assignment]
+            # print("Skill:", skill)
 
         num_steps = 0
         curr_raw_obs = start_state
         curr_aug_obs = aug_obs
         for _ in range(self.max_skill_steps):
             act = skill.get_action(curr_aug_obs)
+            # print("Action:", act)
             if act is None:
                 print("No action returned by skill")
                 return float("inf"), start_state, start_info, False
@@ -715,6 +729,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             next_raw_obs, _, _, _, info = raw_env.step(act)
             curr_raw_obs = next_raw_obs
             atoms = self.system.perceiver.step(curr_raw_obs)
+            # print("State:", curr_raw_obs, atoms)
 
             if edge.is_shortcut:
                 if using_goal_env and goal_env is not None:

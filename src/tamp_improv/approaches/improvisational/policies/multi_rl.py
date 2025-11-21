@@ -72,7 +72,13 @@ class MultiRLPolicy(Policy[ObsType, ActType]):
         """Check if we can handle the current context."""
         if not self._current_context:
             return False
-        return self._find_matching_policy(self._current_context) is not None
+        matching_policy = self._find_matching_policy(self._current_context)
+        if matching_policy is None:
+            # Debug: show what key we're looking for vs what's available
+            key = self._get_policy_key(self._current_context)
+            print(f"    DEBUG can_initiate: Looking for key '{key}'")
+            print(f"    DEBUG can_initiate: Available keys ({len(self.policies)}): {list(self.policies.keys())}")
+        return matching_policy is not None
 
     def get_action(self, obs: ObsType) -> ActType:
         """Get action from the appropriate policy with selective feature
@@ -406,7 +412,7 @@ def train_single_policy(
         checkpoint_dir = str(Path(save_dir) / "checkpoints")
     callback = TrainingProgressCallback(
         check_freq=train_data.config.get("training_record_interval", 100),
-        early_stopping=True,
+        early_stopping=train_data.config.get("early_stopping", True),
         early_stopping_patience=1,
         early_stopping_threshold=0.8,
         policy_key=policy_key,

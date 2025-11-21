@@ -16,8 +16,11 @@ if TYPE_CHECKING:
         GoalConditionedDistanceHeuristic,
     )
 
-from tamp_improv.approaches.improvisational.base import ImprovisationalTAMPApproach
-from tamp_improv.approaches.improvisational.collection import collect_all_shortcuts
+from tamp_improv.approaches.improvisational.base import (
+    ImprovisationalTAMPApproach,
+    ShortcutSignature,
+)
+from tamp_improv.approaches.improvisational.collection import collect_all_shortcuts, collect_total_shortcuts
 from tamp_improv.approaches.improvisational.graph import PlanningGraph
 from tamp_improv.approaches.improvisational.policies.base import (
     GoalConditionedTrainingData,
@@ -32,7 +35,7 @@ from tamp_improv.approaches.improvisational.pruning import (
 from tamp_improv.approaches.improvisational.training import (
     Metrics,
     TrainingConfig,
-    run_evaluation_episode,
+    run_evaluation_episode_with_caching,
 )
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
 from tamp_improv.utils.gpu_utils import set_torch_seed
@@ -237,7 +240,7 @@ def get_or_collect_full_data(
 
     # Collect new data using collect_all_shortcuts (no pruning)
     print(f"\nCollecting full training data...")
-    full_data = collect_all_shortcuts(system, approach, config, rng)
+    full_data = collect_total_shortcuts(system, approach, config, rng)
 
     # Save data and config
     collection_dir.mkdir(parents=True, exist_ok=True)
@@ -643,8 +646,9 @@ def train_and_evaluate_with_pipeline(
     print(f"  Stage 1 completed in {stage_times['collection']:.1f}s")
 
     # Get planning graph (needed for pruning)
-    assert approach.planning_graph is not None, "Planning graph should be set after collection"
-    planning_graph = approach.planning_graph
+    planning_graph = full_data.graph
+    if planning_graph is None:
+        raise ValueError("Planning graph is required for pruning but not found in training data")
 
     # Stage 2: Get or train heuristic (if using distance_heuristic pruning)
     heuristic = None
@@ -690,6 +694,23 @@ def train_and_evaluate_with_pipeline(
     print("STAGE 4: Policy Training")
     print("=" * 80)
     stage_start = time.time()
+
+    # Update training_data config with current training parameters
+    # (these may have been overridden since collection/pruning stages)
+    training_params = [
+        "max_training_steps_per_shortcut",
+        "episodes_per_scenario",
+        "learning_rate",
+        "rl_batch_size",
+        "n_epochs",
+        "gamma",
+        "ent_coef",
+        "early_stopping",
+    ]
+    for param in training_params:
+        if param in config:
+            pruned_data.config[param] = config[param]
+
     policy = get_or_train_policy(
         system,
         policy,
@@ -701,6 +722,10 @@ def train_and_evaluate_with_pipeline(
     )
     stage_times["policy_training"] = time.time() - stage_start
     print(f"  Stage 4 completed in {stage_times['policy_training']:.1f}s")
+
+    # Note: Signatures are now registered during collection (in collect_all_shortcuts)
+    # so we don't need to register them again here
+    print(f"Using {len(approach.trained_signatures)} trained shortcut signatures from collection")
 
     training_time = time.time() - start_time
 
@@ -729,12 +754,13 @@ def train_and_evaluate_with_pipeline(
     successes = []
 
     for episode in range(num_eval_episodes):
-        reward, length, success = run_evaluation_episode(
+        reward, length, success = run_evaluation_episode_with_caching(
             system, approach, policy_name, eval_config, episode
         )
         rewards.append(reward)
         lengths.append(length)
         successes.append(success)
+        print(f"  Episode {episode + 1}: reward={reward:.2f}, length={length}, success={success}")
 
         if (episode + 1) % 10 == 0:
             print(f"  Completed {episode + 1}/{num_eval_episodes} episodes")

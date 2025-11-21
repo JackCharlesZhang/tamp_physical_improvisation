@@ -186,6 +186,10 @@ def prune_random(
     # Filter valid_shortcuts to match selected indices
     selected_shortcuts = [training_data.valid_shortcuts[i] for i in selected_indices]
 
+    # Filter shortcut_info to match selected indices
+    original_shortcut_info = training_data.config.get("shortcut_info", [])
+    pruned_shortcut_info = [original_shortcut_info[i] for i in selected_indices] if original_shortcut_info else []
+
     # Create pruned training data
     pruned_data = GoalConditionedTrainingData(
         states=[training_data.states[i] for i in selected_indices],
@@ -197,6 +201,7 @@ def prune_random(
             "max_shortcuts": max_shortcuts,
             "original_shortcut_count": num_shortcuts,
             "pruned_shortcut_count": max_shortcuts,
+            "shortcut_info": pruned_shortcut_info,  # Use pruned shortcut_info
         },
         node_states=training_data.node_states,
         valid_shortcuts=selected_shortcuts,
@@ -332,6 +337,10 @@ def prune_with_rollouts(
         if (source_id, target_id) in selected_set:
             selected_indices.append(i)
 
+    # Filter shortcut_info to match the pruned data
+    original_shortcut_info = training_data.config.get("shortcut_info", [])
+    pruned_shortcut_info = [original_shortcut_info[i] for i in selected_indices] if original_shortcut_info else []
+
     pruned_data = GoalConditionedTrainingData(
         states=[training_data.states[i] for i in selected_indices],
         current_atoms=[training_data.current_atoms[i] for i in selected_indices],
@@ -344,6 +353,7 @@ def prune_with_rollouts(
             "shortcut_success_threshold": threshold,
             "original_shortcut_count": len(training_data.states),
             "pruned_shortcut_count": len(selected_indices),
+            "shortcut_info": pruned_shortcut_info,  # Use pruned shortcut_info
         },
         node_states=training_data.node_states,
         valid_shortcuts=selected_shortcuts,
@@ -512,6 +522,10 @@ def prune_with_distance_heuristic(
         if (source_id, target_id) in selected_set:
             selected_indices.append(i)
 
+    # Filter shortcut_info to match selected indices
+    original_shortcut_info = training_data.config.get("shortcut_info", [])
+    pruned_shortcut_info = [original_shortcut_info[i] for i in selected_indices] if original_shortcut_info else []
+
     pruned_data = GoalConditionedTrainingData(
         states=[training_data.states[i] for i in selected_indices],
         current_atoms=[training_data.current_atoms[i] for i in selected_indices],
@@ -524,6 +538,7 @@ def prune_with_distance_heuristic(
             "heuristic_training_steps": heuristic_training_steps,
             "original_shortcut_count": len(training_data.states),
             "pruned_shortcut_count": len(selected_indices),
+            "shortcut_info": pruned_shortcut_info,  # Use pruned shortcut_info
         },
         node_states=training_data.node_states,
         valid_shortcuts=selected_shortcuts,
