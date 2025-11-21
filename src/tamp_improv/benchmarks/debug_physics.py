@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 DEBUG_COLLISIONS = True  # Log when objects collide with walls
 DEBUG_HELD_OBJECTS = True  # Log when objects transition DYNAMIC <-> KINEMATIC
 DEBUG_BOUNDS = True  # Log when objects are near or outside bounds
-DEBUG_SKILL_PHASES = False  # Log skill execution phases (verbose)
+DEBUG_SKILL_PHASES = True  # Log skill execution phases (verbose)
 
 
 def log_collision(collision_type: str, obj_name: str, wall_name: str, position: tuple[float, float]) -> None:
