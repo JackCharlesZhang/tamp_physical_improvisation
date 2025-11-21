@@ -1237,13 +1237,19 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             print(f"[PickUp Phase 3] Open gripper: gap={p['finger_gap']:.3f}, target={p['gripper_base_height']:.3f}")
             return action
 
-        # Phase 4: Move horizontally above block
+        # Phase 4: Move horizontally above block (ONLY at safe height - before descent)
         if not np.isclose(p['robot_x'], p['block_x'], atol=self.POSITION_TOL):
+            # If not at safe height, go back to safe height first
+            if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+                action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+                print(f"[PickUp Phase 4-prep] Return to safe height before horizontal move: robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f}, dy={action[1]:.3f}")
+                return action
+            # At safe height, move horizontally
             action = np.array([np.clip(p['block_x'] - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
             print(f"[PickUp Phase 4] Move to block x: robot_x={p['robot_x']:.3f}, block_x={p['block_x']:.3f}, dx={action[0]:.3f}")
             return action
 
-        # Phase 5: Descend to grasp height
+        # Phase 5: Descend to grasp height (only after positioned above block)
         if not np.isclose(p['robot_y'], p['block_y'], atol=self.POSITION_TOL):
             action = np.array([0, np.clip(p['block_y'] - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             print(f"[PickUp Phase 5] Descend to block: robot_y={p['robot_y']:.3f}, block_y={p['block_y']:.3f}, dy={action[1]:.3f}")
