@@ -1229,8 +1229,9 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             })
             return action
 
-        # Phase 3: Open gripper
-        if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
+        # Phase 3: Open gripper (only when at safe height and not yet descended)
+        at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+        if at_safe_height and p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
             action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
             log_skill_action("PickUp", "3-OpenGripper", action, {
                 "finger_gap": p['finger_gap'], "target_gap": p['gripper_base_height']
