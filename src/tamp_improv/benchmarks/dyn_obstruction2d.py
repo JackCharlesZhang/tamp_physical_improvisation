@@ -1194,16 +1194,22 @@ class PickUpSkill(BaseDynObstruction2DSkill):
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
 
-        # Determine if we're in the descent/grasp phase
-        # Once we're above the block and have completed preparation (rotation + arm extension),
-        # we're committed to the descent - don't return to safe height
-        theta_aligned = abs(self._angle_diff(self.TARGET_THETA, p['robot_theta'])) <= self.POSITION_TOL
-        arm_extended = abs(p['arm_joint'] - p['arm_length_max'] * 0.95) <= self.POSITION_TOL
-        above_block_x = np.isclose(p['robot_x'], p['block_x'], atol=self.POSITION_TOL)
+        # ALWAYS print gripper orientation for debugging
+        print(f"[GRIPPER ORIENTATION] theta={p['robot_theta']:.3f} rad ({np.degrees(p['robot_theta']):.1f}°), target={self.TARGET_THETA:.3f} rad ({np.degrees(self.TARGET_THETA):.1f}°)")
 
-        # We're in descent phase if: rotated AND arm extended AND positioned above block
-        # (Don't check gripper_open because it might already be open from the start)
-        in_descent_phase = theta_aligned and arm_extended and above_block_x
+        # Determine if we're in the descent/grasp phase
+        # Once preparation is complete (rotation + arm extension) AND we've moved below safe height,
+        # we're committed to descent - don't return to Phase 0 even if block moves
+        angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
+        theta_aligned = abs(angle_error) <= self.POSITION_TOL
+        arm_extended = abs(p['arm_joint'] - p['arm_length_max'] * 0.95) <= self.POSITION_TOL
+
+        # If we're below safe height and prepared, we must be in descent/grasp phase
+        # Don't check block position because block might move when we bump it
+        below_safe_height = p['robot_y'] < (self.SAFE_Y - self.POSITION_TOL)
+        in_descent_phase = theta_aligned and arm_extended and below_safe_height
+
+        print(f"[STATE] theta_aligned={theta_aligned}, arm_extended={arm_extended}, below_safe_height={below_safe_height}, in_descent={in_descent_phase}")
 
         # Phase 0: Move to safe height (ONLY during initial positioning, not during descent)
         if not in_descent_phase and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
