@@ -1240,8 +1240,9 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             })
             return action
 
-        # Phase 4: Move horizontally to block x
-        if not np.isclose(p['robot_x'], p['block_x'], atol=self.POSITION_TOL):
+        # Phase 4: Move horizontally to block x (only before grasping)
+        gripper_is_open = p['finger_gap'] > p['block_width'] * 0.8
+        if gripper_is_open and not np.isclose(p['robot_x'], p['block_x'], atol=self.POSITION_TOL):
             if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
                 action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
                 log_skill_action("PickUp", "4a-ReturnToSafe", action, {
