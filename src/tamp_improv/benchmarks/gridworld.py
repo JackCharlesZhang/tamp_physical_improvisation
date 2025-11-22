@@ -188,12 +188,15 @@ class GridworldEnv(gym.Env):
         return obs, info
 
     def reset_from_state(
-        self, state: GraphInstance
+        self, state: GraphInstance, seed: int | None = None
     ) -> tuple[GraphInstance, dict[str, Any]]:
         """Reset environment to match a specific low-level state.
 
+        Required for SLAP to reset to graph node states during training.
+
         Args:
             state: GraphInstance observation containing positions of robot, goal, and portals
+            seed: Random seed (optional, not used in this method)
 
         Returns:
             Observation and info dict
@@ -350,6 +353,41 @@ class GridworldEnv(gym.Env):
             return (-1, -1)
         cell = pos // self.num_states_per_cell
         return (int(cell[0]), int(cell[1]))
+
+    def extract_relevant_object_features(
+        self, obs: GraphInstance, relevant_object_names: set[str]
+    ) -> NDArray[np.float32]:
+        """Extract features for relevant objects from observation.
+        
+        For GridWorld, the only object is the robot. This extracts:
+        - Robot x, y position
+        - Robot cell_x, cell_y coordinates
+        
+        This is used by multi-RL policies to train on object-centric features.
+        
+        Args:
+            obs: GraphInstance observation
+            relevant_object_names: Set of object names (e.g., {"robot0"})
+            
+        Returns:
+            Feature vector of shape (4,) containing [x, y, cell_x, cell_y]
+        """
+        if not hasattr(obs, "nodes"):
+            # Fallback for non-graph observations
+            return np.array(obs, dtype=np.float32)
+        
+        # Robot is always the first node: [type, x, y, cell_x, cell_y, id]
+        robot_node = obs.nodes[0]
+        
+        # Extract robot features: x, y, cell_x, cell_y
+        features = np.array([
+            robot_node[1],  # x
+            robot_node[2],  # y
+            robot_node[3],  # cell_x
+            robot_node[4],  # cell_y
+        ], dtype=np.float32)
+        
+        return features
 
     def render(self) -> None:
         """Render the environment."""
@@ -641,7 +679,7 @@ class NavigateToGoalSkill(BaseGridworldSkill):
 # ============================================================================
 
 
-class GridworldTAMPSystem(ImprovisationalTAMPSystem[GraphInstance, int]):
+class GridWorldTAMPSystem(ImprovisationalTAMPSystem[GraphInstance, int]):
     """Gridworld TAMP system for testing SLAP."""
 
     def __init__(
@@ -705,7 +743,7 @@ class GridworldTAMPSystem(ImprovisationalTAMPSystem[GraphInstance, int]):
         seed: int = 42,
         render_mode: str | None = None,
         max_episode_steps: int = 200,
-    ) -> GridworldTAMPSystem:
+    ) -> "GridworldTAMPSystem":
         """Create default gridworld system."""
         predicates = GridworldPredicates(num_cells)
         perceiver = GridworldPerceiver(num_cells, num_states_per_cell)

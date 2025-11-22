@@ -17,7 +17,7 @@ from typing import Any, TypeVar, cast
 import gymnasium as gym
 import numpy as np
 import torch
-from stable_baselines3 import SAC
+from stable_baselines3 import SAC, DQN
 from stable_baselines3.common.callbacks import BaseCallback
 
 from tamp_improv.benchmarks.goal_wrapper import GoalConditionedWrapper
@@ -30,8 +30,8 @@ ActType = TypeVar("ActType")
 class DistanceHeuristicConfig:
     """Configuration for distance heuristic training."""
 
-    # Algorithm (SAC works well for goal-conditioned tasks)
-    algorithm: str = "SAC"
+    # Algorithm: "SAC" for continuous, "DQN" for discrete actions
+    algorithm: str = "DQN"
 
     # Learning parameters
     learning_rate: float = 3e-4
@@ -206,7 +206,12 @@ class DistanceHeuristicWrapper(gym.Wrapper):
         # Need to access unwrapped env to get reset_from_state method
         unwrapped_env = self.env.unwrapped if hasattr(self.env, "unwrapped") else self.env
         if hasattr(unwrapped_env, "reset_from_state"):
-            obs, info = unwrapped_env.reset_from_state(source_state, seed=seed)
+            # Try with seed first, fall back to without seed if not supported
+            try:
+                obs, info = unwrapped_env.reset_from_state(source_state, seed=seed)
+            except TypeError:
+                # Some environments don't accept seed parameter
+                obs, info = unwrapped_env.reset_from_state(source_state)
         else:
             raise AttributeError(
                 f"Environment must have reset_from_state method. "
@@ -301,7 +306,8 @@ class GoalConditionedDistanceHeuristic:
         else:
             self.device = self.config.device
 
-        self.model: SAC | None = None
+        self.model: SAC | DQN | None = None
+        self.algorithm: str | None = None
         self.perceiver: Any | None = None
         self.wrapper: DistanceHeuristicWrapper | None = None
         self._obs_mean: np.ndarray | None = None
@@ -342,18 +348,50 @@ class GoalConditionedDistanceHeuristic:
         # Compute observation statistics for normalization
         self._compute_obs_statistics(state_pairs)
 
-        # Create SAC model
-        self.model = SAC(
-            "MultiInputPolicy",
-            wrapped_env,
-            learning_rate=self.config.learning_rate,
-            batch_size=self.config.batch_size,
-            buffer_size=self.config.buffer_size,
-            learning_starts=self.config.learning_starts,
-            device=self.device,
-            seed=self.seed,
-            verbose=1,
-        )
+        # Detect action space type and choose appropriate algorithm
+        action_space = wrapped_env.action_space
+        if isinstance(action_space, gym.spaces.Box):
+            # Continuous action space - use SAC
+            algorithm = "SAC"
+            print(f"Detected continuous action space (Box), using SAC")
+        elif isinstance(action_space, gym.spaces.Discrete):
+            # Discrete action space - use DQN
+            algorithm = "DQN"
+            print(f"Detected discrete action space (Discrete), using DQN")
+        else:
+            raise ValueError(
+                f"Unsupported action space type: {type(action_space)}. "
+                f"Only Box and Discrete are supported."
+            )
+
+        # Create model based on action space
+        if algorithm == "SAC":
+            self.model = SAC(
+                "MultiInputPolicy",
+                wrapped_env,
+                learning_rate=self.config.learning_rate,
+                batch_size=self.config.batch_size,
+                buffer_size=self.config.buffer_size,
+                learning_starts=self.config.learning_starts,
+                device=self.device,
+                seed=self.seed,
+                verbose=1,
+            )
+        elif algorithm == "DQN":
+            self.model = DQN(
+                "MultiInputPolicy",
+                wrapped_env,
+                learning_rate=self.config.learning_rate,
+                batch_size=self.config.batch_size,
+                buffer_size=self.config.buffer_size,
+                learning_starts=self.config.learning_starts,
+                device=self.device,
+                seed=self.seed,
+                verbose=1,
+            )
+        
+        # Store algorithm type for later use
+        self.algorithm = algorithm
 
         # Train with callback
         callback = DistanceHeuristicCallback(check_freq=1000)
@@ -394,23 +432,31 @@ class GoalConditionedDistanceHeuristic:
         }
 
         # Get value estimate from critic (V(s, g) ≈ -distance)
-        # SAC has two Q-functions, we'll use the minimum
         with torch.no_grad():
             obs_tensor = {
                 k: torch.as_tensor(v).unsqueeze(0).to(self.device)
                 for k, v in obs.items()
             }
 
-            # Get action from policy
-            action, _ = self.model.predict(obs, deterministic=True)
-            action_tensor = torch.as_tensor(action).unsqueeze(0).to(self.device)
+            if self.algorithm == "SAC":
+                # SAC has two Q-functions, we'll use the minimum
+                # Get action from policy
+                action, _ = self.model.predict(obs, deterministic=True)
+                action_tensor = torch.as_tensor(action).unsqueeze(0).to(self.device)
 
-            # Get Q-values from both critics
-            q1_value = self.model.critic(obs_tensor, action_tensor)[0]
-            q2_value = self.model.critic(obs_tensor, action_tensor)[1]
+                # Get Q-values from both critics
+                q1_value = self.model.critic(obs_tensor, action_tensor)[0]
+                q2_value = self.model.critic(obs_tensor, action_tensor)[1]
 
-            # Use minimum Q-value (standard in SAC)
-            q_value = torch.min(q1_value, q2_value).item()
+                # Use minimum Q-value (standard in SAC)
+                q_value = torch.min(q1_value, q2_value).item()
+            
+            elif self.algorithm == "DQN":
+                # DQN: Get Q-values for all actions, take max
+                q_values = self.model.q_net(obs_tensor)  # Shape: (batch, n_actions)
+                
+                # Take the max Q-value (best action)
+                q_value = q_values.max(dim=1)[0].item()
 
         # Since reward = -1 per step, Q(s,a,g) ≈ -distance
         # So distance ≈ -Q(s,a,g)
@@ -454,8 +500,12 @@ class GoalConditionedDistanceHeuristic:
 
         os.makedirs(path, exist_ok=True)
 
-        # Save SAC model
+        # Save model (SAC or QR-DQN)
         self.model.save(f"{path}/distance_model")
+        
+        # Save algorithm type
+        with open(f"{path}/algorithm.pkl", "wb") as f:
+            pickle.dump({"algorithm": self.algorithm}, f)
 
         # Save observation statistics
         with open(f"{path}/obs_stats.pkl", "wb") as f:
@@ -495,6 +545,13 @@ class GoalConditionedDistanceHeuristic:
         """
         # Store perceiver
         self.perceiver = perceiver
+        
+        # Load algorithm type
+        with open(f"{path}/algorithm.pkl", "rb") as f:
+            algo_data = pickle.load(f)
+            self.algorithm = algo_data["algorithm"]
+        
+        print(f"Loading {self.algorithm} model...")
 
         # Load observation statistics
         with open(f"{path}/obs_stats.pkl", "rb") as f:
@@ -563,10 +620,15 @@ class GoalConditionedDistanceHeuristic:
 
         dummy_env = DummyEnv(observation_space, action_space)  # type: ignore
 
-        # Load SAC model
-        self.model = SAC.load(f"{path}/distance_model", env=dummy_env, device=self.device)
+        # Load model based on algorithm type
+        if self.algorithm == "SAC":
+            self.model = SAC.load(f"{path}/distance_model", env=dummy_env, device=self.device)
+        elif self.algorithm == "DQN":
+            self.model = DQN.load(f"{path}/distance_model", env=dummy_env, device=self.device)
+        else:
+            raise ValueError(f"Unknown algorithm: {self.algorithm}")
 
-        print(f"Distance heuristic loaded from {path}")
+        print(f"Distance heuristic ({self.algorithm}) loaded from {path}")
 
     def _flatten_and_normalize(self, obs: ObsType) -> np.ndarray:
         """Flatten and normalize observation."""

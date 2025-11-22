@@ -24,6 +24,7 @@ from tamp_improv.approaches.improvisational.policies.multi_rl import MultiRLPoli
 from tamp_improv.approaches.improvisational.policies.rl import RLConfig
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
 from tamp_improv.benchmarks.obstacle2d_graph import GraphObstacle2DTAMPSystem
+from tamp_improv.benchmarks.gridworld import GridWorldTAMPSystem
 from tamp_improv.benchmarks.pybullet_cleanup_table import CleanupTableTAMPSystem
 from tamp_improv.benchmarks.pybullet_cluttered_drawer import ClutteredDrawerTAMPSystem
 from tamp_improv.benchmarks.pybullet_obstacle_tower_graph import (
@@ -32,6 +33,7 @@ from tamp_improv.benchmarks.pybullet_obstacle_tower_graph import (
 
 SYSTEM_CLASSES: dict[str, Type[ImprovisationalTAMPSystem[Any, Any]]] = {
     "GraphObstacle2DTAMPSystem": GraphObstacle2DTAMPSystem,
+    "GridWorldTAMPSystem": GridWorldTAMPSystem,
     "GraphObstacleTowerTAMPSystem": GraphObstacleTowerTAMPSystem,
     "ClutteredDrawerTAMPSystem": ClutteredDrawerTAMPSystem,
     "CleanupTableTAMPSystem": CleanupTableTAMPSystem,
