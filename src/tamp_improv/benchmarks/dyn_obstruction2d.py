@@ -30,6 +30,12 @@ from tamp_improv.benchmarks.base import (
 )
 from tamp_improv.benchmarks.wrappers import ImprovWrapper
 
+
+class VerticalCollisionDetected(Exception):
+    """Raised when a held block cannot descend due to obstruction below."""
+    pass
+from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv, DynObstruction2DEnvConfig
+
 # Monkey-patch Tobject into tomsgeoms2d if it doesn't exist
 # (prbench imports it but dyn_obstruction2d doesn't actually use it)
 import tomsgeoms2d.structs
@@ -495,6 +501,8 @@ class BaseDynObstruction2DSkill(
         return {
             'surface_x': obs[0], 'surface_y': obs[1], 'surface_width': obs[12], 'surface_height': obs[13],
             'block_x': obs[14], 'block_y': obs[15], 'block_width': obs[26], 'block_height': obs[27], 'target_block_held': bool(obs[21]),
+            'obs0_x': obs[29], 'obs0_y': obs[30], 'obs0_width': obs[41], 'obs0_height': obs[42],
+            'obs1_x': obs[44], 'obs1_y': obs[45], 'obs1_width': obs[56], 'obs1_height': obs[57],
             'robot_x': obs[59], 'robot_y': obs[60], 'robot_theta': obs[61],
             'arm_joint': obs[73], 'arm_length_max': obs[74], 'gripper_base_height': obs[76], 'finger_gap': obs[77]
         }
@@ -509,6 +517,52 @@ class BaseDynObstruction2DSkill(
         while diff < -np.pi:
             diff += 2 * np.pi
         return diff
+
+    @staticmethod
+    def _compute_horizontal_overlap_percentage(
+        block_x: float, block_y: float, block_width: float, block_height: float, block_theta: float,
+        obs_x: float, obs_y: float, obs_width: float, obs_height: float, obs_theta: float
+    ) -> float:
+        """Compute what percentage of the held block's bottom face is covered by an obstruction's top face.
+
+        Uses tomsgeoms2d Rectangle to handle rotations properly.
+
+        Args:
+            block_x, block_y: Center position of held block
+            block_width, block_height: Dimensions of held block
+            block_theta: Rotation of held block
+            obs_x, obs_y: Center position of obstruction
+            obs_width, obs_height: Dimensions of obstruction
+            obs_theta: Rotation of obstruction
+
+        Returns:
+            Percentage (0.0 to 1.0) of held block's bottom face covered by obstruction's top face
+        """
+        # Create rectangles for both blocks
+        block_rect = Rectangle.from_center(block_x, block_y, block_width, block_height, block_theta)
+        obs_rect = Rectangle.from_center(obs_x, obs_y, obs_width, obs_height, obs_theta)
+
+        # Check if obstruction is below the held block (within reasonable vertical range)
+        if obs_y > block_y:
+            return 0.0  # Obstruction is above, not below
+
+        # Compute horizontal overlap by checking if bottom vertices of held block
+        # project onto the top face of the obstruction
+        # Get bottom two vertices of held block (sorted by y-coordinate)
+        block_vertices = sorted(block_rect.vertices, key=lambda v: v[1])
+        bottom_vertices = block_vertices[:2]  # Two lowest vertices
+
+        # Check how many bottom vertices are contained in the obstruction's horizontal extent
+        overlap_count = 0
+        for vx, vy in bottom_vertices:
+            # Project vertex down to obstruction's top surface level
+            # Check if this projection falls within obstruction's bounds
+            if obs_rect.contains_point(vx, obs_y + obs_height/2):
+                overlap_count += 1
+
+        # Simple heuristic: if both bottom vertices are over the obstruction, 100% overlap
+        # if one vertex, 50% overlap
+        return overlap_count / 2.0
 
 
 class PickUpSkill(BaseDynObstruction2DSkill):
@@ -697,6 +751,36 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         # Check if we're still holding (not if gripper is fully closed)
         still_holding = p['target_block_held']
         if still_holding and not np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL):
+            # CHECK FOR VERTICAL COLLISION: Is an obstruction blocking our descent?
+            # Held block position is below robot gripper
+            held_block_y = p['robot_y'] - p['arm_length_max']
+
+            # Check both obstructions for collision
+            for obs_idx in range(2):  # obs0 and obs1
+                obs_x = p[f'obs{obs_idx}_x']
+                obs_y = p[f'obs{obs_idx}_y']
+                obs_width = p[f'obs{obs_idx}_width']
+                obs_height = p[f'obs{obs_idx}_height']
+
+                # Compute overlap percentage
+                overlap = self._compute_horizontal_overlap_percentage(
+                    block_x=p['block_x'], block_y=held_block_y,
+                    block_width=p['block_width'], block_height=p['block_height'], block_theta=0.0,
+                    obs_x=obs_x, obs_y=obs_y,
+                    obs_width=obs_width, obs_height=obs_height, obs_theta=0.0
+                )
+
+                # If >10% overlap and obstruction is in our descent path, fail
+                if overlap > 0.1 and obs_y < held_block_y and obs_y > target_y - p['block_height']:
+                    log_skill_action("PlaceOnTarget", "3-COLLISION-BLOCKED", np.zeros(5, dtype=np.float64), {
+                        "held_block_y": held_block_y, "obs_y": obs_y, "overlap": overlap,
+                        "obs_idx": obs_idx, "target_y": target_y
+                    })
+                    raise VerticalCollisionDetected(
+                        f"Cannot descend: obstruction{obs_idx} blocks descent path "
+                        f"({overlap*100:.1f}% overlap detected)"
+                    )
+
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             log_skill_action("PlaceOnTarget", "3-Descend", action, {
                 "robot_y": p['robot_y'], "target_y": target_y, "still_holding": still_holding
@@ -826,14 +910,6 @@ class BaseDynObstruction2DTAMPSystem(
         NOTE: Requires prbench to be installed.
         Install with: pip install -e 'path/to/prbench[dynamic2d]'
         """
-        try:
-            from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv, DynObstruction2DEnvConfig
-        except ImportError as e:
-            raise ImportError(
-                "DynObstruction2DEnv requires prbench to be installed. "
-                "Install with: pip install -e 'path/to/prbench[dynamic2d]'"
-            ) from e
-
         env = DynObstruction2DEnv(
             num_obstructions=self._num_obstructions, render_mode=self._render_mode
         )
