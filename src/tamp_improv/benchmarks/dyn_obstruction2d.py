@@ -771,12 +771,16 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
                     obs_width=obs_width, obs_height=obs_height, obs_theta=0.0
                 )
 
+                # Check if obstruction is in descent path
+                # Obstruction blocks descent if it's between current position and target
+                in_descent_path = obs_y < held_block_y  # Below us currently
+
                 print(f"  Overlap: {overlap*100:.1f}%")
                 print(f"  Is below held block? {obs_y < held_block_y}")
-                print(f"  Is in descent path? {obs_y > target_y - p['block_height']}")
+                print(f"  In descent path? {in_descent_path}")
 
                 # If >10% overlap and obstruction is in our descent path, fail
-                if overlap > 0.1 and obs_y < held_block_y and obs_y > target_y - p['block_height']:
+                if overlap > 0.1 and in_descent_path:
                     print(f"\n[COLLISION DETECTED] ❌ obstruction{obs_idx} blocks descent!")
                     print(f"  Overlap: {overlap*100:.1f}% (threshold: 10%)")
                     print(f"  Raising VerticalCollisionDetected exception")
