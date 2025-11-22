@@ -101,6 +101,10 @@ class DynObstruction2DPredicates:
         self.obstruction_clear = Predicate(
             "ObstructionClear", [types.obstruction, types.surface]
         )
+        # New predicate: checks if vertical descent path to surface is clear
+        self.vertical_path_clear = Predicate(
+            "VerticalPathClear", [types.block, types.surface]
+        )
 
     def __getitem__(self, key: str) -> Predicate:
         """Get predicate by name."""
@@ -115,6 +119,7 @@ class DynObstruction2DPredicates:
             self.gripper_empty,
             self.obstructing,
             self.obstruction_clear,
+            self.vertical_path_clear,
         }
 
 
@@ -401,6 +406,16 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         if not surface_obstructed and not target_block_held:
             atoms.add(self.predicates["Clear"]([self._target_surface]))
 
+        # Check if vertical descent path to surface is clear
+        # This checks if we can lower the target block onto the surface without hitting obstructions
+        vertical_path_clear = self._check_vertical_path_clear(
+            target_block_x, target_block_y, target_block_width, target_block_height,
+            target_surface_y, target_surface_height,
+            obs, self._num_obstructions
+        )
+        if vertical_path_clear:
+            atoms.add(self.predicates["VerticalPathClear"]([self._target_block, self._target_surface]))
+
         return atoms
 
     def _is_on_surface(
@@ -462,6 +477,47 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         return surface_left <= obs_x <= surface_right and np.isclose(
             obs_y, surface_y_level, atol=0.1
         )
+
+    def _check_vertical_path_clear(
+        self,
+        target_block_x: float,
+        target_block_y: float,
+        target_block_width: float,
+        target_block_height: float,
+        target_surface_y: float,
+        target_surface_height: float,
+        obs: NDArray[np.float32],
+        num_obstructions: int,
+    ) -> bool:
+        """Check if vertical descent path from current block position to surface is clear.
+
+        Returns True if no obstruction would block vertical placement onto the surface.
+        Uses the same collision detection logic as PlaceOnTargetSkill.
+        """
+        # Calculate target placement y (where block would end up on surface)
+        target_y = target_surface_y + target_surface_height + target_block_height / 2
+
+        # Check each obstruction
+        for obs_idx in range(num_obstructions):
+            offset = 29 + obs_idx * 15
+            obs_x = obs[offset]
+            obs_y = obs[offset + 1]
+            obs_width = obs[offset + 12]
+            obs_height = obs[offset + 13]
+
+            # Use the same overlap calculation as the skill
+            overlap = BaseDynObstruction2DSkill._compute_horizontal_overlap_percentage(
+                block_x=target_block_x, block_y=target_block_y,
+                block_width=target_block_width, block_height=target_block_height, block_theta=0.0,
+                obs_x=obs_x, obs_y=obs_y,
+                obs_width=obs_width, obs_height=obs_height, obs_theta=0.0
+            )
+
+            # If >10% overlap and obstruction is below target block, path is blocked
+            if overlap > 0.1 and obs_y < target_block_y:
+                return False
+
+        return True
 
 
 # ==============================================================================
@@ -989,6 +1045,7 @@ class BaseDynObstruction2DTAMPSystem(
             preconditions={
                 predicates["Holding"]([robot, block]),
                 predicates["Clear"]([surface]),
+                predicates["VerticalPathClear"]([block, surface]),  # NEW: Check vertical path
             },
             add_effects={
                 predicates["On"]([block, surface]),
