@@ -767,12 +767,8 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
         # If surface is blocked, abort and place at current position instead
         if surface_blocked:
-            # Place directly below current position on the table
-            # Clamp to safe workspace bounds (avoid wall collisions)
-            # World bounds are roughly [0.2, 2.8] for x
-            SAFE_MIN_X = 0.5
-            SAFE_MAX_X = 2.5
-            target_x = np.clip(p['robot_x'], SAFE_MIN_X, SAFE_MAX_X)
+            # Place directly below current position - don't move horizontally at all
+            target_x = p['robot_x']
             # Place on table - use same height as target surface (they're on the same table)
             # Just change x-position, keep same y-placement logic
             target_y = self._calculate_placement_height(
@@ -781,8 +777,8 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
                 block_height=p['block_height'],
                 arm_length_max=p['arm_length_max']
             )
-            print(f"[PlaceOnTarget] FALLBACK MODE - Placing beside target surface")
-            print(f"  target_x={target_x:.3f} (clamped from robot_x={p['robot_x']:.3f}), target_y={target_y:.3f}")
+            print(f"[PlaceOnTarget] FALLBACK MODE - Placing straight down at current position")
+            print(f"  target_x={target_x:.3f} (robot_x), target_y={target_y:.3f}")
             print(f"  Using surface height: surface_y={p['surface_y']:.3f}, surface_height={p['surface_height']:.3f}")
             print(f"  Expected block_y after placement: {target_y - p['arm_length_max']:.3f}")
         else:
