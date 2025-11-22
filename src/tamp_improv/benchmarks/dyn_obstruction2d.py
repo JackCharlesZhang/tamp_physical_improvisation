@@ -1065,9 +1065,9 @@ class BaseDynObstruction2DTAMPSystem(
         # Add SLAP skills
         system.components.skills.update({
             PickUpSkill(system.components),  # type: ignore
-            PlaceSkill(system.components),  # type: ignore
-            PlaceOnTargetSkill(system.components),  # type: ignore
-            PushSkill(system.components),  # type: ignore
+            # PlaceSkill(system.components),  # type: ignore
+            # PlaceOnTargetSkill(system.components),  # type: ignore
+            # PushSkill(system.components),  # type: ignore
         })
         return system
 
@@ -1121,8 +1121,8 @@ class DynObstruction2DTAMPSystem(
         # Add SLAP skills
         system.components.skills.update({
             PickUpSkill(system.components),  # type: ignore
-            PlaceSkill(system.components),  # type: ignore
-            PlaceOnTargetSkill(system.components),  # type: ignore
-            PushSkill(system.components),  # type: ignore
+            # PlaceSkill(system.components),  # type: ignore
+            # PlaceOnTargetSkill(system.components),  # type: ignore
+            # PushSkill(system.components),  # type: ignore
         })
         return system
