@@ -11,6 +11,7 @@ from typing import Any, Generic, TypeVar
 
 import gymnasium as gym
 from relational_structs import GroundAtom
+from tamp_improv.approaches.improvisational.graph import PlanningGraph
 
 ObsType = TypeVar("ObsType")
 ActType = TypeVar("ActType")
@@ -102,6 +103,7 @@ class GoalConditionedTrainingData(TrainingData, Generic[ObsType]):
     node_states: dict[int, ObsType] = field(default_factory=dict)
     valid_shortcuts: list[tuple[int, int]] = field(default_factory=list)
     node_atoms: dict[int, set[GroundAtom]] = field(default_factory=dict)
+    graph: PlanningGraph | None = None
 
     def save(self, path: Path) -> None:
         """Save training data including node states."""
@@ -115,6 +117,9 @@ class GoalConditionedTrainingData(TrainingData, Generic[ObsType]):
         if self.node_atoms:
             with open(path / "node_atoms.pkl", "wb") as f:
                 pickle.dump(self.node_atoms, f)
+        if self.graph:
+            with open(path / "graph.pkl", "wb") as f:
+                pickle.dump(self.graph, f)
 
     @classmethod
     def load(cls, path: Path) -> GoalConditionedTrainingData:
@@ -132,6 +137,10 @@ class GoalConditionedTrainingData(TrainingData, Generic[ObsType]):
         if (path / "node_atoms.pkl").exists():
             with open(path / "node_atoms.pkl", "rb") as f:
                 node_atoms = pickle.load(f)
+        graph: PlanningGraph | None = None
+        if (path / "graph.pkl").exists():
+            with open(path / "graph.pkl", "rb") as f:
+                graph = pickle.load(f)
         return cls(
             states=train_data.states,
             current_atoms=train_data.current_atoms,
@@ -140,6 +149,7 @@ class GoalConditionedTrainingData(TrainingData, Generic[ObsType]):
             node_states=node_states,
             valid_shortcuts=valid_shortcuts,
             node_atoms=node_atoms,
+            graph=graph,
         )
 
 

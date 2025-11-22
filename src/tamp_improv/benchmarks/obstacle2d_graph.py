@@ -312,6 +312,75 @@ class GraphObstacle2DPerceiver(Perceiver[GraphInstance]):
         # Block needs at least its width to fit
         return free_width < block_width
 
+    def encode_atoms_to_vector(self, atoms: set[GroundAtom]) -> NDArray[np.float32]:
+        """Encode a set of atoms as a binary vector (one-hot style).
+
+        This creates a fixed-length binary vector where each dimension corresponds
+        to a possible atom. Used for goal-conditioned distance heuristic learning.
+
+        Args:
+            atoms: Set of ground atoms to encode
+
+        Returns:
+            Binary vector representation of the atoms
+        """
+        if not hasattr(self, '_atom_vocabulary'):
+            self._build_atom_vocabulary()
+
+        if len(self._atom_vocabulary) == 0:
+            raise RuntimeError(
+                f"Atom vocabulary is empty! Predicates initialized: {self._predicates is not None}, "
+                f"n_blocks: {self.n_blocks}"
+            )
+
+        # Create binary vector
+        vector = np.zeros(len(self._atom_vocabulary), dtype=np.float32)
+        for atom in atoms:
+            atom_str = str(atom)
+            if atom_str in self._atom_to_idx:
+                vector[self._atom_to_idx[atom_str]] = 1.0
+
+        return vector
+
+    def _build_atom_vocabulary(self) -> None:
+        """Build vocabulary of all possible atoms for this domain.
+
+        Creates a sorted list of all possible ground atoms and a mapping
+        from atom strings to indices for efficient encoding.
+        """
+        if self._predicates is None:
+            raise RuntimeError("Predicates not initialized. Call initialize() first.")
+
+        all_atoms = []
+        objects = [self._robot, self._target_area, self._table] + self._blocks
+
+        # Single-argument predicates
+        for pred_attr, pred in [
+            ("is_target", self._predicates.is_target),
+            ("not_is_target", self._predicates.not_is_target),
+            ("clear", self._predicates.clear),
+            ("gripper_empty", self._predicates.gripper_empty),
+        ]:
+            for obj in objects:
+                atom = pred([obj])
+                all_atoms.append(str(atom))
+
+        # Two-argument predicates
+        for pred_attr, pred in [
+            ("holding", self._predicates.holding),
+            ("on", self._predicates.on),
+            ("overlap", self._predicates.overlap),
+        ]:
+            for obj1 in objects:
+                for obj2 in objects:
+                    if obj1 != obj2:
+                        atom = pred([obj1, obj2])
+                        all_atoms.append(str(atom))
+
+        # Create sorted vocabulary and index mapping
+        self._atom_vocabulary = sorted(all_atoms)
+        self._atom_to_idx = {atom: idx for idx, atom in enumerate(self._atom_vocabulary)}
+
 
 class BaseGraphObstacle2DTAMPSystem(BaseTAMPSystem[GraphInstance, NDArray[np.float32]]):
     """Base TAMP system for 2D obstacle graph-based environment."""

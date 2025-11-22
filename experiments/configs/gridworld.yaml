@@ -1,7 +1,10 @@
-env_name: GraphObstacle2DTAMPSystem
-n_blocks: 2
+env_name: GridworldTAMPSystem
 render_mode: null
 action_scale: 1.0
+
+num_cells: 10
+num_states_per_cell: 10
+num_teleporters: 1
 
 seed: 42
 debug: false

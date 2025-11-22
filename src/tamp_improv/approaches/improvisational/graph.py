@@ -95,6 +95,13 @@ class PlanningGraph:
         self.node_to_outgoing_edges[node] = []
         return node
 
+    def get_or_add_node(self, atoms: set[GroundAtom]) -> PlanningGraphNode:
+        """Get existing node or add a new one if it doesn't exist."""
+        frozen_atoms = frozenset(atoms)
+        if frozen_atoms in self.node_map:
+            return self.node_map[frozen_atoms]
+        return self.add_node(atoms)
+
     def add_edge(
         self,
         source: PlanningGraphNode,
@@ -179,6 +186,7 @@ class PlanningGraph:
                     previous[new_state] = (current_state, edge)
                     heapq.heappush(queue, (new_dist, next(counter), new_state))
 
+        print("Goal nodes:", goal_nodes)
         best_goal_states = {}
         for goal_node in goal_nodes:
             goal_states = [(n, p) for (n, p) in distances if n == goal_node]

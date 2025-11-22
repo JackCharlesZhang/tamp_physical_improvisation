@@ -16,7 +16,10 @@ from tamp_improv.approaches.improvisational.graph_training import (
     collect_goal_conditioned_training_data,
     collect_graph_based_training_data,
 )
-from tamp_improv.approaches.improvisational.policies.base import Policy, TrainingData
+from tamp_improv.approaches.improvisational.policies.base import (
+    Policy,
+    TrainingData,
+)
 from tamp_improv.approaches.improvisational.policies.multi_rl import MultiRLPolicy
 from tamp_improv.approaches.pure_rl import PureRLApproach, SACHERApproach
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
@@ -417,6 +420,10 @@ def train_and_evaluate(
         rewards.append(reward)
         lengths.append(length)
         successes.append(success)
+
+        print(f"Episode Reward: {reward:.2f}")
+        print(f"Episode Length: {length}")
+        print(f"Episode Success: {success}")
 
         print(f"Current Success Rate: {sum(successes)/(episode+1):.2%}")
         print(f"Current Avg Episode Length: {np.mean(lengths):.2f}")
