@@ -778,9 +778,16 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
         print(f"\n[PlaceOnTarget] ENTRY: target_block_held={p['target_block_held']}, finger_gap={p['finger_gap']:.3f}, robot_y={p['robot_y']:.3f}")
 
-        # PRIORITY 1: If holding the block but not at safe height, lift first
+        # PRIORITY 1: If holding the block but not at safe height AND not aligned/positioned yet, lift first
         # This handles the case where PickUp hands off before lifting
-        if p['target_block_held'] and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
+        # BUT we should NOT lift if we're already aligned and positioned (ready to descend)
+        angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
+        is_aligned = abs(angle_error) <= self.POSITION_TOL
+        # Check if we're at safe height OR if we're aligned and positioned (about to descend)
+        not_at_safe_y = p['robot_y'] < self.SAFE_Y - self.POSITION_TOL
+        not_ready_to_descend = not is_aligned  # If not aligned, we're not ready to descend yet
+
+        if p['target_block_held'] and not_at_safe_y and not_ready_to_descend:
             print(f"[PlaceOnTarget] PRIORITY-Lift-WithBlock: Lifting to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
 
