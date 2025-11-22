@@ -34,15 +34,18 @@ from tamp_improv.benchmarks.wrappers import ImprovWrapper
 class VerticalCollisionDetected(Exception):
     """Raised when a held block cannot descend due to obstruction below."""
     pass
-from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv, DynObstruction2DEnvConfig
+
 
 # Monkey-patch Tobject into tomsgeoms2d if it doesn't exist
 # (prbench imports it but dyn_obstruction2d doesn't actually use it)
+# MUST happen BEFORE importing prbench!
 import tomsgeoms2d.structs
 if not hasattr(tomsgeoms2d.structs, "Tobject"):
     # Create a dummy Tobject class to satisfy prbench imports
     from tomsgeoms2d.structs import Lobject
     tomsgeoms2d.structs.Tobject = Lobject  # Use Lobject as a stand-in
+
+from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv, DynObstruction2DEnvConfig
 
 
 @dataclass
