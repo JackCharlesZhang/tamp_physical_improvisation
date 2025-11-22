@@ -766,12 +766,13 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
         # If surface is blocked, abort and place at current position instead
         if surface_blocked:
-            # Place directly below current position (where we picked it up)
+            # Place directly below current position at same level as target surface
+            # (Assumption: target surface and table are at same height)
             target_x = p['robot_x']
-            # Place on ground (surface_y=0, surface_height=0)
+            # Place on the same surface level as target (likely the table)
             target_y = self._calculate_placement_height(
-                surface_y=0.0,
-                surface_height=0.0,
+                surface_y=p['surface_y'],
+                surface_height=p['surface_height'],
                 block_height=p['block_height'],
                 arm_length_max=p['arm_length_max']
             )
