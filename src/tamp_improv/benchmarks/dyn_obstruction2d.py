@@ -665,6 +665,19 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # Therefore: robot_y = block_y + block_height/2 + arm_length
         target_y = p['block_y'] + p['block_height']/2 + p['arm_length_max']
         if gripper_is_open and p['robot_y'] > target_y + self.POSITION_TOL:
+            # Debug: Check if block is clipping through table
+            table_top_y = p['surface_y'] + p['surface_height']
+            block_bottom_y = p['block_y'] - p['block_height']/2
+            penetration = table_top_y - block_bottom_y
+            print(f"[PickUp] Phase 5-Descend:")
+            print(f"  robot_y={p['robot_y']:.3f}, target_y={target_y:.3f}")
+            print(f"  block_y={p['block_y']:.3f}, block_height={p['block_height']:.3f}")
+            print(f"  block_bottom_y={block_bottom_y:.3f}, table_top_y={table_top_y:.3f}")
+            if penetration > 0:
+                print(f"  ⚠️  BLOCK PENETRATING TABLE BY {penetration:.3f}!")
+            else:
+                print(f"  ✓ Block clearance from table: {-penetration:.3f}")
+
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             log_skill_action("PickUp", "5-Descend", action, {
                 "robot_y": p['robot_y'], "target_y": target_y, "block_y": p['block_y'], "block_height": p['block_height']
@@ -825,11 +838,19 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             block_center_y = p['robot_y'] - p['arm_length_max']
             block_bottom_y = block_center_y - p['block_height']/2
             table_top_y = p['surface_y'] + p['surface_height']
+            actual_block_bottom_y = p['block_y'] - p['block_height']/2
+            penetration = table_top_y - actual_block_bottom_y
+
             print(f"[PlaceOnTarget] Phase 3: Descending")
             print(f"  robot_y={p['robot_y']:.3f}, target_y={target_y:.3f}")
-            print(f"  block_center_y={block_center_y:.3f}, block_bottom_y={block_bottom_y:.3f}")
-            print(f"  table_top_y={table_top_y:.3f}, actual block_y={p['block_y']:.3f}")
-            print(f"  distance_to_table={block_bottom_y - table_top_y:.3f}")
+            print(f"  CALCULATED: block_center_y={block_center_y:.3f}, block_bottom_y={block_bottom_y:.3f}")
+            print(f"  ACTUAL: block_y={p['block_y']:.3f}, block_bottom_y={actual_block_bottom_y:.3f}")
+            print(f"  table_top_y={table_top_y:.3f}")
+            if penetration > 0:
+                print(f"  ⚠️  BLOCK PENETRATING TABLE BY {penetration:.3f}!")
+            else:
+                print(f"  ✓ Block clearance from table: {-penetration:.3f}")
+
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
 
