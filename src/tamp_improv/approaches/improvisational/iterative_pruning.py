@@ -2,11 +2,12 @@
     uses the distance heuristic to prune the dataset, then uses the pruned dataset to train
     the distance heuristic again."""
 
+from typing import Any
+
 from tamp_improv.approaches.improvisational.pruning import (
     train_distance_heuristic,
     prune_with_distance_heuristic
 )
-
 
 import numpy as np
 
@@ -19,7 +20,7 @@ from tamp_improv.approaches.improvisational.policies.base import GoalConditioned
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
 
 
-def iterative_pruning(
+def iteratively_prune_training_data(
     training_data: GoalConditionedTrainingData,
     system: ImprovisationalTAMPSystem,
     planning_graph: PlanningGraph,
@@ -33,10 +34,11 @@ def iterative_pruning(
     Returns the trained heuristic.
     """
 
-    max_pruning_iterations = config.get('max_pruning_iterations', 10)
+    max_pruning_iterations = config.get('max_pruning_iterations', 2)
     max_shortcuts = config.get("max_shortcuts_per_graph", 150)
     
     for _ in range(max_pruning_iterations):
+        print(" FIRST TIME PRUNING TRAINING DATA")
         # First, train the distance heuristic
         heuristic = train_distance_heuristic(training_data, system, config, rng)
 

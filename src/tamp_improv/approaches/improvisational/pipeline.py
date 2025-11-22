@@ -33,7 +33,7 @@ from tamp_improv.approaches.improvisational.pruning import (
     train_distance_heuristic,
 )
 from tamp_improv.approaches.improvisational.iterative_pruning import (
-    iterative_pruning
+    iteratively_prune_training_data
 )
 from tamp_improv.approaches.improvisational.training import (
     Metrics,
@@ -463,7 +463,7 @@ def prune_full_data(
         )
 
     if iterative_pruning:
-        pruned_data = iterative_pruning(training_data, system, planning_graph, config, rng, heuristic=heuristic
+        pruned_data = iteratively_prune_training_data(training_data, system, planning_graph, config, rng, heuristic=heuristic
     )
     else:
         pruned_data = prune_training_data(
@@ -695,6 +695,7 @@ def train_and_evaluate_with_pipeline(
         rng,
         heuristic=heuristic,
         force_prune=config.get("force_prune", False),
+        iterative_pruning=config.get("iterative_pruning", False)
     )
     stage_times["pruning"] = time.time() - stage_start
     print(f"  Stage 3 completed in {stage_times['pruning']:.1f}s")
