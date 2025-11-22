@@ -489,13 +489,17 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         obs: NDArray[np.float32],
         num_obstructions: int,
     ) -> bool:
-        """Check if vertical descent path from current block position to surface is clear.
+        """Check if vertical descent path to surface would be clear when block is at surface x-position.
 
-        Returns True if no obstruction would block vertical placement onto the surface.
-        Uses the same collision detection logic as PlaceOnTargetSkill.
+        This checks if placing the block at the surface's x-position would encounter
+        vertical collision with any obstruction.
         """
-        # Calculate target placement y (where block would end up on surface)
-        target_y = target_surface_y + target_surface_height + target_block_height / 2
+        # Get target surface x-position (where block would be placed)
+        target_surface_x = obs[0]
+
+        # Calculate where the block would be when held above the surface
+        # (at surface x-position, at a safe height ready to descend)
+        placement_block_x = target_surface_x
 
         # Check each obstruction
         for obs_idx in range(num_obstructions):
@@ -506,15 +510,16 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
             obs_height = obs[offset + 13]
 
             # Use the same overlap calculation as the skill
+            # Check overlap at the placement x-position (not current position)
             overlap = BaseDynObstruction2DSkill._compute_horizontal_overlap_percentage(
-                block_x=target_block_x, block_y=target_block_y,
+                block_x=placement_block_x, block_y=target_block_y,  # Use surface x, current y
                 block_width=target_block_width, block_height=target_block_height, block_theta=0.0,
                 obs_x=obs_x, obs_y=obs_y,
                 obs_width=obs_width, obs_height=obs_height, obs_theta=0.0
             )
 
-            # If >10% overlap and obstruction is below target block, path is blocked
-            if overlap > 0.1 and obs_y < target_block_y:
+            # If >10% overlap, this obstruction blocks the vertical path to placement
+            if overlap > 0.1:
                 return False
 
         return True
