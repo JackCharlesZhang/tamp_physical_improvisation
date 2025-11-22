@@ -726,7 +726,12 @@ class PlaceSkill(BaseDynObstruction2DSkill):
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
 
-        # PRIORITY: If block is released but not at safe height, lift immediately
+        # PRIORITY 1: If holding the block but not at safe height, lift first
+        # This handles the case where PickUp hands off before lifting
+        if p['target_block_held'] and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
+            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+
+        # PRIORITY 2: If block is released but not at safe height, lift immediately
         # This ensures all skills end at SAFE_Y
         block_released = not p['target_block_held']
         if block_released and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
@@ -773,11 +778,17 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
         print(f"\n[PlaceOnTarget] ENTRY: target_block_held={p['target_block_held']}, finger_gap={p['finger_gap']:.3f}, robot_y={p['robot_y']:.3f}")
 
-        # PRIORITY: If block is released but not at safe height, lift immediately
+        # PRIORITY 1: If holding the block but not at safe height, lift first
+        # This handles the case where PickUp hands off before lifting
+        if p['target_block_held'] and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
+            print(f"[PlaceOnTarget] PRIORITY-Lift-WithBlock: Lifting to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
+            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+
+        # PRIORITY 2: If block is released but not at safe height, lift immediately
         # This ensures all skills end at SAFE_Y
         block_released = not p['target_block_held']
         if block_released and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
-            print(f"[PlaceOnTarget] PRIORITY-Lift: Returning to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
+            print(f"[PlaceOnTarget] PRIORITY-Lift-AfterRelease: Returning to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
 
         # PRE-CHECK: Is target surface blocked by an obstruction?
