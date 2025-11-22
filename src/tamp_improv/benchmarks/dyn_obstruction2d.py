@@ -820,7 +820,14 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         # Phase 3: Descend (only if gripper is still holding the object)
         still_holding = p['target_block_held']
         if still_holding and not np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL):
-            print(f"[PlaceOnTarget] Phase 3: Descending (robot_y={p['robot_y']:.3f}, target_y={target_y:.3f}, block_y={p['block_y']:.3f})")
+            block_center_y = p['robot_y'] - p['arm_length_max']
+            block_bottom_y = block_center_y - p['block_height']/2
+            table_top_y = p['surface_y'] + p['surface_height']
+            print(f"[PlaceOnTarget] Phase 3: Descending")
+            print(f"  robot_y={p['robot_y']:.3f}, target_y={target_y:.3f}")
+            print(f"  block_center_y={block_center_y:.3f}, block_bottom_y={block_bottom_y:.3f}")
+            print(f"  table_top_y={table_top_y:.3f}, actual block_y={p['block_y']:.3f}")
+            print(f"  distance_to_table={block_bottom_y - table_top_y:.3f}")
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
 
