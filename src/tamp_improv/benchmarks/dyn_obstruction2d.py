@@ -770,16 +770,18 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             # Place directly below current position - don't move horizontally at all
             target_x = p['robot_x']
             # Place on table - use same height as target surface (they're on the same table)
-            # Just change x-position, keep same y-placement logic
+            # Add extra clearance to avoid kinematic body pushing through table
+            CLEARANCE = 0.15  # Stop 15cm above table to avoid penetration
             target_y = self._calculate_placement_height(
                 surface_y=p['surface_y'],
-                surface_height=p['surface_height'],
+                surface_height=p['surface_height'] + CLEARANCE,
                 block_height=p['block_height'],
                 arm_length_max=p['arm_length_max']
             )
             print(f"[PlaceOnTarget] FALLBACK MODE - Placing straight down at current position")
             print(f"  target_x={target_x:.3f} (robot_x), target_y={target_y:.3f}")
             print(f"  Using surface height: surface_y={p['surface_y']:.3f}, surface_height={p['surface_height']:.3f}")
+            print(f"  With clearance: {CLEARANCE:.3f}")
             print(f"  Expected block_y after placement: {target_y - p['arm_length_max']:.3f}")
         else:
             # Normal placement: Place at surface x-position
