@@ -762,6 +762,7 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
             if overlap > 0.1:
                 surface_blocked = True
+                print(f"\n[PlaceOnTarget] Surface blocked by obstruction{obs_idx} (overlap: {overlap*100:.1f}%)")
                 break
 
         # If surface is blocked, abort and place at current position instead
@@ -776,6 +777,10 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
                 block_height=p['block_height'],
                 arm_length_max=p['arm_length_max']
             )
+            print(f"[PlaceOnTarget] FALLBACK MODE - Placing at current position")
+            print(f"  target_x={target_x:.3f} (robot_x), target_y={target_y:.3f}")
+            print(f"  surface_y={p['surface_y']:.3f}, surface_height={p['surface_height']:.3f}")
+            print(f"  block_height={p['block_height']:.3f}, arm_length_max={p['arm_length_max']:.3f}")
         else:
             # Normal placement: Place at surface x-position
             target_x = p['surface_x']
@@ -786,10 +791,15 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
                 block_height=p['block_height'],
                 arm_length_max=p['arm_length_max']
             )
+            print(f"[PlaceOnTarget] NORMAL MODE - Placing on target surface")
+            print(f"  target_x={target_x:.3f} (surface_x), target_y={target_y:.3f}")
+            print(f"  surface_y={p['surface_y']:.3f}, surface_height={p['surface_height']:.3f}")
+            print(f"  block_height={p['block_height']:.3f}, arm_length_max={p['arm_length_max']:.3f}")
 
         # Phase 0: Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         if abs(angle_error) > self.POSITION_TOL:
+            print(f"[PlaceOnTarget] Phase 0: Rotating (error={angle_error:.3f})")
             action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
             return action
 
@@ -797,17 +807,20 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         # Once we're at target x, we proceed to descend and don't return to safe height
         not_at_target_x = not np.isclose(p['robot_x'], target_x, atol=self.POSITION_TOL)
         if not_at_target_x and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            print(f"[PlaceOnTarget] Phase 1: Moving to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
 
         # Phase 2: To target x
         if not_at_target_x:
+            print(f"[PlaceOnTarget] Phase 2: Moving to target_x (robot_x={p['robot_x']:.3f}, target_x={target_x:.3f})")
             action = np.array([np.clip(target_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
             return action
 
         # Phase 3: Descend (only if gripper is still holding the object)
         still_holding = p['target_block_held']
         if still_holding and not np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL):
+            print(f"[PlaceOnTarget] Phase 3: Descending (robot_y={p['robot_y']:.3f}, target_y={target_y:.3f}, block_y={p['block_y']:.3f})")
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
 
@@ -1065,9 +1078,9 @@ class BaseDynObstruction2DTAMPSystem(
         # Add SLAP skills
         system.components.skills.update({
             PickUpSkill(system.components),  # type: ignore
-            # PlaceSkill(system.components),  # type: ignore
-            # PlaceOnTargetSkill(system.components),  # type: ignore
-            # PushSkill(system.components),  # type: ignore
+            PlaceSkill(system.components),  # type: ignore
+            PlaceOnTargetSkill(system.components),  # type: ignore
+            PushSkill(system.components),  # type: ignore
         })
         return system
 
@@ -1121,8 +1134,8 @@ class DynObstruction2DTAMPSystem(
         # Add SLAP skills
         system.components.skills.update({
             PickUpSkill(system.components),  # type: ignore
-            # PlaceSkill(system.components),  # type: ignore
-            # PlaceOnTargetSkill(system.components),  # type: ignore
-            # PushSkill(system.components),  # type: ignore
+            PlaceSkill(system.components),  # type: ignore
+            PlaceOnTargetSkill(system.components),  # type: ignore
+            PushSkill(system.components),  # type: ignore
         })
         return system
