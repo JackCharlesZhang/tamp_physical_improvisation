@@ -29,12 +29,14 @@ from tamp_improv.benchmarks.pybullet_cluttered_drawer import ClutteredDrawerTAMP
 from tamp_improv.benchmarks.pybullet_obstacle_tower_graph import (
     GraphObstacleTowerTAMPSystem,
 )
+from tamp_improv.benchmarks.gridworld import GridworldTAMPSystem
 
 SYSTEM_CLASSES: dict[str, Type[ImprovisationalTAMPSystem[Any, Any]]] = {
     "GraphObstacle2DTAMPSystem": GraphObstacle2DTAMPSystem,
     "GraphObstacleTowerTAMPSystem": GraphObstacleTowerTAMPSystem,
     "ClutteredDrawerTAMPSystem": ClutteredDrawerTAMPSystem,
     "CleanupTableTAMPSystem": CleanupTableTAMPSystem,
+    "GridworldTAMPSystem": GridworldTAMPSystem,  # Reuse for gridworld
 }
 
 
@@ -58,6 +60,13 @@ def main(cfg: DictConfig) -> float:
         system_kwargs["n_blocks"] = cfg.n_blocks
     if hasattr(cfg, "num_obstacle_blocks"):
         system_kwargs["num_obstacle_blocks"] = cfg.num_obstacle_blocks
+    if hasattr(cfg, "num_cells"):
+        system_kwargs["num_cells"] = cfg.num_cells
+    if hasattr(cfg, "num_states_per_cell"):
+        system_kwargs["num_states_per_cell"] = cfg.num_states_per_cell
+    if hasattr(cfg, "num_teleporters"):
+        system_kwargs["num_teleporters"] = cfg.num_teleporters
+    print(f"\nCreating system: {cfg.env_name} with kwargs: {system_kwargs}")
     system = system_cls.create_default(**system_kwargs)  # type: ignore[attr-defined]
 
     # Setup device and RL config

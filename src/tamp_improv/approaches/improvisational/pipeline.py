@@ -139,6 +139,8 @@ def _test_shortcut_quality(
                 start_state=source_state,
                 goal_atoms=target_atoms,
                 max_steps=max_steps,
+                source_node_id=source_node,
+                target_node_id=target_node,
             )
 
             if success:
@@ -694,6 +696,8 @@ def train_and_evaluate_with_pipeline(
     print("STAGE 4: Policy Training")
     print("=" * 80)
     stage_start = time.time()
+
+    print("Force train:", config['force_train_policy'])
 
     # Update training_data config with current training parameters
     # (these may have been overridden since collection/pruning stages)

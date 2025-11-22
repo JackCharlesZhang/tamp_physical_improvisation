@@ -88,11 +88,15 @@ def collect_states_for_all_nodes(
 
                 skill.reset(edge.operator)
 
+                # print(skill)  # Removed: causes hangs on cluster with network filesystem
+
                 max_steps = 50
                 for step in range(max_steps):
                     action = skill.get_action(obs)
                     obs, _, term, trunc, info = system.env.step(action)
                     atoms = system.perceiver.step(obs)
+                    # print(action, obs, atoms)  # Removed: causes hangs on cluster
+
                     if set(edge.target.atoms) == atoms:
                         break
                     if term or trunc:

@@ -251,14 +251,14 @@ def test_collect_total_shortcuts():
         "planner_id": "pyperplan",
     }
 
-    system = GraphObstacle2DTAMPSystem.create_default()
+    # system = GraphObstacle2DTAMPSystem.create_default()
 
-    # system = GridworldTAMPSystem.create_default(
-    #     num_cells=10,
-    #     num_states_per_cell=10,
-    #     num_teleporters=1,
-    #     seed=config["seed"],
-    # )
+    system = GridworldTAMPSystem.create_default(
+        num_cells=10,
+        num_states_per_cell=10,
+        num_teleporters=1,
+        seed=config["seed"],
+    )
 
     # Create approach
     policy = MultiRLPolicy(seed=config["seed"])

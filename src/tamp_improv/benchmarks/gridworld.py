@@ -188,7 +188,7 @@ class GridworldEnv(gym.Env):
         return obs, info
 
     def reset_from_state(
-        self, state: GraphInstance
+        self, state: GraphInstance, seed: int | None = None
     ) -> tuple[GraphInstance, dict[str, Any]]:
         """Reset environment to match a specific low-level state.
 
@@ -343,6 +343,54 @@ class GridworldEnv(gym.Env):
             "goal_cell": self._get_cell(self.goal_pos),
             "step_count": self.step_count,
         }
+
+    def extract_relevant_object_features(
+        self, obs: GraphInstance, relevant_object_names: set[str]
+    ) -> NDArray[np.float32]:
+        """Extract features from relevant objects in the observation.
+
+        In gridworld, the only object is 'robot0'. This function extracts
+        the robot's position features (x, y, cell_x, cell_y), the goal's
+        position features, and all portal features for the policy to use.
+
+        Args:
+            obs: Graph observation with nodes [type, x, y, cell_x, cell_y, id]
+            relevant_object_names: Set of object names (should contain "robot0")
+
+        Returns:
+            Feature vector containing robot, goal, and portal features
+        """
+        if not hasattr(obs, "nodes"):
+            return obs  # Not a graph observation
+
+        nodes = obs.nodes
+        robot_features = None
+        goal_features = None
+        portal_features = []
+
+        for node in nodes:
+            node_type = int(node[0])
+            if node_type == 0:  # Robot
+                # Extract: x, y, cell_x, cell_y (skip type and id)
+                robot_features = node[1:5]
+            elif node_type == 1:  # Goal
+                # Extract: x, y, cell_x, cell_y (skip type and id)
+                goal_features = node[1:5]
+            elif node_type == 2:  # Portal
+                # Extract: x, y, cell_x, cell_y (skip type and id)
+                portal_features.append(node[1:5])
+
+        # Build feature vector: robot + goal + all portals
+        features = []
+        if robot_features is not None:
+            features.extend(robot_features)
+        if goal_features is not None:
+            features.extend(goal_features)
+        # Add portals in order (sorted by id to ensure consistency)
+        for portal_feat in portal_features:
+            features.extend(portal_feat)
+
+        return np.array(features, dtype=np.float32)
 
     def _get_cell(self, pos: NDArray[np.int32] | None) -> tuple[int, int]:
         """Get cell coordinates for a position."""

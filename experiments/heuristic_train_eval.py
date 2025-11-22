@@ -17,15 +17,14 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
 from tamp_improv.approaches.improvisational.base import ImprovisationalTAMPApproach
-from tamp_improv.approaches.improvisational.distance_heuristic import (
-    DistanceHeuristicConfig,
-    GoalConditionedDistanceHeuristic,
-)
 from tamp_improv.approaches.improvisational.collection import (
-    collect_all_shortcuts,
+    collect_total_shortcuts,
 )
 from tamp_improv.approaches.improvisational.graph_training import (
     compute_graph_distances,
+)
+from tamp_improv.approaches.improvisational.pruning import (
+    train_distance_heuristic,
 )
 from tamp_improv.approaches.improvisational.policies.multi_rl import MultiRLPolicy
 from tamp_improv.approaches.improvisational.policies.rl import RLConfig
@@ -36,12 +35,14 @@ from tamp_improv.benchmarks.pybullet_cluttered_drawer import ClutteredDrawerTAMP
 from tamp_improv.benchmarks.pybullet_obstacle_tower_graph import (
     GraphObstacleTowerTAMPSystem,
 )
+from tamp_improv.benchmarks.gridworld import GridworldTAMPSystem
 
 SYSTEM_CLASSES: dict[str, Type[ImprovisationalTAMPSystem[Any, Any]]] = {
     "GraphObstacle2DTAMPSystem": GraphObstacle2DTAMPSystem,
     "GraphObstacleTowerTAMPSystem": GraphObstacleTowerTAMPSystem,
     "ClutteredDrawerTAMPSystem": ClutteredDrawerTAMPSystem,
     "CleanupTableTAMPSystem": CleanupTableTAMPSystem,
+    "GridworldTAMPSystem": GridworldTAMPSystem,
 }
 
 
@@ -113,16 +114,17 @@ def main(cfg: DictConfig) -> float:
     print(f"[DEBUG] Collecting shortcuts from {config_dict['collect_episodes']} episode(s)", flush=True)
     print_memory()
 
-    print("[DEBUG] About to call collect_all_shortcuts...", flush=True)
+    print("[DEBUG] About to call collect_total_shortcuts...", flush=True)
     # Collect ALL shortcuts without any pruning
-    training_data = collect_all_shortcuts(system, approach, config_dict)
+    rng = np.random.default_rng(cfg.seed)
+    training_data = collect_total_shortcuts(system, approach, config_dict, rng=rng)
 
     print(f"[DEBUG] Collection complete", flush=True)
     print_memory()
 
     # Extract data from training_data
     all_node_states = training_data.node_states  # node_id -> list of states
-    planning_graph = approach.planning_graph
+    planning_graph = training_data.graph
     assert planning_graph is not None
 
     print(f"\nCollected states for {len(all_node_states)} nodes")
@@ -144,10 +146,10 @@ def main(cfg: DictConfig) -> float:
     print_memory()
 
     # =========================================================================
-    # Step 3: Sample training pairs and prepare data
+    # Step 3: Prepare state pairs for evaluation
     # =========================================================================
     print("\n" + "=" * 80)
-    print("Step 3: Sampling training pairs for heuristic")
+    print("Step 3: Preparing state pairs for evaluation")
     print("=" * 80)
 
     print("[DEBUG] Collecting state pairs...")
@@ -201,15 +203,6 @@ def main(cfg: DictConfig) -> float:
     print(f"Average {avg_state_pairs:.1f} state pairs per node pair")
     print_memory()
 
-    # Sample training pairs (use smaller number for testing)
-    num_training_pairs = min(cfg.get("heuristic_training_pairs", 10), len(all_pairs))
-    rng = np.random.default_rng(cfg.seed)
-    train_indices = rng.choice(len(all_pairs), size=num_training_pairs, replace=False)
-    train_pairs = [all_pairs[i] for i in train_indices]
-
-    print(f"Sampled {len(train_pairs)} pairs for training")
-    print_memory()
-
     # =========================================================================
     # Step 4: Train distance heuristic
     # =========================================================================
@@ -217,30 +210,12 @@ def main(cfg: DictConfig) -> float:
     print("Step 4: Training distance heuristic")
     print("=" * 80)
 
-    print("[DEBUG] Creating heuristic...")
+    print("[DEBUG] Training heuristic using train_distance_heuristic()...")
     print_memory()
 
-    heuristic_config = DistanceHeuristicConfig(
-        learning_rate=cfg.get("heuristic_learning_rate", 3e-4),
-        batch_size=cfg.get("heuristic_batch_size", 64),  # Reduced from 256
-        buffer_size=cfg.get("heuristic_buffer_size", 10000),  # Reduced from 100000
-        max_episode_steps=cfg.get("heuristic_max_steps", 100),
-        device=device,
-    )
+    # Use the new train_distance_heuristic function from pruning.py
+    heuristic = train_distance_heuristic(training_data, system, config_dict, rng)
 
-    heuristic = GoalConditionedDistanceHeuristic(config=heuristic_config, seed=cfg.seed)
-    print_memory()
-
-    # Prepare training data as (source_state, target_state) tuples
-    training_state_pairs = [(p["source_state"], p["target_state"]) for p in train_pairs]
-
-    # Train heuristic with reduced steps for testing
-    max_training_steps = cfg.get("heuristic_training_steps", 5000)  # Reduced from 50000
-    print(f"[DEBUG] Training for {max_training_steps} steps...")
-    print_memory()
-    # Pass system.env (not wrapped_env) - the DistanceHeuristicWrapper will handle goal-conditioning
-    # and needs access to reset_from_state which is on the base environment
-    heuristic.train(system.env, training_state_pairs, max_training_steps)
     print("[DEBUG] Training complete")
     print_memory()
 
@@ -277,17 +252,11 @@ def main(cfg: DictConfig) -> float:
 
     print(f"Computed average distances for {len(node_pair_distances)} node pairs")
 
-    # Check which node pairs were used in training
-    training_node_pairs = set()
-    for pair in train_pairs:
-        training_node_pairs.add((pair["source_id"], pair["target_id"]))
-
     # Create results based on averaged node pair distances
     results = []
     for node_pair, avg_dist in node_pair_distances.items():
         source_id, target_id = node_pair
         graph_dist = graph_distances.get(node_pair, float("inf"))
-        was_training = node_pair in training_node_pairs
 
         results.append(
             {
@@ -295,7 +264,6 @@ def main(cfg: DictConfig) -> float:
                 "target_id": target_id,
                 "graph_distance": graph_dist,
                 "learned_distance": avg_dist,
-                "was_training": was_training,
             }
         )
 
@@ -306,12 +274,7 @@ def main(cfg: DictConfig) -> float:
     print("Step 6: Analysis of Results")
     print("=" * 80)
 
-    # Separate training and test results
-    train_results = [r for r in results if r["was_training"]]
-    test_results = [r for r in results if not r["was_training"]]
-
-    print(f"\nTraining pairs: {len(train_results)}")
-    print(f"Test pairs: {len(test_results)}")
+    print(f"\nTotal node pairs: {len(results)}")
 
     # Compute statistics
     def analyze_results(result_list, name):
@@ -348,8 +311,7 @@ def main(cfg: DictConfig) -> float:
             f"  Learned distance range: [{learned_dists.min():.1f}, {learned_dists.max():.1f}]"
         )
 
-    analyze_results(train_results, "Training Set")
-    analyze_results(test_results, "Test Set")
+    analyze_results(results, "All Node Pairs")
 
     # Print detailed comparison for a sample of pairs
     print("\n" + "=" * 80)
@@ -372,8 +334,8 @@ def main(cfg: DictConfig) -> float:
     if sorted_finite:
         print(f"\nPairs with existing non-shortcut path:")
         print(f"{'Source':>6} -> {'Target':>6} | "
-              f"{d_label:>10} | {f_label:>10} | {'Error':>8} | {'Rel Err':>8} | {'Type':>5}")
-        print("-" * 70)
+              f"{d_label:>10} | {f_label:>10} | {'Error':>8} | {'Rel Err':>8}")
+        print("-" * 65)
 
         sample_size = min(20, len(sorted_finite))
         sample_step = max(1, len(sorted_finite) // sample_size)
@@ -382,15 +344,13 @@ def main(cfg: DictConfig) -> float:
             r = sorted_finite[i]
             error = abs(r["graph_distance"] - r["learned_distance"])
             rel_error = error / (r["graph_distance"] + 1e-6)
-            pair_type = "train" if r["was_training"] else "test"
 
             print(
                 f"{r['source_id']:>6} -> {r['target_id']:>6} | "
                 f"{r['graph_distance']:>10.1f} | "
                 f"{r['learned_distance']:>10.1f} | "
                 f"{error:>8.1f} | "
-                f"{rel_error:>7.1%} | "
-                f"{pair_type:>5}"
+                f"{rel_error:>7.1%}"
             )
 
     # Show infinite distance pairs (no existing non-shortcut path)
@@ -400,16 +360,13 @@ def main(cfg: DictConfig) -> float:
         print(f"These are the most valuable shortcuts to learn!")
         print(f"{'=' * 80}")
         f_label_inf = "f(s,s')"
-        print(f"{'Source':>6} -> {'Target':>6} | "
-              f"{f_label_inf:>10} | {'Type':>5}")
-        print("-" * 40)
+        print(f"{'Source':>6} -> {'Target':>6} | {f_label_inf:>10}")
+        print("-" * 30)
 
         for r in sorted_infinite:
-            pair_type = "train" if r["was_training"] else "test"
             print(
                 f"{r['source_id']:>6} -> {r['target_id']:>6} | "
-                f"{r['learned_distance']:>10.1f} | "
-                f"{pair_type:>5}"
+                f"{r['learned_distance']:>10.1f}"
             )
 
     # Save results
@@ -422,8 +379,6 @@ def main(cfg: DictConfig) -> float:
         f.write(f"Total node pairs: {len(results)}\n")
         f.write(f"Total state pairs evaluated: {len(all_pairs)}\n")
         f.write(f"Average state pairs per node pair: {len(all_pairs) / max(1, len(results)):.1f}\n")
-        f.write(f"Training node pairs: {len(train_results)}\n")
-        f.write(f"Test node pairs: {len(test_results)}\n")
         f.write(f"Pairs with finite graph distance: {len(finite_results)}\n")
         f.write(f"Pairs with infinite graph distance (no non-shortcut path): {len(infinite_results)}\n")
         f.write(f"\nNote: f(s,s') values are averaged across all state pairs for each node pair\n\n")
@@ -434,20 +389,18 @@ def main(cfg: DictConfig) -> float:
         f.write("Pairs with existing non-shortcut path:\n")
         f.write(
             f"{'Source':>6} -> {'Target':>6} | "
-            f"{d_label:>10} | {f_label:>10} | {'Error':>8} | {'Type':>5}\n"
+            f"{d_label:>10} | {f_label:>10} | {'Error':>8}\n"
         )
-        f.write("-" * 70 + "\n")
+        f.write("-" * 60 + "\n")
 
         for r in sorted_finite:
             error = abs(r["graph_distance"] - r["learned_distance"])
-            pair_type = "train" if r["was_training"] else "test"
 
             f.write(
                 f"{r['source_id']:>6} -> {r['target_id']:>6} | "
                 f"{r['graph_distance']:>10.1f} | "
                 f"{r['learned_distance']:>10.1f} | "
-                f"{error:>8.1f} | "
-                f"{pair_type:>5}\n"
+                f"{error:>8.1f}\n"
             )
 
         # Write infinite distance comparisons
@@ -458,17 +411,14 @@ def main(cfg: DictConfig) -> float:
             f.write("=" * 80 + "\n")
             f_label_inf = "f(s,s')"
             f.write(
-                f"{'Source':>6} -> {'Target':>6} | "
-                f"{f_label_inf:>10} | {'Type':>5}\n"
+                f"{'Source':>6} -> {'Target':>6} | {f_label_inf:>10}\n"
             )
-            f.write("-" * 40 + "\n")
+            f.write("-" * 30 + "\n")
 
             for r in sorted_infinite:
-                pair_type = "train" if r["was_training"] else "test"
                 f.write(
                     f"{r['source_id']:>6} -> {r['target_id']:>6} | "
-                    f"{r['learned_distance']:>10.1f} | "
-                    f"{pair_type:>5}\n"
+                    f"{r['learned_distance']:>10.1f}\n"
                 )
 
     print(f"\nDetailed results saved to {results_file}")

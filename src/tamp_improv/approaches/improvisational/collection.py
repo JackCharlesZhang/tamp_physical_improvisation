@@ -261,10 +261,10 @@ def collect_total_shortcuts(
                     "source_node_id": source_id,
                     "target_node_id": target_id,
                 })
+                # Add one entry to valid_shortcuts per state pair
+                all_valid_shortcuts.append((source_id, target_id))
 
-            all_valid_shortcuts.append((source_id, target_id))
-
-            # Register signature with approach
+            # Register signature with approach (once per node pair)
             signature = ShortcutSignature.from_context(
                 candidate.source_atoms,
                 candidate.target_atoms,
@@ -386,6 +386,9 @@ def collect_total_planning_graph(
     collect_episodes: int,
     seed: int = 42,
     planner_id: str = "pyperplan",
+    compute_costs: bool = True,
+    cost_samples: int = 5,
+    max_steps_per_edge: int = 100,
 ) -> tuple[PlanningGraph, dict[frozenset, list]]:
     """Build a unified planning graph across multiple episodes.
 
@@ -399,6 +402,9 @@ def collect_total_planning_graph(
         collect_episodes: Number of episodes to collect across
         seed: Random seed for environment resets
         planner_id: Planner to use for BFS graph construction
+        compute_costs: Whether to compute edge costs after building graph
+        cost_samples: Number of samples per edge for cost computation
+        max_steps_per_edge: Maximum steps for edge execution during cost computation
 
     Returns:
         Tuple of:
@@ -517,5 +523,17 @@ def collect_total_planning_graph(
         f"{len(total_graph.edges)} edges, "
         f"{sum(len(states) for states in node_states.values())} total states"
     )
+
+    # Compute edge costs if requested
+    if compute_costs:
+        from tamp_improv.approaches.improvisational.analyze import compute_all_edge_costs
+
+        compute_all_edge_costs(
+            system=system,
+            graph=total_graph,
+            node_states=node_states,
+            num_samples=cost_samples,
+            max_steps=max_steps_per_edge,
+        )
 
     return total_graph, node_states

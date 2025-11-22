@@ -163,32 +163,47 @@ def prune_random(
 ) -> GoalConditionedTrainingData:
     """Random pruning - select a random subset of shortcuts.
 
+    Operates at the NODE PAIR level: if a node pair (A, B) is selected,
+    ALL training examples (state pairs) for that node pair are kept.
+
     Args:
         training_data: Unpruned training data
-        max_shortcuts: Maximum number of shortcuts to keep
+        max_shortcuts: Maximum number of NODE PAIRS to keep
         rng: Random number generator
 
     Returns:
         Pruned training data with randomly selected shortcuts
     """
-    print(f"Pruning method: random (max {max_shortcuts} shortcuts)")
-    num_shortcuts = len(training_data.states)
-    print(f"Total shortcuts before pruning: {num_shortcuts}")
+    print(f"Pruning method: random (max {max_shortcuts} node pairs)")
 
-    if num_shortcuts <= max_shortcuts:
-        print(f"Keeping all {num_shortcuts} shortcuts (under limit)")
+    # Get unique node pairs
+    unique_node_pairs = list(set(training_data.valid_shortcuts))
+    num_node_pairs = len(unique_node_pairs)
+    print(f"Total node pairs before pruning: {num_node_pairs}")
+    print(f"Total state pairs: {len(training_data.states)}")
+
+    if num_node_pairs <= max_shortcuts:
+        print(f"Keeping all {num_node_pairs} node pairs (under limit)")
         return training_data
 
-    # Randomly select indices
-    selected_indices = rng.choice(num_shortcuts, size=max_shortcuts, replace=False)
-    selected_indices = sorted(selected_indices)  # Keep sorted for consistency
+    # Randomly select node pairs
+    selected_node_pairs = set(
+        tuple(unique_node_pairs[i])
+        for i in rng.choice(num_node_pairs, size=max_shortcuts, replace=False)
+    )
 
-    # Filter valid_shortcuts to match selected indices
-    selected_shortcuts = [training_data.valid_shortcuts[i] for i in selected_indices]
+    # Find all state pair indices that belong to selected node pairs
+    selected_indices = []
+    for i, (source_id, target_id) in enumerate(training_data.valid_shortcuts):
+        if (source_id, target_id) in selected_node_pairs:
+            selected_indices.append(i)
 
     # Filter shortcut_info to match selected indices
     original_shortcut_info = training_data.config.get("shortcut_info", [])
     pruned_shortcut_info = [original_shortcut_info[i] for i in selected_indices] if original_shortcut_info else []
+
+    # Filter valid_shortcuts to only include selected node pairs (deduplicated)
+    selected_shortcuts_list = [training_data.valid_shortcuts[i] for i in selected_indices]
 
     # Create pruned training data
     pruned_data = GoalConditionedTrainingData(
@@ -199,16 +214,18 @@ def prune_random(
             **training_data.config,
             "pruning_method": "random",
             "max_shortcuts": max_shortcuts,
-            "original_shortcut_count": num_shortcuts,
-            "pruned_shortcut_count": max_shortcuts,
+            "original_node_pair_count": num_node_pairs,
+            "original_state_pair_count": len(training_data.states),
+            "pruned_node_pair_count": len(selected_node_pairs),
+            "pruned_state_pair_count": len(selected_indices),
             "shortcut_info": pruned_shortcut_info,  # Use pruned shortcut_info
         },
         node_states=training_data.node_states,
-        valid_shortcuts=selected_shortcuts,
+        valid_shortcuts=selected_shortcuts_list,
         node_atoms=training_data.node_atoms,
     )
 
-    print(f"Selected {max_shortcuts} shortcuts randomly")
+    print(f"Selected {len(selected_node_pairs)} node pairs ({len(selected_indices)} state pairs)")
     return pruned_data
 
 
@@ -254,11 +271,17 @@ def prune_with_rollouts(
 
     # Get the base environment for running rollouts
     raw_env = system.env
-    sampling_space = gym.spaces.Box(
-        low=raw_env.action_space.low * action_scale,
-        high=raw_env.action_space.high * action_scale,
-        dtype=raw_env.action_space.dtype,
-    )
+
+    if isinstance(raw_env.action_space, gym.spaces.Box):
+        sampling_space = gym.spaces.Box(
+            low=raw_env.action_space.low * action_scale,
+            high=raw_env.action_space.high * action_scale,
+            dtype=np.float32,
+        )
+    else:
+        print("Warning: Action space is not Box, using original action space.")
+        sampling_space = raw_env.action_space
+    
     sampling_space.seed(seed)
 
     # Build node lookup for efficiency
@@ -298,8 +321,9 @@ def prune_with_rollouts(
 
                     # Check if we've reached any target nodes
                     for target_id in training_data.node_states.keys():
-                        if target_id <= source_id:
-                            continue
+                        # print(target_id)
+                        # if target_id <= source_id:
+                        #     continue
 
                         # Skip if not a valid shortcut
                         if (source_id, target_id) not in training_data.valid_shortcuts:
@@ -318,6 +342,10 @@ def prune_with_rollouts(
                     if terminated or truncated:
                         break
 
+    print("\nRollout results:")
+    for (source_id, target_id), count in shortcut_success_counts.items():
+        print(f"  Shortcut ({source_id} -> {target_id}): {count} successes")
+
     # Select shortcuts that meet the threshold
     selected_shortcuts = []
     for source_id, target_id in training_data.valid_shortcuts:
@@ -329,7 +357,9 @@ def prune_with_rollouts(
     print(f"\nPruned {pruned_count} shortcuts")
     print(f"Kept {len(selected_shortcuts)} shortcuts")
 
-    # Create pruned training data
+    # Filter training data to match selected shortcuts
+    # Note: selected_shortcuts already contains duplicates (one per state pair)
+    # because it was built by iterating over training_data.valid_shortcuts
     selected_set = set(selected_shortcuts)
     selected_indices = []
 
@@ -351,8 +381,10 @@ def prune_with_rollouts(
             "num_rollouts_per_node": num_rollouts_per_node,
             "max_steps_per_rollout": max_steps_per_rollout,
             "shortcut_success_threshold": threshold,
-            "original_shortcut_count": len(training_data.states),
-            "pruned_shortcut_count": len(selected_indices),
+            "original_node_pair_count": len(set(training_data.valid_shortcuts)),
+            "original_state_pair_count": len(training_data.states),
+            "pruned_node_pair_count": len(set(selected_shortcuts)),
+            "pruned_state_pair_count": len(selected_shortcuts),
             "shortcut_info": pruned_shortcut_info,  # Use pruned shortcut_info
         },
         node_states=training_data.node_states,
@@ -514,7 +546,9 @@ def prune_with_distance_heuristic(
     print(f"Kept {len(selected_shortcuts)} shortcuts")
 
     # Step 5: Create pruned training data
-    # Filter training data to only include selected shortcuts
+    # Filter training data to match selected shortcuts
+    # Note: selected_shortcuts already contains duplicates (one per state pair)
+    # because it was built by iterating over training_data.valid_shortcuts
     selected_set = set(selected_shortcuts)
     selected_indices = []
 
@@ -536,8 +570,10 @@ def prune_with_distance_heuristic(
             "practical_horizon": practical_horizon,
             "heuristic_training_pairs": heuristic_training_pairs,
             "heuristic_training_steps": heuristic_training_steps,
-            "original_shortcut_count": len(training_data.states),
-            "pruned_shortcut_count": len(selected_indices),
+            "original_node_pair_count": len(set(training_data.valid_shortcuts)),
+            "original_state_pair_count": len(training_data.states),
+            "pruned_node_pair_count": len(set(selected_shortcuts)),
+            "pruned_state_pair_count": len(selected_shortcuts),
             "shortcut_info": pruned_shortcut_info,  # Use pruned shortcut_info
         },
         node_states=training_data.node_states,
