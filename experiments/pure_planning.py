@@ -240,7 +240,15 @@ def run_dyn_obstruction2d_planning(
     planner.reset(obs, info)
 
     for step in range(max_steps):
-        action = planner.step(obs)
+        try:
+            action = planner.step(obs)
+        except Exception as e:
+            print(f"\n[SKILL FAILURE] Skill failed with exception: {type(e).__name__}: {e}")
+            print("[PLANNER] Attempting to replan...")
+            # Reset planner to trigger replanning
+            planner.reset(obs, info)
+            action = planner.step(obs)
+
         obs, reward, done, _, info = system.env.step(action)
 
         if step % 20 == 0:
