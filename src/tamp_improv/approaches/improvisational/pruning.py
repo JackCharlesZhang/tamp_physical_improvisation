@@ -464,8 +464,8 @@ def prune_with_distance_heuristic(
         if target_id not in training_data.node_states:
             continue
 
-        source_states = training_data.node_states[source_id]
-        target_states = training_data.node_states[target_id]
+        source_states = training_data.node_states[source_id] # multiple states per node
+        target_states = training_data.node_states[target_id] # multiple states per node
 
         if not source_states or not target_states:
             continue

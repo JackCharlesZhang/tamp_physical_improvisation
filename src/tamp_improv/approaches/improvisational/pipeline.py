@@ -32,6 +32,9 @@ from tamp_improv.approaches.improvisational.pruning import (
     prune_training_data,
     train_distance_heuristic,
 )
+from tamp_improv.approaches.improvisational.iterative_pruning import (
+    iterative_pruning
+)
 from tamp_improv.approaches.improvisational.training import (
     Metrics,
     TrainingConfig,
@@ -365,6 +368,7 @@ def prune_full_data(
     rng: np.random.Generator,
     heuristic: "GoalConditionedDistanceHeuristic | None" = None,
     force_prune: bool = False,
+    iterative_pruning: bool = False,
 ) -> GoalConditionedTrainingData:
     """
     Stage 3: Apply pruning method to full training data.
@@ -458,9 +462,13 @@ def prune_full_data(
             "Call get_or_train_heuristic() first."
         )
 
-    pruned_data = prune_training_data(
-        training_data, system, planning_graph, config, rng, heuristic=heuristic
+    if iterative_pruning:
+        pruned_data = iterative_pruning(training_data, system, planning_graph, config, rng, heuristic=heuristic
     )
+    else:
+        pruned_data = prune_training_data(
+            training_data, system, planning_graph, config, rng, heuristic=heuristic
+        )
 
     # Save pruned data and config
     pruning_dir.mkdir(parents=True, exist_ok=True)
