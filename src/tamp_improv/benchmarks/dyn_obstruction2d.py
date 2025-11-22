@@ -31,11 +31,6 @@ from tamp_improv.benchmarks.base import (
 from tamp_improv.benchmarks.wrappers import ImprovWrapper
 
 
-class VerticalCollisionDetected(Exception):
-    """Raised when a held block cannot descend due to obstruction below."""
-    pass
-
-
 # Monkey-patch Tobject into tomsgeoms2d if it doesn't exist
 # (prbench imports it but dyn_obstruction2d doesn't actually use it)
 # MUST happen BEFORE importing prbench!
@@ -101,10 +96,6 @@ class DynObstruction2DPredicates:
         self.obstruction_clear = Predicate(
             "ObstructionClear", [types.obstruction, types.surface]
         )
-        # New predicate: checks if vertical descent path to surface is clear
-        self.vertical_path_clear = Predicate(
-            "VerticalPathClear", [types.block, types.surface]
-        )
 
     def __getitem__(self, key: str) -> Predicate:
         """Get predicate by name."""
@@ -119,7 +110,6 @@ class DynObstruction2DPredicates:
             self.gripper_empty,
             self.obstructing,
             self.obstruction_clear,
-            self.vertical_path_clear,
         }
 
 
@@ -406,16 +396,6 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         if not surface_obstructed and not target_block_held:
             atoms.add(self.predicates["Clear"]([self._target_surface]))
 
-        # Check if vertical descent path to surface is clear
-        # This checks if we can lower the target block onto the surface without hitting obstructions
-        vertical_path_clear = self._check_vertical_path_clear(
-            target_block_x, target_block_y, target_block_width, target_block_height,
-            target_surface_y, target_surface_height,
-            obs, self._num_obstructions
-        )
-        if vertical_path_clear:
-            atoms.add(self.predicates["VerticalPathClear"]([self._target_block, self._target_surface]))
-
         return atoms
 
     def _is_on_surface(
@@ -478,52 +458,6 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
             obs_y, surface_y_level, atol=0.1
         )
 
-    def _check_vertical_path_clear(
-        self,
-        target_block_x: float,
-        target_block_y: float,
-        target_block_width: float,
-        target_block_height: float,
-        target_surface_y: float,
-        target_surface_height: float,
-        obs: NDArray[np.float32],
-        num_obstructions: int,
-    ) -> bool:
-        """Check if vertical descent path to surface would be clear when block is at surface x-position.
-
-        This checks if placing the block at the surface's x-position would encounter
-        vertical collision with any obstruction.
-        """
-        # Get target surface x-position (where block would be placed)
-        target_surface_x = obs[0]
-
-        # Calculate where the block would be when held above the surface
-        # (at surface x-position, at a safe height ready to descend)
-        placement_block_x = target_surface_x
-
-        # Check each obstruction
-        for obs_idx in range(num_obstructions):
-            offset = 29 + obs_idx * 15
-            obs_x = obs[offset]
-            obs_y = obs[offset + 1]
-            obs_width = obs[offset + 12]
-            obs_height = obs[offset + 13]
-
-            # Use the same overlap calculation as the skill
-            # Check overlap at the placement x-position (not current position)
-            overlap = BaseDynObstruction2DSkill._compute_horizontal_overlap_percentage(
-                block_x=placement_block_x, block_y=target_block_y,  # Use surface x, current y
-                block_width=target_block_width, block_height=target_block_height, block_theta=0.0,
-                obs_x=obs_x, obs_y=obs_y,
-                obs_width=obs_width, obs_height=obs_height, obs_theta=0.0
-            )
-
-            # If >10% overlap, this obstruction blocks the vertical path to placement
-            if overlap > 0.1:
-                return False
-
-        return True
-
 
 # ==============================================================================
 # SLAP-COMPATIBLE PHASE-BASED SKILLS
@@ -537,7 +471,7 @@ class BaseDynObstruction2DSkill(
     # Constants
     POSITION_TOL = 5e-2  # Looser tolerance for physics
     SAFE_Y = 1.5  # Higher safe navigation height for better clearance
-    GARBAGE_X, GARBAGE_Y = 0.3, 0.15
+    GARBAGE_X = 0.3  # X-position for garbage/disposal placement
     TARGET_THETA = -np.pi / 2  # -90° = pointing down (theta=0 is pointing right)
     MAX_DX = MAX_DY = 5e-2
     MAX_DTHETA = np.pi / 16
@@ -581,6 +515,31 @@ class BaseDynObstruction2DSkill(
         while diff < -np.pi:
             diff += 2 * np.pi
         return diff
+
+    @staticmethod
+    def _calculate_placement_height(
+        surface_y: float,
+        surface_height: float,
+        block_height: float,
+        arm_length_max: float
+    ) -> float:
+        """Calculate robot y-position needed to place block on a surface.
+
+        Formula: Block bottom should touch surface top.
+        - Block center = surface_y + surface_height + block_height/2
+        - Robot gripper is at: robot_y - arm_length_max = block_center
+        - Therefore: robot_y = surface_y + surface_height + block_height/2 + arm_length_max
+
+        Args:
+            surface_y: Y-position of surface center
+            surface_height: Height of surface
+            block_height: Height of block being placed
+            arm_length_max: Maximum arm length (distance from robot to gripper)
+
+        Returns:
+            Target robot y-position for placement
+        """
+        return surface_y + surface_height + block_height/2 + arm_length_max
 
     @staticmethod
     def _compute_horizontal_overlap_percentage(
@@ -744,6 +703,15 @@ class PlaceSkill(BaseDynObstruction2DSkill):
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
+
+        # Calculate placement height: place on ground at garbage location
+        placement_y = self._calculate_placement_height(
+            surface_y=0.0,
+            surface_height=0.0,
+            block_height=p['block_height'],
+            arm_length_max=p['arm_length_max']
+        )
+
         # Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         if abs(angle_error) > self.POSITION_TOL:
@@ -754,9 +722,9 @@ class PlaceSkill(BaseDynObstruction2DSkill):
         # To garbage x
         if not np.isclose(p['robot_x'], self.GARBAGE_X, atol=self.POSITION_TOL):
             return np.array([np.clip(self.GARBAGE_X - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
-        # Descend
-        if not np.isclose(p['robot_y'], self.GARBAGE_Y, atol=self.POSITION_TOL):
-            return np.array([0, np.clip(self.GARBAGE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        # Descend to calculated placement height
+        if not np.isclose(p['robot_y'], placement_y, atol=self.POSITION_TOL):
+            return np.array([0, np.clip(placement_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
         # Open gripper
         if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
             return np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
@@ -774,13 +742,49 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
-        # Place at surface x-position (no clamping - assume surface is within valid bounds)
-        target_x = p['surface_x']
-        # Target: block bottom touches surface top
-        # Block center when placed = surface_y + surface_height + block_height/2
-        # robot_y - arm_length_max = block_center
-        # Therefore: robot_y = surface_y + surface_height + block_height/2 + arm_length_max
-        target_y = p['surface_y'] + p['surface_height'] + p['block_height']/2 + p['arm_length_max']
+
+        # PRE-CHECK: Is target surface blocked by an obstruction?
+        # Check if any obstruction is covering >10% of the target surface
+        surface_blocked = False
+        for obs_idx in range(2):
+            obs_x = p[f'obs{obs_idx}_x']
+            obs_y = p[f'obs{obs_idx}_y']
+            obs_width = p[f'obs{obs_idx}_width']
+            obs_height = p[f'obs{obs_idx}_height']
+
+            # Check overlap between obstruction and target surface
+            overlap = self._compute_horizontal_overlap_percentage(
+                block_x=obs_x, block_y=obs_y,
+                block_width=obs_width, block_height=obs_height, block_theta=0.0,
+                obs_x=p['surface_x'], obs_y=p['surface_y'],
+                obs_width=p['surface_width'], obs_height=p['surface_height'], obs_theta=0.0
+            )
+
+            if overlap > 0.1:
+                surface_blocked = True
+                break
+
+        # If surface is blocked, abort and place at current position instead
+        if surface_blocked:
+            # Place directly below current position (where we picked it up)
+            target_x = p['robot_x']
+            # Place on ground (surface_y=0, surface_height=0)
+            target_y = self._calculate_placement_height(
+                surface_y=0.0,
+                surface_height=0.0,
+                block_height=p['block_height'],
+                arm_length_max=p['arm_length_max']
+            )
+        else:
+            # Normal placement: Place at surface x-position
+            target_x = p['surface_x']
+            # Place on target surface
+            target_y = self._calculate_placement_height(
+                surface_y=p['surface_y'],
+                surface_height=p['surface_height'],
+                block_height=p['block_height'],
+                arm_length_max=p['arm_length_max']
+            )
 
         # Phase 0: Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
@@ -801,58 +805,8 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             return action
 
         # Phase 3: Descend (only if gripper is still holding the object)
-        # Check if we're still holding (not if gripper is fully closed)
         still_holding = p['target_block_held']
         if still_holding and not np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL):
-            print("\n" + "="*80)
-            print("[COLLISION CHECK] Starting descent phase collision detection")
-            # CHECK FOR VERTICAL COLLISION: Is an obstruction blocking our descent?
-            # Held block position is below robot gripper
-            held_block_y = p['robot_y'] - p['arm_length_max']
-            print(f"[COLLISION CHECK] Held block Y: {held_block_y:.3f}, Target Y: {target_y:.3f}")
-            print(f"[COLLISION CHECK] Block position: ({p['block_x']:.3f}, {held_block_y:.3f})")
-            print(f"[COLLISION CHECK] Block dimensions: {p['block_width']:.3f} x {p['block_height']:.3f}")
-
-            # Check both obstructions for collision
-            for obs_idx in range(2):  # obs0 and obs1
-                obs_x = p[f'obs{obs_idx}_x']
-                obs_y = p[f'obs{obs_idx}_y']
-                obs_width = p[f'obs{obs_idx}_width']
-                obs_height = p[f'obs{obs_idx}_height']
-
-                print(f"\n[COLLISION CHECK] Checking obstruction{obs_idx}:")
-                print(f"  Position: ({obs_x:.3f}, {obs_y:.3f})")
-                print(f"  Dimensions: {obs_width:.3f} x {obs_height:.3f}")
-
-                # Compute overlap percentage
-                overlap = self._compute_horizontal_overlap_percentage(
-                    block_x=p['block_x'], block_y=held_block_y,
-                    block_width=p['block_width'], block_height=p['block_height'], block_theta=0.0,
-                    obs_x=obs_x, obs_y=obs_y,
-                    obs_width=obs_width, obs_height=obs_height, obs_theta=0.0
-                )
-
-                # Check if obstruction is in descent path
-                # Obstruction blocks descent if it's between current position and target
-                in_descent_path = obs_y < held_block_y  # Below us currently
-
-                print(f"  Overlap: {overlap*100:.1f}%")
-                print(f"  Is below held block? {obs_y < held_block_y}")
-                print(f"  In descent path? {in_descent_path}")
-
-                # If >10% overlap and obstruction is in our descent path, fail
-                if overlap > 0.1 and in_descent_path:
-                    print(f"\n[COLLISION DETECTED] ❌ obstruction{obs_idx} blocks descent!")
-                    print(f"  Overlap: {overlap*100:.1f}% (threshold: 10%)")
-                    print(f"  Raising VerticalCollisionDetected exception")
-                    print("="*80 + "\n")
-                    raise VerticalCollisionDetected(
-                        f"Cannot descend: obstruction{obs_idx} blocks descent path "
-                        f"({overlap*100:.1f}% overlap detected)"
-                    )
-
-            print(f"\n[COLLISION CHECK] ✓ No collision detected, safe to descend")
-            print("="*80 + "\n")
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
 
@@ -1050,7 +1004,9 @@ class BaseDynObstruction2DTAMPSystem(
             preconditions={
                 predicates["Holding"]([robot, block]),
                 predicates["Clear"]([surface]),
-                predicates["VerticalPathClear"]([block, surface]),  # NEW: Check vertical path
+                # NOTE: VerticalPathClear removed from preconditions
+                # The skill will check collision at runtime and fail if blocked
+                # This allows the planner to try, fail, then replan with obstacle clearing
             },
             add_effects={
                 predicates["On"]([block, surface]),
