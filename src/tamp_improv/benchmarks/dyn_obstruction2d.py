@@ -756,6 +756,8 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
 
+        print(f"\n[PlaceOnTarget] ENTRY: target_block_held={p['target_block_held']}, finger_gap={p['finger_gap']:.3f}, robot_y={p['robot_y']:.3f}")
+
         # PRE-CHECK: Is target surface blocked by an obstruction?
         # Check if any obstruction is covering >10% of the target surface
         surface_blocked = False
@@ -866,9 +868,11 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         # Check if block is no longer held (not if gripper is opened)
         block_released = not p['target_block_held']
         if block_released and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            print(f"[PlaceOnTarget] Phase 5: Lifting to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
 
+        print(f"[PlaceOnTarget] DONE - Returning zeros (robot_y={p['robot_y']:.3f}, held={p['target_block_held']})")
         return np.zeros(5, dtype=np.float64)
 
 
