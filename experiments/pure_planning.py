@@ -229,13 +229,18 @@ def run_dyn_obstruction2d_planning(
 
     print(f"\nObjects: {[obj.name for obj in objects]}")
     print(f"Initial atoms ({len(atoms)}):")
-    for atom in sorted(atoms, key=str)[:10]:  # Show first 10
+    for atom in sorted(atoms, key=str):
         print(f"  - {atom}")
-    if len(atoms) > 10:
-        print(f"  ... and {len(atoms) - 10} more")
     print(f"Goal ({len(goal)}):")
     for atom in sorted(goal, key=str):
         print(f"  - {atom}")
+
+    print(f"\n[DEBUG] Available operators:")
+    for op in system.operators:
+        print(f"  - {op.name}: params={op.parameters}")
+        print(f"    preconditions: {op.preconditions}")
+        print(f"    add_effects: {op.add_effects}")
+        print(f"    delete_effects: {op.delete_effects}")
 
     planner.reset(obs, info)
 
