@@ -255,19 +255,19 @@ def run_dyn_obstruction2d_planning(
     print(f"\n[DEBUG] Starting execution...")
 
     for step in range(max_steps):
-        # Show current plan state
-        if hasattr(planner, '_current_operator') and planner._current_operator:
-            print(f"\n[STEP {step}] Current operator: {planner._current_operator}")
-        if hasattr(planner, '_plan') and planner._plan:
-            print(f"[STEP {step}] Remaining plan length: {len(planner._plan)}")
+        # # Show current plan state
+        # if hasattr(planner, '_current_operator') and planner._current_operator:
+        #     print(f"\n[STEP {step}] Current operator: {planner._current_operator}")
+        # if hasattr(planner, '_plan') and planner._plan:
+        #     print(f"[STEP {step}] Remaining plan length: {len(planner._plan)}")
 
-        # Only print action every 10 steps during stuttering to reduce spam
-        print_action = (step < 95) or (step % 10 == 0)
+        # # Only print action every 10 steps during stuttering to reduce spam
+        # print_action = (step < 95) or (step % 10 == 0)
 
         try:
             action = planner.step(obs)
-            if print_action:
-                print(f"[STEP {step}] Action returned: {action}, all_zeros={all(action == 0)}")
+            # if print_action:
+            #     print(f"[STEP {step}] Action returned: {action}, all_zeros={all(action == 0)}")
         except Exception as e:
             print(f"\n[SKILL FAILURE] Skill failed with exception: {type(e).__name__}: {e}")
             print("[PLANNER] Attempting to replan...")
@@ -277,8 +277,8 @@ def run_dyn_obstruction2d_planning(
 
         obs, reward, done, _, info = system.env.step(action)
 
-        if step % 20 == 0:
-            print(f"Step {step}: reward={reward:.3f}")
+        # if step % 20 == 0:
+        #     print(f"Step {step}: reward={reward:.3f}")
 
         if done:
             print(f"\nGoal reached in {step + 1} steps!")
