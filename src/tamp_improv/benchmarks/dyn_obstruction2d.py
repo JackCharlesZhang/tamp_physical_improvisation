@@ -757,12 +757,13 @@ class PlaceSkill(BaseDynObstruction2DSkill):
         if abs(angle_error) > self.POSITION_TOL:
             print(f"[Place] Phase 0: Aligning (angle_error={angle_error:.3f})")
             return np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
-        # To safe height
-        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+        # To safe height (only if we haven't reached garbage x yet)
+        not_at_garbage_x = not np.isclose(p['robot_x'], self.GARBAGE_X, atol=self.POSITION_TOL)
+        if not_at_garbage_x and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             print(f"[Place] Phase 1: To safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
         # To garbage x
-        if not np.isclose(p['robot_x'], self.GARBAGE_X, atol=self.POSITION_TOL):
+        if not_at_garbage_x:
             print(f"[Place] Phase 2: To garbage x (robot_x={p['robot_x']:.3f}, GARBAGE_X={self.GARBAGE_X:.3f})")
             return np.array([np.clip(self.GARBAGE_X - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
         # Descend to calculated placement height
