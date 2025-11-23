@@ -43,6 +43,59 @@ if not hasattr(tomsgeoms2d.structs, "Tobject"):
 from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv, DynObstruction2DEnvConfig
 
 
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
+
+def compute_horizontal_overlap_percentage(
+    block_x: float, block_y: float, block_width: float, block_height: float, block_theta: float,
+    obs_x: float, obs_y: float, obs_width: float, obs_height: float, obs_theta: float
+) -> float:
+    """Compute what percentage of the held block's bottom face is covered by an obstruction's top face.
+
+    Uses tomsgeoms2d Rectangle to handle rotations properly.
+
+    Args:
+        block_x, block_y: Center position of held block
+        block_width, block_height: Dimensions of held block
+        block_theta: Rotation of held block
+        obs_x, obs_y: Center position of obstruction
+        obs_width, obs_height: Dimensions of obstruction
+        obs_theta: Rotation of obstruction
+
+    Returns:
+        Percentage (0.0 to 1.0) of held block's bottom face covered by obstruction's top face
+    """
+    # Create rectangles for both blocks
+    block_rect = Rectangle.from_center(block_x, block_y, block_width, block_height, block_theta)
+    obs_rect = Rectangle.from_center(obs_x, obs_y, obs_width, obs_height, obs_theta)
+
+    # Check if obstruction is below the held block (within reasonable vertical range)
+    if obs_y > block_y:
+        return 0.0  # Obstruction is above, not below
+
+    # Compute horizontal overlap by checking if bottom vertices of held block
+    # project onto the top face of the obstruction
+    # Get bottom two vertices of held block (sorted by y-coordinate)
+    block_vertices = sorted(block_rect.vertices, key=lambda v: v[1])
+    bottom_vertices = block_vertices[:2]  # Two lowest vertices
+
+    # Check how many bottom vertices are contained in the obstruction's horizontal extent
+    overlap_count = 0
+    for vx, vy in bottom_vertices:
+        # Project vertex down to obstruction's top surface level
+        # Check if this projection falls within obstruction's bounds
+        if obs_rect.contains_point(vx, obs_y + obs_height/2):
+            overlap_count += 1
+
+    # Return percentage: 0.0 (no overlap), 0.5 (one vertex), 1.0 (both vertices)
+    return overlap_count / 2.0
+
+
+# ==============================================================================
+# TYPES AND PREDICATES
+# ==============================================================================
+
 @dataclass
 class DynObstruction2DTypes:
     """Container for DynObstruction2D types.
@@ -459,9 +512,7 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
 
         Uses the same overlap logic as PlaceOnTarget skill to ensure consistency.
         """
-        from tamp_improv.benchmarks.dyn_obstruction2d_skills import BaseDynObstruction2DSkill
-
-        overlap = BaseDynObstruction2DSkill._compute_horizontal_overlap_percentage(
+        overlap = compute_horizontal_overlap_percentage(
             block_x=obs_x, block_y=obs_y,
             block_width=obs_width, block_height=obs_height, block_theta=0.0,
             obs_x=surface_x, obs_y=surface_y,
@@ -561,44 +612,12 @@ class BaseDynObstruction2DSkill(
     ) -> float:
         """Compute what percentage of the held block's bottom face is covered by an obstruction's top face.
 
-        Uses tomsgeoms2d Rectangle to handle rotations properly.
-
-        Args:
-            block_x, block_y: Center position of held block
-            block_width, block_height: Dimensions of held block
-            block_theta: Rotation of held block
-            obs_x, obs_y: Center position of obstruction
-            obs_width, obs_height: Dimensions of obstruction
-            obs_theta: Rotation of obstruction
-
-        Returns:
-            Percentage (0.0 to 1.0) of held block's bottom face covered by obstruction's top face
+        Delegates to module-level function to avoid code duplication with Perceiver.
         """
-        # Create rectangles for both blocks
-        block_rect = Rectangle.from_center(block_x, block_y, block_width, block_height, block_theta)
-        obs_rect = Rectangle.from_center(obs_x, obs_y, obs_width, obs_height, obs_theta)
-
-        # Check if obstruction is below the held block (within reasonable vertical range)
-        if obs_y > block_y:
-            return 0.0  # Obstruction is above, not below
-
-        # Compute horizontal overlap by checking if bottom vertices of held block
-        # project onto the top face of the obstruction
-        # Get bottom two vertices of held block (sorted by y-coordinate)
-        block_vertices = sorted(block_rect.vertices, key=lambda v: v[1])
-        bottom_vertices = block_vertices[:2]  # Two lowest vertices
-
-        # Check how many bottom vertices are contained in the obstruction's horizontal extent
-        overlap_count = 0
-        for vx, vy in bottom_vertices:
-            # Project vertex down to obstruction's top surface level
-            # Check if this projection falls within obstruction's bounds
-            if obs_rect.contains_point(vx, obs_y + obs_height/2):
-                overlap_count += 1
-
-        # Simple heuristic: if both bottom vertices are over the obstruction, 100% overlap
-        # if one vertex, 50% overlap
-        return overlap_count / 2.0
+        return compute_horizontal_overlap_percentage(
+            block_x, block_y, block_width, block_height, block_theta,
+            obs_x, obs_y, obs_width, obs_height, obs_theta
+        )
 
 
 class PickUpSkill(BaseDynObstruction2DSkill):
