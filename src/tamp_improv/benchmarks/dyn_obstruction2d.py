@@ -437,8 +437,10 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
 
         # Check each obstruction to see if it's blocking the surface
         # Add Blocking(obstruction, surface) atoms for each obstruction that's blocking
+        # BUT only if the obstruction is NOT being held!
         for i, (obs_x, obs_y, obs_width, obs_height) in enumerate(obstruction_data):
-            if self._is_obstructing(
+            obs_held = obstruction_held_status[i]
+            if not obs_held and self._is_obstructing(
                 obs_x,
                 obs_y,
                 obs_width,
@@ -448,7 +450,7 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
                 target_surface_width,
                 target_surface_height,
             ):
-                # This obstruction is blocking the surface
+                # This obstruction is blocking the surface (and not being held)
                 atoms.add(self.predicates["Blocking"]([self._obstructions[i], self._target_surface]))
 
         # Surface is clear if no Blocking atoms exist for it (derived predicate)
