@@ -823,8 +823,10 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             # Place directly below current position - don't move horizontally at all
             target_x = p['robot_x']
             # Place on table - use same height as target surface (they're on the same table)
-            # Add extra clearance to avoid kinematic body pushing through table
-            CLEARANCE = 0.15  # Stop 15cm above table to avoid penetration
+            # Add LARGE clearance so that even when receiving block at low height (~1.0),
+            # the target_y is significantly different, avoiding immediate gripper opening
+            # CLEARANCE must be large enough that: handoff_height (1.0) >> target_y
+            CLEARANCE = 0.7  # Large clearance to avoid immediate drop at handoff
             target_y = self._calculate_placement_height(
                 surface_y=p['surface_y'],
                 surface_height=p['surface_height'] + CLEARANCE,
