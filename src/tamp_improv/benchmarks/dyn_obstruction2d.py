@@ -707,38 +707,46 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             print(f"[PickUpSkill] → Phase 1: Rotate gripper (error={angle_error:.3f}): {action}")
             return action
 
-        # Phase 2: Open gripper wide enough for the object
-        # Must happen BEFORE extending arm, and we need gripper wider than object
-        # Only open at safe height to avoid collisions
+        # Phase 2: Retract arm fully before opening gripper
+        # Some robot designs require arm retraction for gripper to open
         at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
-        target_gap = max(p['gripper_base_height'], obj_width * 1.2)  # 20% margin
-        gripper_not_open = p['finger_gap'] < target_gap - self.POSITION_TOL
-        if at_safe_height and gripper_not_open and not obj_held:  # Don't reopen if we're already holding
-            action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 2: Open gripper (target={target_gap:.3f}, current={p['finger_gap']:.3f}): {action}")
+        arm_retracted = p['arm_joint'] < self.POSITION_TOL
+        if at_safe_height and not arm_retracted and not obj_held:
+            action = np.array([0, 0, 0, -self.MAX_DARM, 0], dtype=np.float64)
+            print(f"[PickUpSkill] → Phase 2: Retract arm (current={p['arm_joint']:.3f}): {action}")
             return action
 
-        # Phase 3: Extend arm
+        # Phase 3: Open gripper wide enough for the object
+        # Must happen BEFORE extending arm, and we need gripper wider than object
+        # Only open at safe height to avoid collisions
+        target_gap = max(p['gripper_base_height'], obj_width * 1.2)  # 20% margin
+        gripper_not_open = p['finger_gap'] < target_gap - self.POSITION_TOL
+        if at_safe_height and arm_retracted and gripper_not_open and not obj_held:
+            action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
+            print(f"[PickUpSkill] → Phase 3: Open gripper (target={target_gap:.3f}, current={p['finger_gap']:.3f}): {action}")
+            return action
+
+        # Phase 4: Extend arm
         target_arm = p['arm_length_max'] * 0.95
         arm_error = abs(p['arm_joint'] - target_arm)
         if arm_error > self.POSITION_TOL:
             action = np.array([0, 0, 0, np.clip(target_arm - p['arm_joint'], -self.MAX_DARM, self.MAX_DARM), 0], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 3: Extend arm (error={arm_error:.3f}): {action}")
+            print(f"[PickUpSkill] → Phase 4: Extend arm (error={arm_error:.3f}): {action}")
             return action
 
-        # Phase 4: Move horizontally to object x (only before grasping)
+        # Phase 5: Move horizontally to object x (only before grasping)
         gripper_is_open = p['finger_gap'] > obj_width * 0.8
         x_aligned = np.isclose(p['robot_x'], obj_x, atol=self.POSITION_TOL)
         if gripper_is_open and not x_aligned:
             if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
                 action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-                print(f"[PickUpSkill] → Phase 4a: Return to safe height: {action}")
+                print(f"[PickUpSkill] → Phase 5a: Return to safe height: {action}")
                 return action
             action = np.array([np.clip(obj_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 4: Move to object x={obj_x:.3f}: {action}")
+            print(f"[PickUpSkill] → Phase 5: Move to object x={obj_x:.3f}: {action}")
             return action
 
-        # Phase 5: Descend to object (only if gripper is still open - haven't grasped yet)
+        # Phase 6: Descend to object (only if gripper is still open - haven't grasped yet)
         gripper_is_open = p['finger_gap'] > obj_width * 0.8  # Still open if wider than object
         # Target: gripper fingers at object center height
         # robot_y - arm_length = obj_y + obj_height/2
@@ -760,23 +768,23 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             #     print(f"  ✓ Block clearance from table: {-penetration:.3f}")
 
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 5: Descend to target_y={target_y:.3f}: {action}")
+            print(f"[PickUpSkill] → Phase 6: Descend to target_y={target_y:.3f}: {action}")
             return action
 
-        # Phase 6: Close gripper (only after we've finished descending)
+        # Phase 7: Close gripper (only after we've finished descending)
         target_y = obj_y + obj_height/2 + p['arm_length_max']
         at_grasp_position = abs(p['robot_y'] - target_y) <= self.POSITION_TOL
         gripper_wide = p['finger_gap'] > obj_width * 0.7
         if at_grasp_position and gripper_wide:
             action = np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 6: Close gripper: {action}")
+            print(f"[PickUpSkill] → Phase 7: Close gripper: {action}")
             return action
 
-        # Phase 7: Lift with block
+        # Phase 8: Lift with block
         need_lift = p['robot_y'] < self.SAFE_Y - self.POSITION_TOL
         if need_lift:
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 7: Lift to safe height: {action}")
+            print(f"[PickUpSkill] → Phase 8: Lift to safe height: {action}")
             return action
 
         # All phases complete - skill is done
