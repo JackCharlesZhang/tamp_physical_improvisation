@@ -787,6 +787,24 @@ class PickUpFromTargetSkill(PickUpSkill):
     def _get_operator_name(self) -> str:
         return "PickUpFromTarget"
 
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        # Add debug logging
+        target_obj = objects[1]
+        print(f"[PickUpFromTarget] ENTRY: target_obj={target_obj.name}, type={target_obj.type.name}")
+
+        # Call parent implementation
+        action = super()._get_action_given_objects(objects, obs)
+
+        p = self._parse_obs(obs)
+        print(f"[PickUpFromTarget] robot_x={p['robot_x']:.3f}, robot_y={p['robot_y']:.3f}, finger_gap={p['finger_gap']:.3f}")
+        if target_obj.name == "obstruction0":
+            print(f"[PickUpFromTarget] obs0_x={p['obs0_x']:.3f}, obs0_y={p['obs0_y']:.3f}, obs0_held={bool(obs[29+7])}")
+        elif target_obj.name == "obstruction1":
+            print(f"[PickUpFromTarget] obs1_x={p['obs1_x']:.3f}, obs1_y={p['obs1_y']:.3f}, obs1_held={bool(obs[44+7])}")
+        print(f"[PickUpFromTarget] action={action}")
+
+        return action
+
 
 class PlaceSkill(BaseDynObstruction2DSkill):
     """SLAP skill for placing to garbage zone."""
