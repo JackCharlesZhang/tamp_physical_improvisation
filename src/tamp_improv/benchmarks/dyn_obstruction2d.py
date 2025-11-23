@@ -1072,15 +1072,19 @@ class BaseDynObstruction2DTAMPSystem(
 
         place_operator = LiftedOperator(
             "Place",
-            [robot, block],
+            [robot, block, surface],
             preconditions={
                 predicates["Holding"]([robot, block]),
+                predicates["Obstructing"]([block, surface]),  # Only applies if block is obstructing
             },
             add_effects={
                 predicates["GripperEmpty"]([robot]),
+                predicates["Clear"]([surface]),  # Makes surface clear
+                predicates["ObstructionClear"]([block, surface]),  # Block no longer obstructing
             },
             delete_effects={
                 predicates["Holding"]([robot, block]),
+                predicates["Obstructing"]([block, surface]),  # Remove obstruction
             },
         )
 
