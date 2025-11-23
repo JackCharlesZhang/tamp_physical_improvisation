@@ -411,15 +411,13 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
             # Check if holding any obstruction
             for i, obs_held in enumerate(obstruction_held_status):
                 if obs_held:
-                    # if DEBUG_SKILL_PHASES:
-                    #     print(f"[Perceiver] Robot holding obstruction{i}")
+                    print(f"[Perceiver] Robot holding obstruction{i}")
                     atoms.add(self.predicates["Holding"]([self._robot, self._obstructions[i]]))
                     holding_something = True
                     break  # Can only hold one object at a time
 
         if not holding_something:
-            # if DEBUG_SKILL_PHASES:
-            #     print(f"[Perceiver] Adding GripperEmpty predicate")
+            print(f"[Perceiver] Adding GripperEmpty predicate")
             atoms.add(self.predicates["GripperEmpty"]([self._robot]))
 
         # Check if target block is on target surface
