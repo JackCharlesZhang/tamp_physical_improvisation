@@ -467,6 +467,12 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
             blocking_atoms = [atom for atom in atoms if atom.predicate.name == "Blocking"]
             #print(f"[Perceiver] NOT adding Clear predicate - Blocking atoms: {blocking_atoms}")
 
+        # DEBUG: Print all current atoms/predicates
+        print(f"\n[Perceiver] Current state atoms ({len(atoms)}):")
+        for atom in sorted(atoms, key=str):
+            print(f"  {atom}")
+        print()
+
         return atoms
 
     def _is_on_surface(
