@@ -372,7 +372,7 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         target_block_theta = obs[16]
         target_block_width = obs[26]
         target_block_height = obs[27]
-        target_block_held = obs[21] > 0.3  # "held" feature
+        target_block_held = obs[21] > 0.1  # "held" feature
 
         # Obstructions (15 features each)
         obstruction_data = []  # List of (x, y, width, height)
@@ -381,7 +381,7 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
             offset = 29 + i * 15
             obs_x = obs[offset]
             obs_y = obs[offset + 1]
-            obs_held = obs[offset + 7] > 0.3
+            obs_held = obs[offset + 7] > 0.1
             obs_width = obs[offset + 12]  # width feature
             obs_height = obs[offset + 13]  # height feature
             obstruction_data.append((obs_x, obs_y, obs_width, obs_height))
