@@ -767,16 +767,18 @@ class PlaceSkill(BaseDynObstruction2DSkill):
         if not_at_garbage_x:
             print(f"[Place] Phase 2: To garbage x (robot_x={p['robot_x']:.3f}, GARBAGE_X={self.GARBAGE_X:.3f})")
             return np.array([np.clip(self.GARBAGE_X - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
-        # Descend to calculated placement height
-        if not np.isclose(p['robot_y'], placement_y, atol=self.POSITION_TOL):
+        # Phase 3: Descend to calculated placement height (only if still holding the block)
+        still_holding = p['target_block_held']
+        if still_holding and not np.isclose(p['robot_y'], placement_y, atol=self.POSITION_TOL):
             print(f"[Place] Phase 3: Descending (robot_y={p['robot_y']:.3f}, placement_y={placement_y:.3f})")
             return np.array([0, np.clip(placement_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-        # Open gripper (use same logic as PlaceOnTarget)
+        # Phase 4: Open gripper (use same logic as PlaceOnTarget)
         if p['finger_gap'] < p['gripper_base_height'] * 0.95:
             print(f"[Place] Phase 4: Opening gripper (finger_gap={p['finger_gap']:.3f}, target={p['gripper_base_height']:.3f})")
             return np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
-        # Lift (only after gripper is open)
-        if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+        # Phase 5: Lift (only after block has been released)
+        block_released = not p['target_block_held']
+        if block_released and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             print(f"[Place] Phase 5: Lifting (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
         print(f"[Place] DONE")
