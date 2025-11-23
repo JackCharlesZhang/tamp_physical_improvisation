@@ -773,10 +773,11 @@ class PlaceSkill(BaseDynObstruction2DSkill):
             print(f"[Place] Phase 3: Descending (robot_y={p['robot_y']:.3f}, placement_y={placement_y:.3f})")
             return np.array([0, np.clip(placement_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
         # Open gripper
-        if p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL:
+        gripper_is_open = p['finger_gap'] >= p['gripper_base_height'] - self.POSITION_TOL
+        if not gripper_is_open:
             print(f"[Place] Phase 4: Opening gripper (finger_gap={p['finger_gap']:.3f})")
             return np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
-        # Lift
+        # Lift (only after gripper is open)
         if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             print(f"[Place] Phase 5: Lifting (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
