@@ -744,12 +744,11 @@ class PlaceSkill(BaseDynObstruction2DSkill):
 
         print(f"\n[Place] ENTRY: robot_x={p['robot_x']:.3f}, robot_y={p['robot_y']:.3f}, robot_theta={p['robot_theta']:.3f}")
 
-        # Calculate placement height: place on ground at garbage location
-        # Use small ground height to prevent gripper collision with floor
-        GROUND_CLEARANCE = 0.15  # Match table height to ensure blocks sit on ground properly
+        # Calculate placement height: use EXACT same surface parameters as PlaceOnTarget
+        # since we're placing on the same table surface, just at garbage location
         placement_y = self._calculate_placement_height(
-            surface_y=0.0,
-            surface_height=GROUND_CLEARANCE,
+            surface_y=p['surface_y'],
+            surface_height=p['surface_height'],
             block_height=p['block_height'],
             arm_length_max=p['arm_length_max']
         )
@@ -772,11 +771,9 @@ class PlaceSkill(BaseDynObstruction2DSkill):
         if not np.isclose(p['robot_y'], placement_y, atol=self.POSITION_TOL):
             print(f"[Place] Phase 3: Descending (robot_y={p['robot_y']:.3f}, placement_y={placement_y:.3f})")
             return np.array([0, np.clip(placement_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-        # Open gripper
-        gripper_is_open = p['finger_gap'] >= p['gripper_base_height'] - self.POSITION_TOL
-        print(f"[Place] Phase 4 check: finger_gap={p['finger_gap']:.3f}, gripper_base_height={p['gripper_base_height']:.3f}, gripper_is_open={gripper_is_open}")
-        if not gripper_is_open:
-            print(f"[Place] Phase 4: Opening gripper (finger_gap={p['finger_gap']:.3f})")
+        # Open gripper (use same logic as PlaceOnTarget)
+        if p['finger_gap'] < p['gripper_base_height'] * 0.95:
+            print(f"[Place] Phase 4: Opening gripper (finger_gap={p['finger_gap']:.3f}, target={p['gripper_base_height']:.3f})")
             return np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
         # Lift (only after gripper is open)
         if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
