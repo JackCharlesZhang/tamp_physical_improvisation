@@ -778,6 +778,16 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         return np.array([0, 0, 0, 0, 0], dtype=np.float64)
 
 
+class PickUpFromTargetSkill(PickUpSkill):
+    """SLAP skill for picking up blocking obstructions from target surface.
+
+    Uses the same implementation as PickUpSkill since it handles any pickable object.
+    """
+
+    def _get_operator_name(self) -> str:
+        return "PickUpFromTarget"
+
+
 class PlaceSkill(BaseDynObstruction2DSkill):
     """SLAP skill for placing to garbage zone."""
 
@@ -1174,6 +1184,7 @@ class BaseDynObstruction2DTAMPSystem(
         # Add SLAP skills
         system.components.skills.update({
             PickUpSkill(system.components),  # type: ignore
+            PickUpFromTargetSkill(system.components),  # type: ignore
             PlaceSkill(system.components),  # type: ignore
             PlaceOnTargetSkill(system.components),  # type: ignore
             # PushSkill(system.components),  # type: ignore  # Commented out for now
@@ -1230,6 +1241,7 @@ class DynObstruction2DTAMPSystem(
         # Add SLAP skills
         system.components.skills.update({
             PickUpSkill(system.components),  # type: ignore
+            PickUpFromTargetSkill(system.components),  # type: ignore
             PlaceSkill(system.components),  # type: ignore
             PlaceOnTargetSkill(system.components),  # type: ignore
             # PushSkill(system.components),  # type: ignore  # Commented out for now
