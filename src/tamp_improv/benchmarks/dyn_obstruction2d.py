@@ -145,10 +145,6 @@ class DynObstruction2DPredicates:
         self.clear = Predicate("Clear", [types.surface])
         self.holding = Predicate("Holding", [types.robot, types.block])
         self.gripper_empty = Predicate("GripperEmpty", [types.robot])
-        self.obstructing = Predicate("Obstructing", [types.obstruction, types.surface])
-        self.obstruction_clear = Predicate(
-            "ObstructionClear", [types.obstruction, types.surface]
-        )
 
     def __getitem__(self, key: str) -> Predicate:
         """Get predicate by name."""
@@ -161,8 +157,6 @@ class DynObstruction2DPredicates:
             self.clear,
             self.holding,
             self.gripper_empty,
-            self.obstructing,
-            self.obstruction_clear,
         }
 
 
@@ -423,7 +417,7 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         ):
             atoms.add(self.predicates["On"]([self._target_block, self._target_surface]))
 
-        # Check obstruction status
+        # Check if surface is clear (no obstructions blocking it)
         surface_obstructed = False
         for i, (obs_x, obs_y, obs_width, obs_height) in enumerate(obstruction_data):
             if self._is_obstructing(
@@ -436,25 +430,15 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
                 target_surface_width,
                 target_surface_height,
             ):
-                atoms.add(
-                    self.predicates["Obstructing"](
-                        [self._obstructions[i], self._target_surface]
-                    )
-                )
                 surface_obstructed = True
-            else:
-                atoms.add(
-                    self.predicates["ObstructionClear"](
-                        [self._obstructions[i], self._target_surface]
-                    )
-                )
+                break  # One obstruction is enough to block the surface
 
-        # Surface is clear if no obstructions
-        if not surface_obstructed and not target_block_held:
+        # Surface is clear if no obstructions are blocking it
+        if not surface_obstructed:
             print(f"[Perceiver] Adding Clear predicate (surface not obstructed)")
             atoms.add(self.predicates["Clear"]([self._target_surface]))
         else:
-            print(f"[Perceiver] NOT adding Clear predicate (surface_obstructed={surface_obstructed}, target_block_held={target_block_held})")
+            print(f"[Perceiver] NOT adding Clear predicate (surface is obstructed)")
 
         return atoms
 
@@ -799,50 +783,19 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
         print(f"\n[PlaceOnTarget] ENTRY: target_block_held={p['target_block_held']}, finger_gap={p['finger_gap']:.3f}, robot_y={p['robot_y']:.3f}")
 
-        # PRE-CHECK: Is target surface blocked by an obstruction?
-        # Check if any obstruction is covering >10% of the target surface
-        surface_blocked = False
-        for obs_idx in range(2):
-            obs_x = p[f'obs{obs_idx}_x']
-            obs_y = p[f'obs{obs_idx}_y']
-            obs_width = p[f'obs{obs_idx}_width']
-            obs_height = p[f'obs{obs_idx}_height']
-
-            # Check overlap between obstruction and target surface
-            overlap = self._compute_horizontal_overlap_percentage(
-                block_x=obs_x, block_y=obs_y,
-                block_width=obs_width, block_height=obs_height, block_theta=0.0,
-                obs_x=p['surface_x'], obs_y=p['surface_y'],
-                obs_width=p['surface_width'], obs_height=p['surface_height'], obs_theta=0.0
-            )
-
-            if overlap > 0.1:
-                surface_blocked = True
-                print(f"\n[PlaceOnTarget] Surface blocked by obstruction{obs_idx} (overlap: {overlap*100:.1f}%)")
-                break
-
-        # If surface is blocked, abort and just drop the block where we are
-        if surface_blocked:
-            # Don't move at all - just drop from current position
-            target_x = p['robot_x']
-            target_y = p['robot_y']  # Stay at current height - just open gripper and drop
-            print(f"[PlaceOnTarget] FALLBACK MODE - Dropping block at current position")
-            print(f"  robot_x={p['robot_x']:.3f}, robot_y={p['robot_y']:.3f}")
-            print(f"  Block will fall from current height")
-        else:
-            # Normal placement: Place at surface x-position
-            target_x = p['surface_x']
-            # Place on target surface
-            target_y = self._calculate_placement_height(
-                surface_y=p['surface_y'],
-                surface_height=p['surface_height'],
-                block_height=p['block_height'],
-                arm_length_max=p['arm_length_max']
-            )
-            print(f"[PlaceOnTarget] NORMAL MODE - Placing on target surface")
-            print(f"  target_x={target_x:.3f} (surface_x), target_y={target_y:.3f}")
-            print(f"  surface_y={p['surface_y']:.3f}, surface_height={p['surface_height']:.3f}")
-            print(f"  block_height={p['block_height']:.3f}, arm_length_max={p['arm_length_max']:.3f}")
+        # Normal placement: Place at surface x-position
+        # Trust that Clear(surface) precondition ensures surface is actually clear
+        target_x = p['surface_x']
+        target_y = self._calculate_placement_height(
+            surface_y=p['surface_y'],
+            surface_height=p['surface_height'],
+            block_height=p['block_height'],
+            arm_length_max=p['arm_length_max']
+        )
+        print(f"[PlaceOnTarget] Placing on target surface")
+        print(f"  target_x={target_x:.3f} (surface_x), target_y={target_y:.3f}")
+        print(f"  surface_y={p['surface_y']:.3f}, surface_height={p['surface_height']:.3f}")
+        print(f"  block_height={p['block_height']:.3f}, arm_length_max={p['arm_length_max']:.3f}")
 
         # Phase 0: Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
@@ -902,13 +855,6 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             print(f"[PlaceOnTarget] Phase 5: Lifting to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
-
-        # If we completed the lift and we were in fallback mode, raise an exception
-        # This triggers replanning so the planner can pick up the obstruction
-        # Check this BEFORE returning zeros so we actually raise the exception
-        if surface_blocked and block_released and np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            print(f"[PlaceOnTarget] FALLBACK COMPLETE - Raising exception to trigger replanning")
-            raise RuntimeError("PlaceOnTarget failed: Target surface is blocked by obstruction. Block has been dropped. Replanning needed to clear obstruction.")
 
         print(f"[PlaceOnTarget] DONE - Returning zeros (robot_y={p['robot_y']:.3f}, held={p['target_block_held']})")
         return np.zeros(5, dtype=np.float64)
@@ -1075,16 +1021,14 @@ class BaseDynObstruction2DTAMPSystem(
             [robot, block, surface],
             preconditions={
                 predicates["Holding"]([robot, block]),
-                predicates["Obstructing"]([block, surface]),  # Only applies if block is obstructing
             },
             add_effects={
                 predicates["GripperEmpty"]([robot]),
-                predicates["Clear"]([surface]),  # Makes surface clear
-                predicates["ObstructionClear"]([block, surface]),  # Block no longer obstructing
+                # Note: Placing a block might make the surface clear, but that will be
+                # detected by the Perceiver on the next observation
             },
             delete_effects={
                 predicates["Holding"]([robot, block]),
-                predicates["Obstructing"]([block, surface]),  # Remove obstruction
             },
         )
 
@@ -1108,21 +1052,21 @@ class BaseDynObstruction2DTAMPSystem(
             },
         )
 
-        push_operator = LiftedOperator(
-            "Push",
-            [robot, block],
-            preconditions={
-                predicates["GripperEmpty"]([robot]),
-            },
-            add_effects=set(),  # No symbolic effects - just changes block position
-            delete_effects=set(),
-        )
+        # push_operator = LiftedOperator(
+        #     "Push",
+        #     [robot, block],
+        #     preconditions={
+        #         predicates["GripperEmpty"]([robot]),
+        #     },
+        #     add_effects=set(),  # No symbolic effects - just changes block position
+        #     delete_effects=set(),
+        # )
 
         operators_dict = {
             "PickUp": pick_up_operator,
             "Place": place_operator,
             "PlaceOnTarget": place_on_target_operator,
-            "Push": push_operator,
+            # "Push": push_operator,  # Commented out for now
         }
 
         # NOTE: Skills will be created later after environment is initialized
@@ -1156,7 +1100,7 @@ class BaseDynObstruction2DTAMPSystem(
             PickUpSkill(system.components),  # type: ignore
             PlaceSkill(system.components),  # type: ignore
             PlaceOnTargetSkill(system.components),  # type: ignore
-            PushSkill(system.components),  # type: ignore
+            # PushSkill(system.components),  # type: ignore  # Commented out for now
         })
         return system
 
@@ -1212,6 +1156,6 @@ class DynObstruction2DTAMPSystem(
             PickUpSkill(system.components),  # type: ignore
             PlaceSkill(system.components),  # type: ignore
             PlaceOnTargetSkill(system.components),  # type: ignore
-            PushSkill(system.components),  # type: ignore
+            # PushSkill(system.components),  # type: ignore  # Commented out for now
         })
         return system
