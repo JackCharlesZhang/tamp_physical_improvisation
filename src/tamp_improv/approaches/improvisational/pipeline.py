@@ -178,6 +178,165 @@ def _test_shortcut_quality(
         print("=" * 80)
 
 
+def _test_heuristic_quality(
+    heuristic: "GoalConditionedDistanceHeuristic",
+    training_data: GoalConditionedTrainingData,
+    planning_graph: PlanningGraph,
+) -> None:
+    """Test quality of trained heuristic by comparing with graph distances.
+
+    Args:
+        heuristic: Trained distance heuristic
+        training_data: Training data with node states and atoms
+        planning_graph: Planning graph for computing true graph distances
+    """
+    from tamp_improv.approaches.improvisational.graph_training import (
+        compute_graph_distances,
+    )
+
+    print("\n" + "=" * 80)
+    print("STAGE 2.5: Evaluating Distance Heuristic Quality")
+    print("=" * 80)
+
+    # Compute graph distances (ground truth)
+    print("Computing graph distances (ground truth)...")
+    graph_distances = compute_graph_distances(planning_graph, exclude_shortcuts=True)
+    print(f"  Computed {len(graph_distances)} pairwise distances")
+
+    # Collect all state pairs for evaluation
+    print("Collecting state pairs for evaluation...")
+    all_pairs = []
+    node_pair_to_state_pairs: dict[tuple[int, int], list[int]] = {}
+
+    for source_node in planning_graph.nodes:
+        for target_node in planning_graph.nodes:
+            if source_node.id == target_node.id:
+                continue
+
+            # Check if we have states for both nodes
+            if (
+                source_node.id not in training_data.node_states
+                or target_node.id not in training_data.node_states
+            ):
+                continue
+
+            source_states = training_data.node_states[source_node.id]
+            target_states = training_data.node_states[target_node.id]
+
+            if not source_states or not target_states:
+                continue
+
+            # Get graph distance
+            graph_dist = graph_distances.get(
+                (source_node.id, target_node.id), float("inf")
+            )
+
+            # Create all combinations of source and target states
+            state_pair_indices = []
+            for source_state in source_states:
+                for target_state in target_states:
+                    state_pair_idx = len(all_pairs)
+                    all_pairs.append(
+                        {
+                            "source_id": source_node.id,
+                            "target_id": target_node.id,
+                            "source_state": source_state,
+                            "target_state": target_state,
+                            "graph_distance": graph_dist,
+                        }
+                    )
+                    state_pair_indices.append(state_pair_idx)
+
+            node_pair_to_state_pairs[(source_node.id, target_node.id)] = (
+                state_pair_indices
+            )
+
+    print(f"  Collected {len(all_pairs)} state pairs from {len(node_pair_to_state_pairs)} node pairs")
+
+    # Estimate distances using heuristic
+    print("Estimating distances with learned heuristic...")
+    all_learned_distances = []
+    for pair in all_pairs:
+        learned_dist = heuristic.estimate_distance(
+            pair["source_state"], pair["target_state"]
+        )
+        all_learned_distances.append(learned_dist)
+
+    # Compute average learned distance for each node pair
+    node_pair_distances = {}
+    for node_pair, state_pair_indices in node_pair_to_state_pairs.items():
+        learned_distances = [all_learned_distances[idx] for idx in state_pair_indices]
+        avg_learned_dist = sum(learned_distances) / len(learned_distances)
+        node_pair_distances[node_pair] = avg_learned_dist
+
+    # Create results
+    results = []
+    for node_pair, avg_dist in node_pair_distances.items():
+        source_id, target_id = node_pair
+        graph_dist = graph_distances.get(node_pair, float("inf"))
+        results.append(
+            {
+                "source_id": source_id,
+                "target_id": target_id,
+                "graph_distance": graph_dist,
+                "learned_distance": avg_dist,
+            }
+        )
+
+    # Separate finite and infinite distance pairs
+    finite_results = [r for r in results if r["graph_distance"] != float("inf")]
+    infinite_results = [r for r in results if r["graph_distance"] == float("inf")]
+
+    # Compute statistics
+    print("\nHeuristic Quality Analysis:")
+    print("=" * 80)
+    print(f"Total node pairs: {len(results)}")
+    print(f"  Pairs with finite graph distance: {len(finite_results)}")
+    print(f"  Pairs with infinite graph distance: {len(infinite_results)}")
+
+    if finite_results:
+        graph_dists = np.array([r["graph_distance"] for r in finite_results])
+        learned_dists = np.array([r["learned_distance"] for r in finite_results])
+
+        mae = np.mean(np.abs(graph_dists - learned_dists))
+        rmse = np.sqrt(np.mean((graph_dists - learned_dists) ** 2))
+        correlation = np.corrcoef(graph_dists, learned_dists)[0, 1]
+        relative_errors = np.abs(graph_dists - learned_dists) / (graph_dists + 1e-6)
+        mean_relative_error = np.mean(relative_errors)
+
+        print(f"\nFinite Distance Pairs ({len(finite_results)} pairs):")
+        print(f"  Mean Absolute Error (MAE): {mae:.2f}")
+        print(f"  Root Mean Squared Error (RMSE): {rmse:.2f}")
+        print(f"  Correlation: {correlation:.3f}")
+        print(f"  Mean Relative Error: {mean_relative_error:.2%}")
+        print(f"  Graph distance range: [{graph_dists.min():.1f}, {graph_dists.max():.1f}]")
+        print(f"  Learned distance range: [{learned_dists.min():.1f}, {learned_dists.max():.1f}]")
+
+        # Show sample comparisons
+        sorted_finite = sorted(finite_results, key=lambda r: r["graph_distance"])
+        print("\nSample Comparisons (first 10 pairs):")
+        d_label = "D(s,s')"
+        f_label = "f(s,s')"
+        print(f"{'Source':>6} -> {'Target':>6} | {d_label:>10} | {f_label:>10} | {'Error':>8}")
+        print("-" * 60)
+        for r in sorted_finite[:10]:
+            error = abs(r["graph_distance"] - r["learned_distance"])
+            print(
+                f"{r['source_id']:>6} -> {r['target_id']:>6} | "
+                f"{r['graph_distance']:>10.1f} | "
+                f"{r['learned_distance']:>10.1f} | "
+                f"{error:>8.1f}"
+            )
+
+    if infinite_results:
+        learned_dists_inf = [r["learned_distance"] for r in infinite_results]
+        print(f"\nInfinite Distance Pairs ({len(infinite_results)} pairs):")
+        print(f"  These pairs have no non-shortcut path (are true shortcuts)")
+        print(f"  Learned distance range: [{min(learned_dists_inf):.1f}, {max(learned_dists_inf):.1f}]")
+
+    print("=" * 80)
+
+
 # =============================================================================
 # Pipeline Stages
 # =============================================================================
@@ -670,6 +829,13 @@ def train_and_evaluate_with_pipeline(
         )
         stage_times["heuristic"] = time.time() - stage_start
         print(f"  Stage 2 completed in {stage_times['heuristic']:.1f}s")
+
+        # Stage 2.5: Test heuristic quality (debug mode only)
+        if config.get("debug", False):
+            print("\n" + "=" * 80)
+            print("STAGE 2.5: Testing Heuristic Quality")
+            print("=" * 80)
+            _test_heuristic_quality(heuristic, full_data, planning_graph)
     else:
         stage_times["heuristic"] = 0.0
 

@@ -17,8 +17,9 @@ from typing import Any, TypeVar, cast
 import gymnasium as gym
 import numpy as np
 import torch
-from stable_baselines3 import SAC
+from stable_baselines3 import SAC, DQN
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.her import HerReplayBuffer
 
 from tamp_improv.benchmarks.goal_wrapper import GoalConditionedWrapper
 
@@ -30,8 +31,9 @@ ActType = TypeVar("ActType")
 class DistanceHeuristicConfig:
     """Configuration for distance heuristic training."""
 
-    # Algorithm (SAC works well for goal-conditioned tasks)
-    algorithm: str = "SAC"
+    # Algorithm (SAC for continuous, DQN for discrete)
+    # Will be automatically selected based on action space
+    algorithm: str = "auto"  # "auto", "SAC", or "DQN"
 
     # Learning parameters
     learning_rate: float = 3e-4
@@ -249,8 +251,9 @@ class DistanceHeuristicWrapper(gym.Wrapper):
             "desired_goal": goal_vector,
         }
 
-        # Key: Always return -1 reward (this makes V(s, z') = -distance)
-        reward = -1.0
+        # Use compute_reward for consistency with HER
+        # Returns 0.0 on success, -1.0 otherwise
+        reward = float(self.compute_reward(achieved_goal_vector, goal_vector, info)[0])
 
         # Check if goal is reached (atoms match)
         goal_reached = current_atoms == self.current_goal_atoms
@@ -269,13 +272,42 @@ class DistanceHeuristicWrapper(gym.Wrapper):
         info: list[dict[str, Any]] | dict[str, Any],
         _indices: list[int] | None = None,
     ) -> np.ndarray:
-        """Compute reward for HER (always -1)."""
+        """Compute reward for HER.
+
+        Returns 0.0 if goal is achieved (for success), -1.0 otherwise.
+        This sparse reward structure is what HER is designed to handle.
+
+        Goals are represented as multi-hot vectors where each dimension
+        corresponds to an atom. A goal is satisfied when achieved_goal
+        contains all atoms present in desired_goal (superset check).
+        This follows the standard goal-conditioned RL semantics.
+
+        The learned Q-values will still approximate negative distance because:
+        - Reward is -1 per step until goal
+        - Total return = -(number of steps to goal)
+        - Therefore Q(s,a,g) ≈ -distance(s,g)
+        """
         if achieved_goal.ndim == 1:
-            # Single goal
-            return np.array([-1.0], dtype=np.float32)
+            # Single goal - check if achieved contains all desired atoms
+            goal_indices = np.where(desired_goal > 0.5)[0]
+            if len(goal_indices) == 0:
+                # No atoms required - trivially satisfied
+                goal_achieved = True
+            else:
+                goal_achieved = np.all(achieved_goal[goal_indices] > 0.5)
+            return np.array([0.0 if goal_achieved else -1.0], dtype=np.float32)
         else:
-            # Batch of goals
-            return np.full(achieved_goal.shape[0], -1.0, dtype=np.float32)
+            # Batch of goals - check each row
+            batch_size = achieved_goal.shape[0]
+            rewards = np.zeros(batch_size, dtype=np.float32)
+            for i in range(batch_size):
+                goal_indices = np.where(desired_goal[i] > 0.5)[0]
+                if len(goal_indices) == 0:
+                    goal_satisfied = True
+                else:
+                    goal_satisfied = np.all(achieved_goal[i][goal_indices] > 0.5)
+                rewards[i] = 0.0 if goal_satisfied else -1.0
+            return rewards
 
 
 class GoalConditionedDistanceHeuristic:
@@ -301,7 +333,8 @@ class GoalConditionedDistanceHeuristic:
         else:
             self.device = self.config.device
 
-        self.model: SAC | None = None
+        self.model: SAC | DQN | None = None
+        self.algorithm_used: str | None = None  # Track which algorithm was used
         self.perceiver: Any | None = None
         self.wrapper: DistanceHeuristicWrapper | None = None
         self._obs_mean: np.ndarray | None = None
@@ -342,24 +375,67 @@ class GoalConditionedDistanceHeuristic:
         # Compute observation statistics for normalization
         self._compute_obs_statistics(state_pairs)
 
-        # Create SAC model
-        self.model = SAC(
-            "MultiInputPolicy",
-            wrapped_env,
-            learning_rate=self.config.learning_rate,
-            batch_size=self.config.batch_size,
-            buffer_size=self.config.buffer_size,
-            learning_starts=self.config.learning_starts,
-            device=self.device,
-            seed=self.seed,
-            verbose=1,
-        )
+        # Determine which algorithm to use based on action space
+        action_space = wrapped_env.action_space
+        if self.config.algorithm == "auto":
+            if isinstance(action_space, gym.spaces.Box):
+                algorithm = "SAC"
+            elif isinstance(action_space, gym.spaces.Discrete):
+                algorithm = "DQN"
+            else:
+                raise ValueError(
+                    f"Unsupported action space type: {type(action_space)}. "
+                    "Only Box (continuous) and Discrete are supported."
+                )
+        else:
+            algorithm = self.config.algorithm
+
+        self.algorithm_used = algorithm
+        print(f"Using algorithm: {algorithm} for action space: {type(action_space).__name__}")
+
+        # Create model based on algorithm
+        if algorithm == "SAC":
+            self.model = SAC(
+                "MultiInputPolicy",
+                wrapped_env,
+                learning_rate=self.config.learning_rate,
+                batch_size=self.config.batch_size,
+                buffer_size=self.config.buffer_size,
+                learning_starts=self.config.learning_starts,
+                device=self.device,
+                seed=self.seed,
+                verbose=1,
+            )
+        elif algorithm == "DQN":
+            # Use HER (Hindsight Experience Replay) for goal-conditioned learning
+            # This is CRITICAL for learning with sparse rewards
+            self.model = DQN(
+                "MultiInputPolicy",
+                wrapped_env,
+                learning_rate=self.config.learning_rate,
+                batch_size=self.config.batch_size,
+                buffer_size=self.config.buffer_size,
+                learning_starts=self.config.learning_starts,
+                device=self.device,
+                seed=self.seed,
+                verbose=1,
+                gamma=1.0,
+                exploration_fraction=0.1,  # DQN-specific: fraction of training for exploration
+                exploration_final_eps=0.05,  # DQN-specific: final exploration rate
+                replay_buffer_class=HerReplayBuffer,
+                replay_buffer_kwargs=dict(
+                    n_sampled_goal=4,  # Number of virtual transitions per real transition
+                    goal_selection_strategy="future",  # Use future states as goals
+                ),
+            )
+        else:
+            raise ValueError(f"Unknown algorithm: {algorithm}")
 
         # Train with callback
         callback = DistanceHeuristicCallback(check_freq=1000)
         self.model.learn(total_timesteps=max_training_steps, callback=callback)
 
-        print("\nDistance heuristic training complete!")
+        print(f"\nDistance heuristic training complete using {algorithm}!")
 
     def estimate_distance(self, source_state: ObsType, target_state: ObsType) -> float:
         """Estimate distance from source to target state.
@@ -393,24 +469,41 @@ class GoalConditionedDistanceHeuristic:
             "desired_goal": target_goal_vector,
         }
 
-        # Get value estimate from critic (V(s, g) ≈ -distance)
-        # SAC has two Q-functions, we'll use the minimum
+        # Get value estimate from Q-network (Q(s, a, g) ≈ -distance)
         with torch.no_grad():
             obs_tensor = {
                 k: torch.as_tensor(v).unsqueeze(0).to(self.device)
                 for k, v in obs.items()
             }
 
-            # Get action from policy
-            action, _ = self.model.predict(obs, deterministic=True)
-            action_tensor = torch.as_tensor(action).unsqueeze(0).to(self.device)
+            if self.algorithm_used == "SAC":
+                # SAC: Get action from policy, then Q-value from critics
+                action, _ = self.model.predict(obs, deterministic=True)
+                action_tensor = torch.as_tensor(action).unsqueeze(0).to(self.device)
 
-            # Get Q-values from both critics
-            q1_value = self.model.critic(obs_tensor, action_tensor)[0]
-            q2_value = self.model.critic(obs_tensor, action_tensor)[1]
+                # Get Q-values from both critics
+                q1_value = self.model.critic(obs_tensor, action_tensor)[0]
+                q2_value = self.model.critic(obs_tensor, action_tensor)[1]
 
-            # Use minimum Q-value (standard in SAC)
-            q_value = torch.min(q1_value, q2_value).item()
+                # Use minimum Q-value (standard in SAC)
+                q_value = torch.min(q1_value, q2_value).item()
+
+            elif self.algorithm_used == "DQN":
+                # DQN: Get Q-values for all actions, use max (greedy action)
+                q_values = self.model.q_net(obs_tensor)
+
+                # Take max Q-value (value of best action)
+                q_value = torch.max(q_values).item()
+
+                # DEBUG: Print first few Q-values to diagnose
+                if not hasattr(self, '_debug_printed'):
+                    print(f"\n[DEBUG] Sample Q-values: {q_values.cpu().numpy()}")
+                    print(f"[DEBUG] Max Q-value: {q_value}")
+                    print(f"[DEBUG] Estimated distance: {-q_value}")
+                    self._debug_printed = True
+
+            else:
+                raise ValueError(f"Unknown algorithm: {self.algorithm_used}")
 
         # Since reward = -1 per step, Q(s,a,g) ≈ -distance
         # So distance ≈ -Q(s,a,g)
@@ -454,8 +547,12 @@ class GoalConditionedDistanceHeuristic:
 
         os.makedirs(path, exist_ok=True)
 
-        # Save SAC model
+        # Save model
         self.model.save(f"{path}/distance_model")
+
+        # Save algorithm type
+        with open(f"{path}/algorithm.pkl", "wb") as f:
+            pickle.dump({"algorithm": self.algorithm_used}, f)
 
         # Save observation statistics
         with open(f"{path}/obs_stats.pkl", "wb") as f:
@@ -495,6 +592,11 @@ class GoalConditionedDistanceHeuristic:
         """
         # Store perceiver
         self.perceiver = perceiver
+
+        # Load algorithm type
+        with open(f"{path}/algorithm.pkl", "rb") as f:
+            algo_data = pickle.load(f)
+            self.algorithm_used = algo_data["algorithm"]
 
         # Load observation statistics
         with open(f"{path}/obs_stats.pkl", "rb") as f:
@@ -563,10 +665,15 @@ class GoalConditionedDistanceHeuristic:
 
         dummy_env = DummyEnv(observation_space, action_space)  # type: ignore
 
-        # Load SAC model
-        self.model = SAC.load(f"{path}/distance_model", env=dummy_env, device=self.device)
+        # Load model based on algorithm type
+        if self.algorithm_used == "SAC":
+            self.model = SAC.load(f"{path}/distance_model", env=dummy_env, device=self.device)
+        elif self.algorithm_used == "DQN":
+            self.model = DQN.load(f"{path}/distance_model", env=dummy_env, device=self.device)
+        else:
+            raise ValueError(f"Unknown algorithm: {self.algorithm_used}")
 
-        print(f"Distance heuristic loaded from {path}")
+        print(f"Distance heuristic ({self.algorithm_used}) loaded from {path}")
 
     def _flatten_and_normalize(self, obs: ObsType) -> np.ndarray:
         """Flatten and normalize observation."""

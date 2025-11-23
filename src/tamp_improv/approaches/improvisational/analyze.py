@@ -1,6 +1,6 @@
 """Analysis utilities for improvisational TAMP approaches."""
 
-from typing import TypeVar
+from typing import TypeVar, TYPE_CHECKING
 
 import numpy as np
 from relational_structs import GroundAtom, GroundOperator
@@ -8,6 +8,9 @@ from relational_structs import GroundAtom, GroundOperator
 from tamp_improv.approaches.improvisational.graph import PlanningGraph, PlanningGraphEdge
 from tamp_improv.approaches.improvisational.policies.base import Policy, PolicyContext
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
+
+if TYPE_CHECKING:
+    from tamp_improv.benchmarks.gridworld import GridworldTAMPSystem, GraphInstance
 
 ObsType = TypeVar("ObsType")
 
@@ -238,3 +241,118 @@ def compute_all_edge_costs(
             print(f"  Processed {edge_idx + 1}/{len(graph.edges)} edges")
 
     print(f"Edge cost computation complete!")
+
+
+def compute_true_distance_gridworld(
+    system: "GridworldTAMPSystem",
+    start_state: "GraphInstance",
+    goal_node_atoms: set[GroundAtom],
+) -> float:
+    """Compute true minimum Manhattan distance from start state to goal node.
+
+    For gridworld, we can compute the exact minimum distance because:
+    1. The state space is continuous positions in a grid
+    2. Goal nodes are defined by cell predicates (e.g., InRow1, InCol2)
+    3. Manhattan distance is the true optimal distance (no teleporters case)
+
+    Args:
+        system: GridworldTAMPSystem instance
+        start_state: Low-level state (GraphInstance observation)
+        goal_node_atoms: Set of atoms defining the goal node
+
+    Returns:
+        Minimum Manhattan distance from start_state to any state satisfying goal_node_atoms
+
+    Example:
+        Grid is 3x3 cells with 10x10 states per cell (total 30x30 continuous space)
+        Start state: robot at (0, 2)
+        Goal node: InRow1, InCol1 (cell (1,1))
+        The closest state in cell (1,1) is at position (10, 10)
+        True distance = |0-10| + |2-10| = 10 + 8 = 18
+    """
+    # Extract robot position from start state
+    robot_node = start_state.nodes[0]  # type=0 is robot
+    robot_x, robot_y = robot_node[1], robot_node[2]
+
+    # Check if goal is GoalReached predicate
+    has_goal_reached = any("GoalReached" in str(atom) for atom in goal_node_atoms)
+
+    if has_goal_reached:
+        # Goal is to reach the goal position - extract from environment
+        goal_node = start_state.nodes[1]  # type=1 is goal
+        goal_x, goal_y = goal_node[1], goal_node[2]
+
+        # Manhattan distance to goal
+        distance = abs(robot_x - goal_x) + abs(robot_y - goal_y)
+        return float(distance)
+
+    # Parse goal atoms to determine target cell
+    # Atoms are like: InRow1(robot0), InCol2(robot0)
+    target_row = None
+    target_col = None
+
+    for atom in goal_node_atoms:
+        atom_str = str(atom)
+        if "InRow" in atom_str or "Row" in atom_str:
+            # Extract row number from atom like "InRow1(robot0)" or "Row1(robot0)"
+            for i in range(system.env.num_cells):
+                if f"Row{i}" in atom_str or f"InRow{i}" in atom_str:
+                    target_row = i
+                    break
+        elif "InCol" in atom_str or "Col" in atom_str:
+            # Extract col number from atom like "InCol2(robot0)" or "Col2(robot0)"
+            for i in range(system.env.num_cells):
+                if f"Col{i}" in atom_str or f"InCol{i}" in atom_str:
+                    target_col = i
+                    break
+
+    if target_row is None or target_col is None:
+        # Incomplete goal specification
+        return float("inf")
+
+    # Compute cell boundaries
+    # Each cell spans [row*states_per_cell, (row+1)*states_per_cell]
+    num_states_per_cell = system.env.num_states_per_cell
+
+    # Target cell boundaries in continuous space
+    target_x_min = target_col * num_states_per_cell
+    target_x_max = (target_col + 1) * num_states_per_cell
+    target_y_min = target_row * num_states_per_cell
+    target_y_max = (target_row + 1) * num_states_per_cell
+
+    # Find closest point in target cell to robot position
+    # Clamp robot position to cell boundaries
+    closest_x = np.clip(robot_x, target_x_min, target_x_max)
+    closest_y = np.clip(robot_y, target_y_min, target_y_max)
+
+    # Manhattan distance
+    distance = abs(robot_x - closest_x) + abs(robot_y - closest_y)
+
+    return float(distance)
+
+
+def compute_true_distance(
+    system: ImprovisationalTAMPSystem,
+    start_state: ObsType,
+    goal_node_atoms: set[GroundAtom],
+) -> float:
+    """Compute true minimum distance from start state to goal node.
+
+    Dispatches to domain-specific implementations.
+
+    Args:
+        system: TAMP system instance
+        start_state: Low-level state observation
+        goal_node_atoms: Set of atoms defining the goal node
+
+    Returns:
+        Minimum distance from start_state to any state satisfying goal_node_atoms
+    """
+    from tamp_improv.benchmarks.gridworld import GridworldTAMPSystem
+
+    if isinstance(system, GridworldTAMPSystem):
+        return compute_true_distance_gridworld(system, start_state, goal_node_atoms)
+    else:
+        raise NotImplementedError(
+            f"True distance computation not implemented for {type(system).__name__}"
+        )

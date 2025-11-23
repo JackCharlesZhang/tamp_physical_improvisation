@@ -287,6 +287,9 @@ def prune_with_rollouts(
     # Build node lookup for efficiency
     node_by_id = {node.id: node for node in planning_graph.nodes}
 
+    # Pre-compute target node atom sets for efficiency
+    target_atoms_by_id = {node.id: set(node.atoms) for node in planning_graph.nodes}
+
     # Perform rollouts from each source node
     for source_id, source_states in training_data.node_states.items():
         source_node = node_by_id.get(source_id)
@@ -298,13 +301,14 @@ def prune_with_rollouts(
 
         print(
             f"\nPerforming {rollouts_per_state} rollouts for each of "
-            f"{len(source_states)} state(s) from node {source_id}"
+            f"{len(source_states)} state(s) from node {source_id}",
+            flush=True
         )
 
-        for source_state in source_states:
+        for state_idx, source_state in enumerate(source_states):
             for rollout_idx in range(rollouts_per_state):
                 if rollout_idx > 0 and rollout_idx % 100 == 0:
-                    print(f"  Completed {rollout_idx}/{rollouts_per_state} rollouts")
+                    print(f"  Completed {rollout_idx}/{rollouts_per_state} rollouts", flush=True)
 
                 # Reset to source state
                 raw_env.reset_from_state(source_state)
@@ -314,7 +318,7 @@ def prune_with_rollouts(
                 reached_in_this_rollout: set[int] = set()
 
                 # Execute random rollout
-                for _ in range(max_steps_per_rollout):
+                for step_idx in range(max_steps_per_rollout):
                     action = sampling_space.sample()
                     obs, _, terminated, truncated, _ = raw_env.step(action)
                     curr_atoms = system.perceiver.step(obs)
@@ -334,13 +338,16 @@ def prune_with_rollouts(
                             continue
 
                         # Check if atoms match target node
-                        target_node = node_by_id.get(target_id)
-                        if target_node and set(target_node.atoms) == curr_atoms:
+                        target_atoms = target_atoms_by_id.get(target_id)
+                        if target_atoms and target_atoms == curr_atoms:
                             shortcut_success_counts[(source_id, target_id)] += 1
                             reached_in_this_rollout.add(target_id)
 
                     if terminated or truncated:
                         break
+
+            # Print progress after each state
+            print(f"  Completed all rollouts for state {state_idx + 1}/{len(source_states)} from node {source_id}", flush=True)
 
     print("\nRollout results:")
     for (source_id, target_id), count in shortcut_success_counts.items():

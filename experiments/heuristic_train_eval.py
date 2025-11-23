@@ -69,8 +69,19 @@ def main(cfg: DictConfig) -> float:
         "seed": cfg.seed,
         "render_mode": cfg.render_mode if cfg.render_mode != "null" else None,
     }
+
+    # Add system-specific parameters from config
     if hasattr(cfg, "num_obstacle_blocks"):
         system_kwargs["num_obstacle_blocks"] = cfg.num_obstacle_blocks
+    if hasattr(cfg, "num_cells"):
+        system_kwargs["num_cells"] = cfg.num_cells
+    if hasattr(cfg, "num_states_per_cell"):
+        system_kwargs["num_states_per_cell"] = cfg.num_states_per_cell
+    if hasattr(cfg, "num_teleporters"):
+        system_kwargs["num_teleporters"] = cfg.num_teleporters
+    if hasattr(cfg, "n_blocks"):
+        system_kwargs["n_blocks"] = cfg.n_blocks
+
     system = system_cls.create_default(**system_kwargs)  # type: ignore[attr-defined]
     print("[DEBUG] System created", flush=True)
 
@@ -213,10 +224,17 @@ def main(cfg: DictConfig) -> float:
     print("[DEBUG] Training heuristic using train_distance_heuristic()...")
     print_memory()
 
+    # Track training time
+    import time
+    training_start_time = time.time()
+
     # Use the new train_distance_heuristic function from pruning.py
     heuristic = train_distance_heuristic(training_data, system, config_dict, rng)
 
-    print("[DEBUG] Training complete")
+    training_end_time = time.time()
+    training_duration = training_end_time - training_start_time
+
+    print(f"[DEBUG] Training complete in {training_duration:.1f} seconds ({training_duration/60:.1f} minutes)")
     print_memory()
 
     # Save heuristic
@@ -234,36 +252,55 @@ def main(cfg: DictConfig) -> float:
 
     print(f"Evaluating {len(all_pairs)} state pairs...")
 
-    # Compute learned distances for all state pairs
+    # Import true distance function
+    from tamp_improv.approaches.improvisational.analyze import compute_true_distance
+
+    # Compute learned and true distances for all state pairs
     all_learned_distances = []
+    all_true_distances = []
     for pair in all_pairs:
         learned_dist = heuristic.estimate_distance(
             pair["source_state"], pair["target_state"]
         )
         all_learned_distances.append(learned_dist)
 
-    # Compute average learned distance for each node pair
-    node_pair_distances = {}  # (source_id, target_id) -> avg learned distance
+        # Compute true distance from source state to target node atoms
+        target_node = planning_graph.nodes[pair["target_id"]]
+        true_dist = compute_true_distance(
+            system, pair["source_state"], target_node.atoms
+        )
+        all_true_distances.append(true_dist)
+
+    # Compute average learned and true distances for each node pair
+    node_pair_learned_distances = {}  # (source_id, target_id) -> avg learned distance
+    node_pair_true_distances = {}  # (source_id, target_id) -> avg true distance
 
     for node_pair, state_pair_indices in node_pair_to_state_pairs.items():
         learned_distances = [all_learned_distances[idx] for idx in state_pair_indices]
-        avg_learned_dist = sum(learned_distances) / len(learned_distances)
-        node_pair_distances[node_pair] = avg_learned_dist
+        true_distances = [all_true_distances[idx] for idx in state_pair_indices]
 
-    print(f"Computed average distances for {len(node_pair_distances)} node pairs")
+        avg_learned_dist = sum(learned_distances) / len(learned_distances)
+        avg_true_dist = sum(true_distances) / len(true_distances)
+
+        node_pair_learned_distances[node_pair] = avg_learned_dist
+        node_pair_true_distances[node_pair] = avg_true_dist
+
+    print(f"Computed average distances for {len(node_pair_learned_distances)} node pairs")
 
     # Create results based on averaged node pair distances
     results = []
-    for node_pair, avg_dist in node_pair_distances.items():
+    for node_pair, avg_learned_dist in node_pair_learned_distances.items():
         source_id, target_id = node_pair
         graph_dist = graph_distances.get(node_pair, float("inf"))
+        true_dist = node_pair_true_distances[node_pair]
 
         results.append(
             {
                 "source_id": source_id,
                 "target_id": target_id,
                 "graph_distance": graph_dist,
-                "learned_distance": avg_dist,
+                "true_distance": true_dist,
+                "learned_distance": avg_learned_dist,
             }
         )
 
@@ -275,6 +312,43 @@ def main(cfg: DictConfig) -> float:
     print("=" * 80)
 
     print(f"\nTotal node pairs: {len(results)}")
+    print(f"Total state-node pairs evaluated: {len(all_pairs)}")
+
+    # First, analyze RAW state-node pair distances (no averaging)
+    print("\n" + "=" * 80)
+    print("STATE-NODE PAIR ANALYSIS (No Averaging)")
+    print("=" * 80)
+    print("Comparing learned distances f(s,g) to true optimal distances D_true(s,g)")
+    print("where s is a low-level state and g is a high-level node (set of atoms)")
+
+    true_state_dists = np.array(all_true_distances)
+    learned_state_dists = np.array(all_learned_distances)
+
+    # Filter out any infinite distances
+    finite_mask = np.isfinite(true_state_dists)
+    true_state_finite = true_state_dists[finite_mask]
+    learned_state_finite = learned_state_dists[finite_mask]
+
+    if len(true_state_finite) > 0:
+        mae_state = np.mean(np.abs(true_state_finite - learned_state_finite))
+        rmse_state = np.sqrt(np.mean((true_state_finite - learned_state_finite) ** 2))
+        correlation_state = np.corrcoef(true_state_finite, learned_state_finite)[0, 1]
+        relative_errors_state = np.abs(true_state_finite - learned_state_finite) / (true_state_finite + 1e-6)
+        mean_relative_error_state = np.mean(relative_errors_state)
+
+        print(f"\nState-Node Pair Statistics:")
+        print(f"  Valid pairs: {len(true_state_finite)}")
+        print(f"  Mean Absolute Error (MAE): {mae_state:.2f}")
+        print(f"  Root Mean Squared Error (RMSE): {rmse_state:.2f}")
+        print(f"  Correlation: {correlation_state:.3f}")
+        print(f"  Mean Relative Error: {mean_relative_error_state:.2%}")
+        print(f"  True distance range: [{true_state_finite.min():.1f}, {true_state_finite.max():.1f}]")
+        print(f"  Learned distance range: [{learned_state_finite.min():.1f}, {learned_state_finite.max():.1f}]")
+
+    print("\n" + "=" * 80)
+    print("NODE-NODE PAIR ANALYSIS (Averaged)")
+    print("=" * 80)
+    print("Comparing averaged learned distances to graph distances D(n,n')")
 
     # Compute statistics
     def analyze_results(result_list, name):
@@ -289,68 +363,72 @@ def main(cfg: DictConfig) -> float:
             return
 
         graph_dists = np.array([r["graph_distance"] for r in valid_results])
+        true_dists = np.array([r["true_distance"] for r in valid_results])
         learned_dists = np.array([r["learned_distance"] for r in valid_results])
 
-        # Compute metrics
-        mae = np.mean(np.abs(graph_dists - learned_dists))
-        rmse = np.sqrt(np.mean((graph_dists - learned_dists) ** 2))
-        correlation = np.corrcoef(graph_dists, learned_dists)[0, 1]
+        # Compute metrics vs TRUE distance (ground truth)
+        mae_true = np.mean(np.abs(true_dists - learned_dists))
+        rmse_true = np.sqrt(np.mean((true_dists - learned_dists) ** 2))
+        correlation_true = np.corrcoef(true_dists, learned_dists)[0, 1]
+        relative_errors_true = np.abs(true_dists - learned_dists) / (true_dists + 1e-6)
+        mean_relative_error_true = np.mean(relative_errors_true)
 
-        # Relative errors
-        relative_errors = np.abs(graph_dists - learned_dists) / (graph_dists + 1e-6)
-        mean_relative_error = np.mean(relative_errors)
+        # Compute metrics vs GRAPH distance (approximation)
+        mae_graph = np.mean(np.abs(graph_dists - learned_dists))
+        rmse_graph = np.sqrt(np.mean((graph_dists - learned_dists) ** 2))
+        correlation_graph = np.corrcoef(graph_dists, learned_dists)[0, 1]
 
         print(f"\n{name}:")
         print(f"  Valid pairs: {len(valid_results)}")
-        print(f"  Mean Absolute Error (MAE): {mae:.2f}")
-        print(f"  Root Mean Squared Error (RMSE): {rmse:.2f}")
-        print(f"  Correlation: {correlation:.3f}")
-        print(f"  Mean Relative Error: {mean_relative_error:.2%}")
-        print(f"  Graph distance range: [{graph_dists.min():.1f}, {graph_dists.max():.1f}]")
-        print(
-            f"  Learned distance range: [{learned_dists.min():.1f}, {learned_dists.max():.1f}]"
-        )
+        print(f"\n  vs TRUE distance (D_true):")
+        print(f"    Mean Absolute Error (MAE): {mae_true:.2f}")
+        print(f"    Root Mean Squared Error (RMSE): {rmse_true:.2f}")
+        print(f"    Correlation: {correlation_true:.3f}")
+        print(f"    Mean Relative Error: {mean_relative_error_true:.2%}")
+        print(f"\n  vs GRAPH distance (D - approximation):")
+        print(f"    Mean Absolute Error (MAE): {mae_graph:.2f}")
+        print(f"    Correlation: {correlation_graph:.3f}")
+        print(f"\n  Distance ranges:")
+        print(f"    True distance:    [{true_dists.min():.1f}, {true_dists.max():.1f}]")
+        print(f"    Graph distance:   [{graph_dists.min():.1f}, {graph_dists.max():.1f}]")
+        print(f"    Learned distance: [{learned_dists.min():.1f}, {learned_dists.max():.1f}]")
 
     analyze_results(results, "All Node Pairs")
 
     # Print detailed comparison for a sample of pairs
     print("\n" + "=" * 80)
-    print("Sample Comparisons (Averaged RL Distance vs Graph Distance)")
+    print("Sample Comparisons (True vs Learned vs Graph Distance)")
     print("=" * 80)
-    print("Note: f(s,s') values are averaged across all state pairs for each node pair")
+    print("Note: All distances are averaged across all state pairs for each node pair")
+    print("D_true = True optimal distance, D = Graph distance (approx), f = Learned distance")
 
     # Separate finite and infinite distance pairs
     finite_results = [r for r in results if r["graph_distance"] != float("inf")]
     infinite_results = [r for r in results if r["graph_distance"] == float("inf")]
 
-    # Sort finite by graph distance, infinite by learned distance
-    sorted_finite = sorted(finite_results, key=lambda r: r["graph_distance"])
+    # Sort finite by true distance
+    sorted_finite = sorted(finite_results, key=lambda r: r["true_distance"])
     sorted_infinite = sorted(infinite_results, key=lambda r: r["learned_distance"])
-
-    d_label = "D(s,s')"
-    f_label = "f(s,s')"
 
     # Show finite distance pairs
     if sorted_finite:
         print(f"\nPairs with existing non-shortcut path:")
-        print(f"{'Source':>6} -> {'Target':>6} | "
-              f"{d_label:>10} | {f_label:>10} | {'Error':>8} | {'Rel Err':>8}")
-        print("-" * 65)
+        print(f"{'Source':>6} -> {'Target':>6} | {'D_true':>10} | {'D(graph)':>10} | {'f(learned)':>10} | {'Error':>8}")
+        print("-" * 80)
 
         sample_size = min(20, len(sorted_finite))
         sample_step = max(1, len(sorted_finite) // sample_size)
 
         for i in range(0, len(sorted_finite), sample_step):
             r = sorted_finite[i]
-            error = abs(r["graph_distance"] - r["learned_distance"])
-            rel_error = error / (r["graph_distance"] + 1e-6)
+            error = abs(r["true_distance"] - r["learned_distance"])
 
             print(
                 f"{r['source_id']:>6} -> {r['target_id']:>6} | "
+                f"{r['true_distance']:>10.1f} | "
                 f"{r['graph_distance']:>10.1f} | "
                 f"{r['learned_distance']:>10.1f} | "
-                f"{error:>8.1f} | "
-                f"{rel_error:>7.1%}"
+                f"{error:>8.1f}"
             )
 
     # Show infinite distance pairs (no existing non-shortcut path)
@@ -423,20 +501,16 @@ def main(cfg: DictConfig) -> float:
 
     print(f"\nDetailed results saved to {results_file}")
 
-    # Return correlation as the main metric
-    valid_results = [r for r in results if r["graph_distance"] != float("inf")]
-    if valid_results:
-        graph_dists = np.array([r["graph_distance"] for r in valid_results])
-        learned_dists = np.array([r["learned_distance"] for r in valid_results])
-        correlation = np.corrcoef(graph_dists, learned_dists)[0, 1]
-    else:
-        correlation = 0.0
-
+    # Return STATE-LEVEL correlation as the main metric (more accurate)
     print("\n" + "=" * 80)
-    print(f"Final Correlation: {correlation:.3f}")
+    if len(true_state_finite) > 0:
+        print(f"Final Correlation (State-Node pairs vs True Distance): {correlation_state:.3f}")
+    else:
+        print(f"Final Correlation (State-Node pairs vs True Distance): N/A (no finite pairs)")
+        correlation_state = 0.0
     print("=" * 80)
 
-    return float(correlation)
+    return float(correlation_state)
 
 
 if __name__ == "__main__":

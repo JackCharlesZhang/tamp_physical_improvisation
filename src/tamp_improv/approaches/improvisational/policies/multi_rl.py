@@ -76,8 +76,8 @@ class MultiRLPolicy(Policy[ObsType, ActType]):
         if matching_policy is None:
             # Debug: show what key we're looking for vs what's available
             key = self._get_policy_key(self._current_context)
-            print(f"    DEBUG can_initiate: Looking for key '{key}'")
-            print(f"    DEBUG can_initiate: Available keys ({len(self.policies)}): {list(self.policies.keys())}")
+            # print(f"    DEBUG can_initiate: Looking for key '{key}'")
+            # print(f"    DEBUG can_initiate: Available keys ({len(self.policies)}): {list(self.policies.keys())}")
         return matching_policy is not None
 
     def get_action(self, obs: ObsType) -> ActType:

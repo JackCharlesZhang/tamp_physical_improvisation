@@ -387,7 +387,7 @@ def collect_total_planning_graph(
     seed: int = 42,
     planner_id: str = "pyperplan",
     compute_costs: bool = True,
-    cost_samples: int = 5,
+    cost_samples: int = 25,
     max_steps_per_edge: int = 100,
 ) -> tuple[PlanningGraph, dict[frozenset, list]]:
     """Build a unified planning graph across multiple episodes.
@@ -523,6 +523,17 @@ def collect_total_planning_graph(
         f"{len(total_graph.edges)} edges, "
         f"{sum(len(states) for states in node_states.values())} total states"
     )
+
+    # Print node atoms for understanding
+    print("\nNode ID -> Atoms mapping:")
+    print("=" * 80)
+    for node in sorted(total_graph.nodes, key=lambda n: n.id):
+        atoms_str = ", ".join(sorted([str(atom) for atom in node.atoms]))
+        if not atoms_str:
+            atoms_str = "(empty - initial state)"
+        num_states = len(node_states.get(node.id, []))
+        print(f"  Node {node.id:3d} ({num_states:2d} states): {atoms_str}")
+    print("=" * 80)
 
     # Compute edge costs if requested
     if compute_costs:
