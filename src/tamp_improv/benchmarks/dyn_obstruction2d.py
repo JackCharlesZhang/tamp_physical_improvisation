@@ -394,7 +394,10 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
 
         # Surface is clear if no obstructions
         if not surface_obstructed and not target_block_held:
+            print(f"[Perceiver] Adding Clear predicate (surface not obstructed)")
             atoms.add(self.predicates["Clear"]([self._target_surface]))
+        else:
+            print(f"[Perceiver] NOT adding Clear predicate (surface_obstructed={surface_obstructed}, target_block_held={target_block_held})")
 
         return atoms
 
