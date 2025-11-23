@@ -390,19 +390,19 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
 
         # DEBUG: Log held status and gripper state
         from tamp_improv.benchmarks.debug_physics import DEBUG_SKILL_PHASES
-        if DEBUG_SKILL_PHASES:
-            print(f"[Perceiver] target_block_held={target_block_held}, finger_gap={finger_gap:.3f}")
+        # if DEBUG_SKILL_PHASES:
+        #     print(f"[Perceiver] target_block_held={target_block_held}, finger_gap={finger_gap:.3f}")
 
         # Check if robot is holding target block
         # If target_block_held is True (physics says it's in hand), then it's holding it
         # regardless of finger gap (the gripper grasp callback already verified proper grasping)
         if target_block_held:
-            if DEBUG_SKILL_PHASES:
-                print(f"[Perceiver] Adding Holding predicate")
+            # if DEBUG_SKILL_PHASES:
+            #     print(f"[Perceiver] Adding Holding predicate")
             atoms.add(self.predicates["Holding"]([self._robot, self._target_block]))
         else:
-            if DEBUG_SKILL_PHASES:
-                print(f"[Perceiver] Adding GripperEmpty predicate")
+            # if DEBUG_SKILL_PHASES:
+            #     print(f"[Perceiver] Adding GripperEmpty predicate")
             atoms.add(self.predicates["GripperEmpty"]([self._robot]))
 
         # Check if target block is on target surface
@@ -438,10 +438,10 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
 
         # Surface is clear if no obstructions are blocking it
         if not surface_obstructed:
-            print(f"[Perceiver] Adding Clear predicate (surface not obstructed)")
+            # print(f"[Perceiver] Adding Clear predicate (surface not obstructed)")
             atoms.add(self.predicates["Clear"]([self._target_surface]))
-        else:
-            print(f"[Perceiver] NOT adding Clear predicate (surface is obstructed)")
+        # else:
+            # print(f"[Perceiver] NOT adding Clear predicate (surface is obstructed)")
 
         return atoms
 
