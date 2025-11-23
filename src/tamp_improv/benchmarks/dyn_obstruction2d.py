@@ -320,14 +320,16 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         target_block_held = obs[21] > 0.5  # "held" feature
 
         # Obstructions (15 features each)
-        obstruction_positions = []
+        obstruction_data = []  # List of (x, y, width, height)
         obstruction_held_status = []
         for i in range(self._num_obstructions):
             offset = 29 + i * 15
             obs_x = obs[offset]
             obs_y = obs[offset + 1]
             obs_held = obs[offset + 7] > 0.5
-            obstruction_positions.append((obs_x, obs_y))
+            obs_width = obs[offset + 12]  # width feature
+            obs_height = obs[offset + 13]  # height feature
+            obstruction_data.append((obs_x, obs_y, obs_width, obs_height))
             obstruction_held_status.append(obs_held)
 
         # Robot (22 features, starts at 59 for 2 obstructions)
@@ -370,10 +372,12 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
 
         # Check obstruction status
         surface_obstructed = False
-        for i, (obs_x, obs_y) in enumerate(obstruction_positions):
+        for i, (obs_x, obs_y, obs_width, obs_height) in enumerate(obstruction_data):
             if self._is_obstructing(
                 obs_x,
                 obs_y,
+                obs_width,
+                obs_height,
                 target_surface_x,
                 target_surface_y,
                 target_surface_width,
@@ -444,22 +448,28 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         self,
         obs_x: float,
         obs_y: float,
+        obs_width: float,
+        obs_height: float,
         surface_x: float,
         surface_y: float,
         surface_width: float,
         surface_height: float,
     ) -> bool:
-        """Check if obstruction is blocking the target surface."""
-        # Simple check: obstruction overlaps with surface horizontally
-        surface_left = surface_x - surface_width / 2
-        surface_right = surface_x + surface_width / 2
+        """Check if obstruction is blocking the target surface.
 
-        # Obstruction is on surface if its x coordinate is within surface bounds
-        # and it's at roughly the same y level
-        surface_y_level = surface_y + surface_height / 2
-        return surface_left <= obs_x <= surface_right and np.isclose(
-            obs_y, surface_y_level, atol=0.1
+        Uses the same overlap logic as PlaceOnTarget skill to ensure consistency.
+        """
+        from tamp_improv.benchmarks.dyn_obstruction2d_skills import BaseDynObstruction2DSkill
+
+        overlap = BaseDynObstruction2DSkill._compute_horizontal_overlap_percentage(
+            block_x=obs_x, block_y=obs_y,
+            block_width=obs_width, block_height=obs_height, block_theta=0.0,
+            obs_x=surface_x, obs_y=surface_y,
+            obs_width=surface_width, obs_height=surface_height, obs_theta=0.0
         )
+
+        # Match the threshold used in PlaceOnTarget skill
+        return overlap > 0.1
 
 
 # ==============================================================================
