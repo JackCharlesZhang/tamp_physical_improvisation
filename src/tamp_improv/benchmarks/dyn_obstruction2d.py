@@ -682,12 +682,13 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # print(f"  below_safe_height={below_safe_height} ({p['robot_y']:.3f} < {self.SAFE_Y - self.POSITION_TOL:.3f})")
         # print(f"  => in_descent_phase={in_descent_phase}")
 
-        # Phase 0: Move to safe height
-        at_safe_y = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
-        if not in_descent_phase and not at_safe_y:
-            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 0: Move to safe height: {action}")
-            return action
+        # Phase 0: Move to safe height (only when not holding anything yet)
+        if not obj_held:
+            at_safe_y = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+            if not in_descent_phase and not at_safe_y:
+                action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+                print(f"[PickUpSkill] → Phase 0: Move to safe height: {action}")
+                return action
 
         # Phase 1: Rotate gripper
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
