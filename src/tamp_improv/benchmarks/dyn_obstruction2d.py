@@ -669,8 +669,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
 
         # PRIORITY: If we're holding the object but not at safe height, lift immediately
         # This ensures Phase 7 always executes before the skill completes
-        print(f"[PickUpSkill] Check PRIORITY Lift: obj_held={obj_held}, robot_y={p['robot_y']:.3f} < SAFE_Y-TOL={self.SAFE_Y - self.POSITION_TOL:.3f}?")
-        if obj_held and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
+        # Use a looser tolerance check here - we want to reach SAFE_Y, not SAFE_Y - TOL
+        at_safe_height_with_obj = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+        print(f"[PickUpSkill] Check PRIORITY Lift: obj_held={obj_held}, at_safe_height={at_safe_height_with_obj} (y={p['robot_y']:.3f} vs SAFE_Y={self.SAFE_Y:.3f})")
+        if obj_held and not at_safe_height_with_obj:
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             print(f"[PickUpSkill] ✓ PHASE: 7-Lift-PRIORITY, action={action}")
             # log_skill_action("PickUp", "7-Lift-PRIORITY", action, {
@@ -801,9 +803,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             return action
 
         # Phase 7: Lift with block
-        need_lift = p['robot_y'] < self.SAFE_Y - self.POSITION_TOL
-        print(f"[PickUpSkill] Check Phase 7 (Lift): need_lift={need_lift} ({p['robot_y']:.3f} < {self.SAFE_Y - self.POSITION_TOL:.3f})")
-        if need_lift:
+        # Check if we're not yet at safe height (use isclose for proper tolerance)
+        at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+        print(f"[PickUpSkill] Check Phase 7 (Lift): at_safe_height={at_safe_height} (y={p['robot_y']:.3f} vs SAFE_Y={self.SAFE_Y:.3f})")
+        if not at_safe_height:
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             print(f"[PickUpSkill] ✓ PHASE: 7-Lift, action={action}")
             # log_skill_action("PickUp", "7-Lift", action, {
