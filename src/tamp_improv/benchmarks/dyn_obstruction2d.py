@@ -709,9 +709,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
 
         # Phase 2: Open gripper and extend arm simultaneously
         # The original bug was opening gripper AFTER extending arm, which skipped the open phase
-        # Solution: Open gripper first at safe height, regardless of arm position
+        # Solution: Open gripper to its maximum capability (gripper_base_height)
+        # Note: Object might be larger than gripper can handle - that's okay, we'll try anyway
         at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
-        target_gap = max(p['gripper_base_height'], obj_width * 1.2)  # 20% margin for object
+        target_gap = p['gripper_base_height']  # Open to max gripper capability
         gripper_not_open = p['finger_gap'] < target_gap - self.POSITION_TOL
 
         # Open gripper while simultaneously extending arm for efficiency
