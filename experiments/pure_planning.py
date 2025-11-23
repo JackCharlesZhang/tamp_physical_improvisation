@@ -12,6 +12,8 @@ from tamp_improv.benchmarks.dyn_obstruction2d import BaseDynObstruction2DTAMPSys
 # Enable logging for debugging
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("relational_structs").setLevel(logging.DEBUG)
+logging.getLogger("task_then_motion_planning").setLevel(logging.DEBUG)
+logging.getLogger("pyperplan").setLevel(logging.DEBUG)
 # from tamp_improv.benchmarks.pybullet_cleanup_table import (
 #     BaseCleanupTableTAMPSystem,
 # )
@@ -243,14 +245,26 @@ def run_dyn_obstruction2d_planning(
         print(f"    delete_effects: {op.delete_effects}")
 
     print(f"\n[DEBUG] Calling planner.reset() to generate initial plan...")
-    planner.reset(obs, info)
+    try:
+        planner.reset(obs, info)
+        print(f"[DEBUG] Planner.reset() completed successfully")
+    except Exception as e:
+        print(f"[DEBUG] ERROR during planner.reset(): {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print(f"\n[DEBUG] Checking planner internal state:")
+    print(f"  hasattr(planner, '_plan'): {hasattr(planner, '_plan')}")
+    if hasattr(planner, '_plan'):
+        print(f"  planner._plan: {planner._plan}")
+        print(f"  type(planner._plan): {type(planner._plan)}")
 
     print(f"\n[DEBUG] Current plan:")
     if hasattr(planner, '_plan') and planner._plan:
         for i, ground_op in enumerate(planner._plan):
             print(f"  {i+1}. {ground_op}")
     else:
-        print("  (No plan attribute found)")
+        print("  (No plan found or plan is empty)")
 
     print(f"\n[DEBUG] Starting execution...")
 
