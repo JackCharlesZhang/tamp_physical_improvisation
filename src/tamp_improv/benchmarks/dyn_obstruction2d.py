@@ -746,19 +746,6 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             target_y = obj_y + obj_height/2 + p['arm_length_max']
             need_descend = p['robot_y'] > target_y + self.POSITION_TOL
             if gripper_is_open and need_descend:
-            # # Debug: Check if block is clipping through table
-            # table_top_y = p['surface_y'] + p['surface_height']
-            # block_bottom_y = p['block_y'] - p['block_height']/2
-            # penetration = table_top_y - block_bottom_y
-            # print(f"[PickUp] Phase 5-Descend:")
-            # print(f"  robot_y={p['robot_y']:.3f}, target_y={target_y:.3f}")
-            # print(f"  block_y={p['block_y']:.3f}, block_height={p['block_height']:.3f}")
-            # print(f"  block_bottom_y={block_bottom_y:.3f}, table_top_y={table_top_y:.3f}")
-            # if penetration > 0:
-            #     print(f"  ⚠️  BLOCK PENETRATING TABLE BY {penetration:.3f}!")
-            # else:
-            #     print(f"  ✓ Block clearance from table: {-penetration:.3f}")
-
                 action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
                 print(f"[PickUpSkill] → Phase 4: Descend to target_y={target_y:.3f}: {action}")
                 return action
@@ -809,6 +796,7 @@ class PlaceSkill(BaseDynObstruction2DSkill):
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
+        print("IN PLACE")
 
         # print(f"\n[Place] ENTRY: robot_x={p['robot_x']:.3f}, robot_y={p['robot_y']:.3f}, robot_theta={p['robot_theta']:.3f}")
 
