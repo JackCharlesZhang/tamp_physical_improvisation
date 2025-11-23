@@ -745,9 +745,11 @@ class PlaceSkill(BaseDynObstruction2DSkill):
         print(f"\n[Place] ENTRY: robot_x={p['robot_x']:.3f}, robot_y={p['robot_y']:.3f}, robot_theta={p['robot_theta']:.3f}")
 
         # Calculate placement height: place on ground at garbage location
+        # Use small ground height to prevent gripper collision with floor
+        GROUND_CLEARANCE = 0.15  # Match table height to ensure blocks sit on ground properly
         placement_y = self._calculate_placement_height(
             surface_y=0.0,
-            surface_height=0.0,
+            surface_height=GROUND_CLEARANCE,
             block_height=p['block_height'],
             arm_length_max=p['arm_length_max']
         )
