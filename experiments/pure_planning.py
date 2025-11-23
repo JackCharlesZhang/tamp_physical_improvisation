@@ -254,13 +254,23 @@ def run_dyn_obstruction2d_planning(
         traceback.print_exc()
 
     print(f"\n[DEBUG] Checking planner internal state:")
+    print(f"  Planner type: {type(planner)}")
+    print(f"  Planner attributes: {[attr for attr in dir(planner) if not attr.startswith('_')]}")
     print(f"  hasattr(planner, '_plan'): {hasattr(planner, '_plan')}")
-    if hasattr(planner, '_plan'):
-        print(f"  planner._plan: {planner._plan}")
-        print(f"  type(planner._plan): {type(planner._plan)}")
+    print(f"  hasattr(planner, '_task_plan'): {hasattr(planner, '_task_plan')}")
+    print(f"  hasattr(planner, '_current_operator'): {hasattr(planner, '_current_operator')}")
+
+    if hasattr(planner, '_task_plan'):
+        print(f"  planner._task_plan: {planner._task_plan}")
+    if hasattr(planner, '_current_operator'):
+        print(f"  planner._current_operator: {planner._current_operator}")
 
     print(f"\n[DEBUG] Current plan:")
-    if hasattr(planner, '_plan') and planner._plan:
+    if hasattr(planner, '_task_plan') and planner._task_plan:
+        print(f"  Task plan length: {len(planner._task_plan)}")
+        for i, ground_op in enumerate(planner._task_plan):
+            print(f"  {i+1}. {ground_op}")
+    elif hasattr(planner, '_plan') and planner._plan:
         for i, ground_op in enumerate(planner._plan):
             print(f"  {i+1}. {ground_op}")
     else:
