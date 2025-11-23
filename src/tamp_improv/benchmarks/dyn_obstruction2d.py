@@ -1084,6 +1084,9 @@ class BaseDynObstruction2DTAMPSystem(
             },
             add_effects={
                 predicates["Holding"]([robot, obstruction]),
+                predicates["Clear"]([surface]),  # Optimistic: claims surface is now clear
+                # If other obstructions still blocking, Perceiver will NOT add Clear,
+                # planner expectation ≠ reality, and replanning will be triggered
             },
             delete_effects={
                 predicates["GripperEmpty"]([robot]),
