@@ -382,6 +382,8 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
             obs_x = obs[offset]
             obs_y = obs[offset + 1]
             obs_held = obs[offset + 7] > 0.1
+            print(f"[Perceiver] obstruction{i} held={obs_held}")
+            print(f"[Perceiver] obstruction{i} obs={[offset + 7]}")
             obs_width = obs[offset + 12]  # width feature
             obs_height = obs[offset + 13]  # height feature
             obstruction_data.append((obs_x, obs_y, obs_width, obs_height))
