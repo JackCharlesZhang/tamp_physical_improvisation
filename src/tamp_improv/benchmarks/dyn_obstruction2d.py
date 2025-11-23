@@ -726,7 +726,9 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             return action
 
         # Phase 3: Move horizontally to object x (only before grasping)
-        gripper_is_open = p['finger_gap'] > obj_width * 0.8
+        # Check if gripper is open relative to its maximum capability, not object size
+        # (object might be larger than gripper can handle)
+        gripper_is_open = p['finger_gap'] >= p['gripper_base_height'] * 0.95
         x_aligned = np.isclose(p['robot_x'], obj_x, atol=self.POSITION_TOL)
         if gripper_is_open and not x_aligned:
             if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
@@ -738,7 +740,7 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             return action
 
         # Phase 4: Descend to object (only if gripper is still open - haven't grasped yet)
-        gripper_is_open = p['finger_gap'] > obj_width * 0.8  # Still open if wider than object
+        gripper_is_open = p['finger_gap'] >= p['gripper_base_height'] * 0.95  # Check against max capability
         # Target: gripper fingers at object center height
         # robot_y - arm_length = obj_y + obj_height/2
         # Therefore: robot_y = obj_y + obj_height/2 + arm_length
@@ -765,7 +767,7 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # Phase 5: Close gripper (only after we've finished descending)
         target_y = obj_y + obj_height/2 + p['arm_length_max']
         at_grasp_position = abs(p['robot_y'] - target_y) <= self.POSITION_TOL
-        gripper_wide = p['finger_gap'] > obj_width * 0.7
+        gripper_wide = p['finger_gap'] >= p['gripper_base_height'] * 0.7  # Check against max capability
         if at_grasp_position and gripper_wide:
             action = np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
             print(f"[PickUpSkill] → Phase 5: Close gripper: {action}")
