@@ -1123,10 +1123,6 @@ class BaseDynObstruction2DTAMPSystem(
             [robot, block, surface],
             preconditions={
                 predicates["Holding"]([robot, block]),
-                predicates["Clear"]([surface]),
-                # NOTE: VerticalPathClear removed from preconditions
-                # The skill will check collision at runtime and fail if blocked
-                # This allows the planner to try, fail, then replan with obstacle clearing
             },
             add_effects={
                 predicates["On"]([block, surface]),
@@ -1134,7 +1130,6 @@ class BaseDynObstruction2DTAMPSystem(
             },
             delete_effects={
                 predicates["Holding"]([robot, block]),
-                predicates["Clear"]([surface]),
             },
         )
 
