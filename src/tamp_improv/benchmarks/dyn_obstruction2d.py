@@ -707,22 +707,23 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             print(f"[PickUpSkill] → Phase 1: Rotate gripper (error={angle_error:.3f}): {action}")
             return action
 
-        # Phase 2: Extend arm
+        # Phase 2: Open gripper wide enough for the object
+        # Must happen BEFORE extending arm, and we need gripper wider than object
+        # Only open at safe height to avoid collisions
+        at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+        target_gap = max(p['gripper_base_height'], obj_width * 1.2)  # 20% margin
+        gripper_not_open = p['finger_gap'] < target_gap - self.POSITION_TOL
+        if at_safe_height and gripper_not_open and not obj_held:  # Don't reopen if we're already holding
+            action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
+            print(f"[PickUpSkill] → Phase 2: Open gripper (target={target_gap:.3f}, current={p['finger_gap']:.3f}): {action}")
+            return action
+
+        # Phase 3: Extend arm
         target_arm = p['arm_length_max'] * 0.95
         arm_error = abs(p['arm_joint'] - target_arm)
         if arm_error > self.POSITION_TOL:
             action = np.array([0, 0, 0, np.clip(target_arm - p['arm_joint'], -self.MAX_DARM, self.MAX_DARM), 0], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 2: Extend arm (error={arm_error:.3f}): {action}")
-            return action
-
-        # Phase 3: Open gripper (only at start, before arm extension)
-        # Once arm is extended, we never open gripper again (prevents re-opening after Phase 7 lift)
-        at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
-        arm_not_extended = p['arm_joint'] < p['arm_length_max'] * 0.5  # Arm still retracted
-        gripper_not_open = p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL
-        if at_safe_height and arm_not_extended and gripper_not_open:
-            action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 3: Open gripper: {action}")
+            print(f"[PickUpSkill] → Phase 3: Extend arm (error={arm_error:.3f}): {action}")
             return action
 
         # Phase 4: Move horizontally to object x (only before grasping)
