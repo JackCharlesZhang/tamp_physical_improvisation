@@ -1024,8 +1024,9 @@ class BaseDynObstruction2DTAMPSystem(
             },
             add_effects={
                 predicates["GripperEmpty"]([robot]),
-                # Note: Placing a block might make the surface clear, but that will be
-                # detected by the Perceiver on the next observation
+                predicates["Clear"]([surface]),  # Placing a block away makes surface clear
+                # Note: This is optimistic - if multiple obstructions exist, the Perceiver
+                # will detect that surface is still not clear, and planner will replan
             },
             delete_effects={
                 predicates["Holding"]([robot, block]),
