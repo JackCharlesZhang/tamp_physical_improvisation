@@ -639,14 +639,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # from tamp_improv.benchmarks.debug_physics import log_skill_action
 
         p = self._parse_obs(obs)
-
-        # Determine which object to pick up from ground operator: PickUp(robot, obj)
-        # objects[0] is robot, objects[1] is the object to pick up
         target_obj = objects[1]
 
         print(f"\n[PickUpSkill] Called for target: {target_obj.name}")
 
-        # Map object name to observation indices
         if target_obj.name == "target_block":
             obj_x, obj_y = p['block_x'], p['block_y']
             obj_width, obj_height = p['block_width'], p['block_height']
@@ -654,12 +650,11 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         elif target_obj.name == "obstruction0":
             obj_x, obj_y = p['obs0_x'], p['obs0_y']
             obj_width, obj_height = p['obs0_width'], p['obs0_height']
-            # Need to add obs held status to parser
-            obj_held = bool(obs[29 + 7])  # obs0 held feature
+            obj_held = bool(obs[29 + 7]) 
         elif target_obj.name == "obstruction1":
             obj_x, obj_y = p['obs1_x'], p['obs1_y']
             obj_width, obj_height = p['obs1_width'], p['obs1_height']
-            obj_held = bool(obs[44 + 7])  # obs1 held feature
+            obj_held = bool(obs[44 + 7])
         else:
             raise ValueError(f"Unknown object to pick up: {target_obj.name}")
 
@@ -673,19 +668,13 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # print(f"[PickUpSkill] Arm: joint={p['arm_joint']:.3f}, max={p['arm_length_max']:.3f}")
         # print(f"[PickUpSkill] Gripper: gap={p['finger_gap']:.3f}, base_height={p['gripper_base_height']:.3f}")
 
-        # PRIORITY: If we're holding the object but not at safe height, lift immediately
-        # This ensures Phase 7 always executes before the skill completes
-        if obj_held and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
-            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-            print(f"[PickUpSkill] → PRIORITY Lift (holding but not at safe height): {action}")
-            return action
-
-        # Determine if we're in the descent/grasp phase
+        # Determine if we're in the descent/grasp phase (below safe height and ready to grasp)
+        # This prevents us from returning to safe height during descent/grasp
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         theta_aligned = abs(angle_error) <= self.POSITION_TOL
         arm_extended = abs(p['arm_joint'] - p['arm_length_max'] * 0.95) <= self.POSITION_TOL
         below_safe_height = p['robot_y'] < (self.SAFE_Y - self.POSITION_TOL)
-        in_descent_phase = theta_aligned and arm_extended and below_safe_height
+        in_descent_phase = theta_aligned and arm_extended and below_safe_height and not obj_held
 
         # print(f"[PickUpSkill] Descent phase check:")
         # print(f"  angle_error={angle_error:.3f}, theta_aligned={theta_aligned} (|{angle_error:.3f}| <= {self.POSITION_TOL})")
@@ -740,14 +729,14 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             print(f"[PickUpSkill] → Phase 3: Move to object x={obj_x:.3f}: {action}")
             return action
 
-        # Phase 4: Descend to object (only if gripper is still open - haven't grasped yet)
-        gripper_is_open = p['finger_gap'] >= p['gripper_base_height'] * 0.95  # Check against max capability
-        # Target: gripper fingers at object center height
-        # robot_y - arm_length = obj_y + obj_height/2
-        # Therefore: robot_y = obj_y + obj_height/2 + arm_length
-        target_y = obj_y + obj_height/2 + p['arm_length_max']
-        need_descend = p['robot_y'] > target_y + self.POSITION_TOL
-        if gripper_is_open and need_descend:
+        # Phase 4: Descend to object (only if haven't grasped yet)
+        if not obj_held:
+            # Target: gripper fingers at object center height
+            # robot_y - arm_length = obj_y + obj_height/2
+            # Therefore: robot_y = obj_y + obj_height/2 + arm_length
+            target_y = obj_y + obj_height/2 + p['arm_length_max']
+            need_descend = p['robot_y'] > target_y + self.POSITION_TOL
+            if gripper_is_open and need_descend:
             # # Debug: Check if block is clipping through table
             # table_top_y = p['surface_y'] + p['surface_height']
             # block_bottom_y = p['block_y'] - p['block_height']/2
@@ -761,25 +750,27 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             # else:
             #     print(f"  ✓ Block clearance from table: {-penetration:.3f}")
 
-            action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 4: Descend to target_y={target_y:.3f}: {action}")
-            return action
+                action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+                print(f"[PickUpSkill] → Phase 4: Descend to target_y={target_y:.3f}: {action}")
+                return action
 
-        # Phase 5: Close gripper (only after we've finished descending)
-        target_y = obj_y + obj_height/2 + p['arm_length_max']
-        at_grasp_position = abs(p['robot_y'] - target_y) <= self.POSITION_TOL
-        gripper_wide = p['finger_gap'] >= p['gripper_base_height'] * 0.7  # Check against max capability
-        if at_grasp_position and gripper_wide:
-            action = np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 5: Close gripper: {action}")
-            return action
+        # Phase 5: Close gripper (only if not holding yet and at grasp position)
+        if not obj_held:
+            target_y = obj_y + obj_height/2 + p['arm_length_max']
+            at_grasp_position = abs(p['robot_y'] - target_y) <= self.POSITION_TOL
+            gripper_wide = p['finger_gap'] >= p['gripper_base_height'] * 0.7  # Check against max capability
+            if at_grasp_position and gripper_wide:
+                action = np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
+                print(f"[PickUpSkill] → Phase 5: Close gripper: {action}")
+                return action
 
-        # Phase 6: Lift with block
-        need_lift = p['robot_y'] < self.SAFE_Y - self.POSITION_TOL
-        if need_lift:
-            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 6: Lift to safe height: {action}")
-            return action
+        # Phase 6: Lift to safe height (only if holding the object)
+        if obj_held:
+            at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+            if not at_safe_height:
+                action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+                print(f"[PickUpSkill] → Phase 6: Lift to safe height (y={p['robot_y']:.3f}→{self.SAFE_Y:.3f}): {action}")
+                return action
 
         # All phases complete - skill is done
         print(f"[PickUpSkill] → COMPLETE (returning zeros)")
@@ -792,15 +783,12 @@ class PickUpSkill(BaseDynObstruction2DSkill):
 
 class PickUpFromTargetSkill(PickUpSkill):
     """SLAP skill for picking up blocking obstructions from target surface.
-
-    Uses the same implementation as PickUpSkill since it handles any pickable object.
     """
 
     def _get_operator_name(self) -> str:
         return "PickUpFromTarget"
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
-        # Call parent implementation
         return super()._get_action_given_objects(objects, obs)
 
 
