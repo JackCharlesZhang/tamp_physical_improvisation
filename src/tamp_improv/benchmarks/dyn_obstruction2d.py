@@ -871,9 +871,10 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
 
-        # If we completed the skill but we were in fallback mode, raise an exception
+        # If we completed the lift and we were in fallback mode, raise an exception
         # This triggers replanning so the planner can pick up the obstruction
-        if surface_blocked and block_released:
+        # Check this BEFORE returning zeros so we actually raise the exception
+        if surface_blocked and block_released and np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
             print(f"[PlaceOnTarget] FALLBACK COMPLETE - Raising exception to trigger replanning")
             raise RuntimeError("PlaceOnTarget failed: Target surface is blocked by obstruction. Block has been dropped. Replanning needed to clear obstruction.")
 
