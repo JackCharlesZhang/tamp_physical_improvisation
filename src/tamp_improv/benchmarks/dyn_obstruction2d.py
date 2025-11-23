@@ -726,17 +726,6 @@ class PlaceSkill(BaseDynObstruction2DSkill):
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
 
-        # PRIORITY 1: If holding the block but not at safe height, lift first
-        # This handles the case where PickUp hands off before lifting
-        if p['target_block_held'] and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
-            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-
-        # PRIORITY 2: If block is released but not at safe height, lift immediately
-        # This ensures all skills end at SAFE_Y
-        block_released = not p['target_block_held']
-        if block_released and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
-            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-
         # Calculate placement height: place on ground at garbage location
         placement_y = self._calculate_placement_height(
             surface_y=0.0,
@@ -778,24 +767,6 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
         print(f"\n[PlaceOnTarget] ENTRY: target_block_held={p['target_block_held']}, finger_gap={p['finger_gap']:.3f}, robot_y={p['robot_y']:.3f}")
 
-        # PRIORITY 1: If holding the block but WAY below safe height, lift first
-        # Use a threshold: only lift if robot_y < 1.2 (well below SAFE_Y=1.5)
-        # This ensures we lift from PickUp handoff (~0.986) but don't interrupt
-        # a controlled descent from SAFE_Y (which starts at 1.5 and goes down)
-        WAY_BELOW_SAFE = 1.2
-        way_below_safe_y = p['robot_y'] < WAY_BELOW_SAFE
-
-        if p['target_block_held'] and way_below_safe_y:
-            print(f"[PlaceOnTarget] PRIORITY-Lift-WithBlock: Lifting to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
-            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-
-        # PRIORITY 2: If block is released but not at safe height, lift immediately
-        # This ensures all skills end at SAFE_Y
-        block_released = not p['target_block_held']
-        if block_released and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
-            print(f"[PlaceOnTarget] PRIORITY-Lift-AfterRelease: Returning to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
-            return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-
         # PRE-CHECK: Is target surface blocked by an obstruction?
         # Check if any obstruction is covering >10% of the target surface
         surface_blocked = False
@@ -818,26 +789,14 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
                 print(f"\n[PlaceOnTarget] Surface blocked by obstruction{obs_idx} (overlap: {overlap*100:.1f}%)")
                 break
 
-        # If surface is blocked, abort and place at current position instead
+        # If surface is blocked, abort and just drop the block where we are
         if surface_blocked:
-            # Place directly below current position - don't move horizontally at all
+            # Don't move at all - just drop from current position
             target_x = p['robot_x']
-            # Place on table - use same height as target surface (they're on the same table)
-            # Add LARGE clearance so that even when receiving block at low height (~1.0),
-            # the target_y is significantly different, avoiding immediate gripper opening
-            # CLEARANCE must be large enough that: handoff_height (1.0) >> target_y
-            CLEARANCE = 0.7  # Large clearance to avoid immediate drop at handoff
-            target_y = self._calculate_placement_height(
-                surface_y=p['surface_y'],
-                surface_height=p['surface_height'] + CLEARANCE,
-                block_height=p['block_height'],
-                arm_length_max=p['arm_length_max']
-            )
-            print(f"[PlaceOnTarget] FALLBACK MODE - Placing straight down at current position")
-            print(f"  target_x={target_x:.3f} (robot_x), target_y={target_y:.3f}")
-            print(f"  Using surface height: surface_y={p['surface_y']:.3f}, surface_height={p['surface_height']:.3f}")
-            print(f"  With clearance: {CLEARANCE:.3f}")
-            print(f"  Expected block_y after placement: {target_y - p['arm_length_max']:.3f}")
+            target_y = p['robot_y']  # Stay at current height - just open gripper and drop
+            print(f"[PlaceOnTarget] FALLBACK MODE - Dropping block at current position")
+            print(f"  robot_x={p['robot_x']:.3f}, robot_y={p['robot_y']:.3f}")
+            print(f"  Block will fall from current height")
         else:
             # Normal placement: Place at surface x-position
             target_x = p['surface_x']
