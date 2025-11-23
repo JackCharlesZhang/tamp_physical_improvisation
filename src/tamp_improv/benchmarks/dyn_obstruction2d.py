@@ -1063,33 +1063,47 @@ class BaseDynObstruction2DTAMPSystem(
         # Create operators as a dict first (for easy pairing with controllers)
         pick_up_operator = LiftedOperator(
             "PickUp",
-            [robot, pickable_obj],  # Use pickable parent type - works on both target_block and obstruction
+            [robot, block],  # Pick up target_block only (not obstructions)
             preconditions={
                 predicates["GripperEmpty"]([robot]),
             },
             add_effects={
-                predicates["Holding"]([robot, pickable_obj]),
+                predicates["Holding"]([robot, block]),
             },
             delete_effects={
                 predicates["GripperEmpty"]([robot]),
             },
         )
 
+        pick_up_from_target_operator = LiftedOperator(
+            "PickUpFromTarget",
+            [robot, obstruction, surface],  # Pick up blocking obstructions from target surface
+            preconditions={
+                predicates["GripperEmpty"]([robot]),
+                predicates["Blocking"]([obstruction, surface]),  # MUST be blocking to pick up
+            },
+            add_effects={
+                predicates["Holding"]([robot, obstruction]),
+            },
+            delete_effects={
+                predicates["GripperEmpty"]([robot]),
+                predicates["Blocking"]([obstruction, surface]),  # Remove blocking when picked up
+            },
+        )
+
         place_operator = LiftedOperator(
             "Place",
-            [robot, obstruction, surface],  # Only works on obstructions, NOT target block
+            [robot, obstruction, surface],  # Place obstruction in garbage zone
             preconditions={
                 predicates["Holding"]([robot, obstruction]),
             },
             add_effects={
                 predicates["GripperEmpty"]([robot]),
-                predicates["Clear"]([surface]),  # Optimistic: claims surface is now clear
-                # If other obstructions still blocking, Perceiver will NOT add Clear,
-                # planner expectation ≠ reality, and replanning will be triggered
+                # Note: We don't add Clear here - PickUpFromTarget already deleted Blocking
+                # Clear will be computed by Perceiver if no more Blocking atoms exist
             },
             delete_effects={
                 predicates["Holding"]([robot, obstruction]),
-                predicates["Blocking"]([obstruction, surface]),  # Remove this obstruction's blocking
             },
         )
 
@@ -1125,6 +1139,7 @@ class BaseDynObstruction2DTAMPSystem(
 
         operators_dict = {
             "PickUp": pick_up_operator,
+            "PickUpFromTarget": pick_up_from_target_operator,
             "Place": place_operator,
             "PlaceOnTarget": place_on_target_operator,
             # "Push": push_operator,  # Commented out for now
