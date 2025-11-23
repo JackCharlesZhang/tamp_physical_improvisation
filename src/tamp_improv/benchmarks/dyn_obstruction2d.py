@@ -778,13 +778,28 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
 
         print(f"\n[PlaceOnTarget] ENTRY: target_block_held={p['target_block_held']}, finger_gap={p['finger_gap']:.3f}, robot_y={p['robot_y']:.3f}")
 
-        # PRIORITY 1: If holding the block but WAY below safe height, lift first
-        # This handles the case where PickUp hands off before lifting
-        # We use a larger threshold (0.2) to avoid interrupting intentional descents
-        # If we're within 0.2 of SAFE_Y, we're probably in the middle of a controlled descent
-        LIFT_THRESHOLD = 0.2  # Only lift if more than 0.2 units below SAFE_Y
-        way_below_safe_y = p['robot_y'] < self.SAFE_Y - LIFT_THRESHOLD
-        if p['target_block_held'] and way_below_safe_y:
+        # PRIORITY 1: If holding the block but not at safe height, lift first
+        # Exception: Don't lift if we're already at the target x-position
+        # (because that means we've completed horizontal movement and are descending)
+        #
+        # To determine target_x, we need to check if surface is blocked (same logic as below)
+        # Quick check: if we're at robot's current x, we're in fallback descent mode
+        # In that case, we're positioned and ready to descend - don't interrupt!
+
+        # For now, simple rule: Only lift if not at SAFE_Y
+        # We'll handle stuttering by checking if we're "positioned" (at target x-coord)
+        not_at_safe_y = p['robot_y'] < self.SAFE_Y - self.POSITION_TOL
+
+        # Check if we're "positioned" - meaning we've completed horizontal movement
+        # If aligned and arm extended, we're ready to descend - don't lift
+        angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
+        is_aligned = abs(angle_error) <= self.POSITION_TOL
+
+        print(f"[PlaceOnTarget] Lift check: not_at_safe_y={not_at_safe_y}, is_aligned={is_aligned}, angle_error={angle_error:.3f}")
+
+        # Only lift if: (1) not at safe Y AND (2) not aligned (haven't started descent sequence)
+        should_lift = p['target_block_held'] and not_at_safe_y and not is_aligned
+        if should_lift:
             print(f"[PlaceOnTarget] PRIORITY-Lift-WithBlock: Lifting to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
 
