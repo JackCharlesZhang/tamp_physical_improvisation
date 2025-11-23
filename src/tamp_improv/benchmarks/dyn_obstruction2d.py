@@ -149,6 +149,7 @@ class DynObstruction2DPredicates:
         """Initialize predicates."""
         self.on = Predicate("On", [types.block, types.surface])
         self.clear = Predicate("Clear", [types.surface])
+        self.blocking = Predicate("Blocking", [types.obstruction, types.surface])  # Obstruction blocking surface
         self.holding = Predicate("Holding", [types.robot, types.pickable])  # Use pickable parent type
         self.gripper_empty = Predicate("GripperEmpty", [types.robot])
 
@@ -161,6 +162,7 @@ class DynObstruction2DPredicates:
         return {
             self.on,
             self.clear,
+            self.blocking,
             self.holding,
             self.gripper_empty,
         }
@@ -435,8 +437,8 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         ):
             atoms.add(self.predicates["On"]([self._target_block, self._target_surface]))
 
-        # Check if surface is clear (no obstructions blocking it)
-        surface_obstructed = False
+        # Check each obstruction to see if it's blocking the surface
+        # Add Blocking(obstruction, surface) atoms for each obstruction that's blocking
         for i, (obs_x, obs_y, obs_width, obs_height) in enumerate(obstruction_data):
             if self._is_obstructing(
                 obs_x,
@@ -448,12 +450,16 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
                 target_surface_width,
                 target_surface_height,
             ):
-                surface_obstructed = True
-                break  # One obstruction is enough to block the surface
+                # This obstruction is blocking the surface
+                atoms.add(self.predicates["Blocking"]([self._obstructions[i], self._target_surface]))
 
-        # Surface is clear if no obstructions are blocking it
-        if not surface_obstructed:
-            # print(f"[Perceiver] Adding Clear predicate (surface not obstructed)")
+        # Surface is clear if no Blocking atoms exist for it (derived predicate)
+        any_blocking = any(
+            atom.predicate.name == "Blocking" and atom.entities[1] == self._target_surface
+            for atom in atoms
+        )
+        if not any_blocking:
+            # print(f"[Perceiver] Adding Clear predicate (no blocking atoms)")
             atoms.add(self.predicates["Clear"]([self._target_surface]))
         # else:
             # print(f"[Perceiver] NOT adding Clear predicate (surface is obstructed)")
@@ -1077,12 +1083,13 @@ class BaseDynObstruction2DTAMPSystem(
             },
             add_effects={
                 predicates["GripperEmpty"]([robot]),
-                predicates["Clear"]([surface]),  # Placing obstruction away makes surface clear
-                # Note: This is optimistic - if multiple obstructions exist, the Perceiver
-                # will detect that surface is still not clear, and planner will replan
+                predicates["Clear"]([surface]),  # Optimistic: claims surface is now clear
+                # If other obstructions still blocking, Perceiver will NOT add Clear,
+                # planner expectation ≠ reality, and replanning will be triggered
             },
             delete_effects={
                 predicates["Holding"]([robot, obstruction]),
+                predicates["Blocking"]([obstruction, surface]),  # Remove this obstruction's blocking
             },
         )
 
@@ -1123,14 +1130,11 @@ class BaseDynObstruction2DTAMPSystem(
             # "Push": push_operator,  # Commented out for now
         }
 
-        # NOTE: Skills will be created later after environment is initialized
-        # so we can use the correct action space from the environment
-
         return PlanningComponents(
             types=types_set,
             predicate_container=predicates,
             operators=set(operators_dict.values()),
-            skills=set(),  # Empty - will be populated after env creation
+            skills=set(),
             perceiver=perceiver,
         )
 
