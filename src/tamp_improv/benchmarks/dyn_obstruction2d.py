@@ -459,11 +459,11 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
             for atom in atoms
         )
         if not any_blocking:
-            print(f"[Perceiver] Adding Clear predicate (no blocking atoms)")
+            #print(f"[Perceiver] Adding Clear predicate (no blocking atoms)")
             atoms.add(self.predicates["Clear"]([self._target_surface]))
         else:
             blocking_atoms = [atom for atom in atoms if atom.predicate.name == "Blocking"]
-            print(f"[Perceiver] NOT adding Clear predicate - Blocking atoms: {blocking_atoms}")
+            #print(f"[Perceiver] NOT adding Clear predicate - Blocking atoms: {blocking_atoms}")
 
         return atoms
 
@@ -644,6 +644,8 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # objects[0] is robot, objects[1] is the object to pick up
         target_obj = objects[1]
 
+        print(f"\n[PickUpSkill] Called for target: {target_obj.name}")
+
         # Map object name to observation indices
         if target_obj.name == "target_block":
             obj_x, obj_y = p['block_x'], p['block_y']
@@ -661,6 +663,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         else:
             raise ValueError(f"Unknown object to pick up: {target_obj.name}")
 
+        print(f"[PickUpSkill] Target: {target_obj.name} at ({obj_x:.3f}, {obj_y:.3f}), w={obj_width:.3f}, h={obj_height:.3f}, held={obj_held}")
+        print(f"[PickUpSkill] Robot: pos=({p['robot_x']:.3f}, {p['robot_y']:.3f}), theta={p['robot_theta']:.3f}")
+        print(f"[PickUpSkill] Robot: arm={p['arm_joint']:.3f}/{p['arm_length_max']:.3f}, gripper={p['finger_gap']:.3f}")
+
         # print(f"\n[PickUpSkill] === STARTING PHASE CHECKS ===")
         # print(f"[PickUpSkill] Target: {target_obj.name} at ({obj_x:.3f}, {obj_y:.3f}), held={obj_held}")
         # print(f"[PickUpSkill] Robot: ({p['robot_x']:.3f}, {p['robot_y']:.3f}, θ={p['robot_theta']:.3f})")
@@ -669,13 +675,9 @@ class PickUpSkill(BaseDynObstruction2DSkill):
 
         # PRIORITY: If we're holding the object but not at safe height, lift immediately
         # This ensures Phase 7 always executes before the skill completes
-        # print(f"[PickUpSkill] Check PRIORITY Lift: obj_held={obj_held}, robot_y={p['robot_y']:.3f} < SAFE_Y-TOL={self.SAFE_Y - self.POSITION_TOL:.3f}?")
         if obj_held and p['robot_y'] < self.SAFE_Y - self.POSITION_TOL:
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-            # print(f"[PickUpSkill] ✓ PHASE: 7-Lift-PRIORITY, action={action}")
-            # log_skill_action("PickUp", "7-Lift-PRIORITY", action, {
-            #     "robot_y": p['robot_y'], "safe_y": self.SAFE_Y
-            # })
+            print(f"[PickUpSkill] → PRIORITY Lift (holding but not at safe height): {action}")
             return action
 
         # Determine if we're in the descent/grasp phase
@@ -693,36 +695,24 @@ class PickUpSkill(BaseDynObstruction2DSkill):
 
         # Phase 0: Move to safe height
         at_safe_y = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
-        # print(f"[PickUpSkill] Check Phase 0 (SafeHeight): not in_descent_phase={not in_descent_phase}, not at_safe_y={not at_safe_y}")
         if not in_descent_phase and not at_safe_y:
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-            # print(f"[PickUpSkill] ✓ PHASE: 0-SafeHeight, action={action}")
-            # log_skill_action("PickUp", "0-SafeHeight", action, {
-            #     "robot_y": p['robot_y'], "safe_y": self.SAFE_Y
-            # })
+            print(f"[PickUpSkill] → Phase 0: Move to safe height: {action}")
             return action
 
         # Phase 1: Rotate gripper
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
-        # print(f"[PickUpSkill] Check Phase 1 (Rotate): angle_error={angle_error:.3f} > TOL={self.POSITION_TOL}?")
         if abs(angle_error) > self.POSITION_TOL:
             action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
-            # print(f"[PickUpSkill] ✓ PHASE: 1-Rotate, action={action}")
-            # log_skill_action("PickUp", "1-Rotate", action, {
-            #     "robot_theta": p['robot_theta'], "target_theta": self.TARGET_THETA, "error": angle_error
-            # })
+            print(f"[PickUpSkill] → Phase 1: Rotate gripper (error={angle_error:.3f}): {action}")
             return action
 
         # Phase 2: Extend arm
         target_arm = p['arm_length_max'] * 0.95
         arm_error = abs(p['arm_joint'] - target_arm)
-        # print(f"[PickUpSkill] Check Phase 2 (ExtendArm): arm_error={arm_error:.3f} > TOL={self.POSITION_TOL}?")
         if arm_error > self.POSITION_TOL:
             action = np.array([0, 0, 0, np.clip(target_arm - p['arm_joint'], -self.MAX_DARM, self.MAX_DARM), 0], dtype=np.float64)
-            # print(f"[PickUpSkill] ✓ PHASE: 2-ExtendArm, action={action}")
-            # log_skill_action("PickUp", "2-ExtendArm", action, {
-            #     "arm_joint": p['arm_joint'], "target_arm": target_arm
-            # })
+            print(f"[PickUpSkill] → Phase 2: Extend arm (error={arm_error:.3f}): {action}")
             return action
 
         # Phase 3: Open gripper (only at start, before arm extension)
@@ -730,32 +720,21 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
         arm_not_extended = p['arm_joint'] < p['arm_length_max'] * 0.5  # Arm still retracted
         gripper_not_open = p['finger_gap'] < p['gripper_base_height'] - self.POSITION_TOL
-        # print(f"[PickUpSkill] Check Phase 3 (OpenGripper): at_safe={at_safe_height}, arm_not_ext={arm_not_extended}, grip_not_open={gripper_not_open}")
         if at_safe_height and arm_not_extended and gripper_not_open:
             action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
-            # print(f"[PickUpSkill] ✓ PHASE: 3-OpenGripper, action={action}")
-            # log_skill_action("PickUp", "3-OpenGripper", action, {
-            #     "finger_gap": p['finger_gap'], "target_gap": p['gripper_base_height']
-            # })
+            print(f"[PickUpSkill] → Phase 3: Open gripper: {action}")
             return action
 
         # Phase 4: Move horizontally to object x (only before grasping)
         gripper_is_open = p['finger_gap'] > obj_width * 0.8
         x_aligned = np.isclose(p['robot_x'], obj_x, atol=self.POSITION_TOL)
-        # print(f"[PickUpSkill] Check Phase 4 (MoveToBlock): gripper_open={gripper_is_open}, x_aligned={x_aligned}")
         if gripper_is_open and not x_aligned:
             if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
                 action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-                # print(f"[PickUpSkill] ✓ PHASE: 4a-ReturnToSafe, action={action}")
-                # log_skill_action("PickUp", "4a-ReturnToSafe", action, {
-                #     "robot_y": p['robot_y'], "safe_y": self.SAFE_Y
-                # })
+                print(f"[PickUpSkill] → Phase 4a: Return to safe height: {action}")
                 return action
             action = np.array([np.clip(obj_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
-            # print(f"[PickUpSkill] ✓ PHASE: 4-MoveToBlock, action={action}")
-            # log_skill_action("PickUp", "4-MoveToBlock", action, {
-            #     "robot_x": p['robot_x'], "block_x": obj_x
-            # })
+            print(f"[PickUpSkill] → Phase 4: Move to object x={obj_x:.3f}: {action}")
             return action
 
         # Phase 5: Descend to object (only if gripper is still open - haven't grasped yet)
@@ -765,7 +744,6 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         # Therefore: robot_y = obj_y + obj_height/2 + arm_length
         target_y = obj_y + obj_height/2 + p['arm_length_max']
         need_descend = p['robot_y'] > target_y + self.POSITION_TOL
-        # print(f"[PickUpSkill] Check Phase 5 (Descend): gripper_open={gripper_is_open}, target_y={target_y:.3f}, need_descend={need_descend}")
         if gripper_is_open and need_descend:
             # # Debug: Check if block is clipping through table
             # table_top_y = p['surface_y'] + p['surface_height']
@@ -781,39 +759,28 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             #     print(f"  ✓ Block clearance from table: {-penetration:.3f}")
 
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-            # print(f"[PickUpSkill] ✓ PHASE: 5-Descend, action={action}")
-            # log_skill_action("PickUp", "5-Descend", action, {
-            #     "robot_y": p['robot_y'], "target_y": target_y, "block_y": p['block_y'], "block_height": p['block_height']
-            # })
+            print(f"[PickUpSkill] → Phase 5: Descend to target_y={target_y:.3f}: {action}")
             return action
 
         # Phase 6: Close gripper (only after we've finished descending)
         target_y = obj_y + obj_height/2 + p['arm_length_max']
         at_grasp_position = abs(p['robot_y'] - target_y) <= self.POSITION_TOL
         gripper_wide = p['finger_gap'] > obj_width * 0.7
-        # print(f"[PickUpSkill] Check Phase 6 (CloseGripper): at_grasp={at_grasp_position}, gripper_wide={gripper_wide}")
         if at_grasp_position and gripper_wide:
             action = np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
-            # print(f"[PickUpSkill] ✓ PHASE: 6-CloseGripper, action={action}")
-            # log_skill_action("PickUp", "6-CloseGripper", action, {
-            #     "finger_gap": p['finger_gap'], "block_width": obj_width, "target": obj_width * 0.7
-            # })
+            print(f"[PickUpSkill] → Phase 6: Close gripper: {action}")
             return action
 
         # Phase 7: Lift with block
         need_lift = p['robot_y'] < self.SAFE_Y - self.POSITION_TOL
-        # print(f"[PickUpSkill] Check Phase 7 (Lift): need_lift={need_lift} ({p['robot_y']:.3f} < {self.SAFE_Y - self.POSITION_TOL:.3f})")
         if need_lift:
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-            # print(f"[PickUpSkill] ✓ PHASE: 7-Lift, action={action}")
-            # log_skill_action("PickUp", "7-Lift", action, {
-            #     "robot_y": p['robot_y'], "safe_y": self.SAFE_Y
-            # })
+            print(f"[PickUpSkill] → Phase 7: Lift to safe height: {action}")
             return action
 
         # All phases complete - skill is done
-        # print(f"[PickUpSkill] PHASE: COMPLETE - All phases finished!")
-        # print(f"[PickUpSkill] Final state: robot=({p['robot_x']:.3f}, {p['robot_y']:.3f}), obj=({obj_x:.3f}, {obj_y:.3f}), held={obj_held}")
+        print(f"[PickUpSkill] → COMPLETE (returning zeros)")
+        print(f"[PickUpSkill]   Final: robot=({p['robot_x']:.3f}, {p['robot_y']:.3f}), obj=({obj_x:.3f}, {obj_y:.3f}), held={obj_held}")
         # log_skill_action("PickUp", "DONE", np.zeros(5, dtype=np.float64), {
         #     "robot_y": p['robot_y'], "robot_x": p['robot_x'], "block_x": p['block_x']
         # })
