@@ -24,11 +24,16 @@ def patch_prbench_environments() -> None:
         original_add_state = ObjectCentricDynObstruction2DEnv._add_state_to_space
 
         def debug_add_state_to_space(self, state):
+            import traceback
+            print(f"\n[DEBUG] ===== _add_state_to_space called =====")
             print(f"[DEBUG] _add_state_to_space called with objects: {[obj.name for obj in state]}")
             print(f"[DEBUG] _current_state has: {[obj.name for obj in self._current_state] if self._current_state else 'None'}")
             print(f"[DEBUG] _initial_constant_state has: {[obj.name for obj in self._initial_constant_state] if self._initial_constant_state else 'None'}")
             print(f"[DEBUG] Cache dictionary ID: {id(self._state_obj_to_pymunk_body)}")
             print(f"[DEBUG] self (environment) ID: {id(self)}")
+            print(f"[DEBUG] Traceback (last 5 frames):")
+            for line in traceback.format_stack()[-6:-1]:
+                print(line.strip())
 
             # Check object IDs before adding
             if self._current_state:
@@ -44,11 +49,28 @@ def patch_prbench_environments() -> None:
             cache_obstruction = [obj for obj in self._state_obj_to_pymunk_body.keys() if obj.name == 'obstruction0']
             if cache_obstruction:
                 print(f"[DEBUG] obstruction0 object ID in cache: {id(cache_obstruction[0])}")
+            print(f"[DEBUG] ===== _add_state_to_space finished =====\n")
 
             return result
 
         ObjectCentricDynObstruction2DEnv._add_state_to_space = debug_add_state_to_space
         print("[PRBENCH_PATCH] Added debug wrapper to _add_state_to_space")
+
+        # Patch full_state property to debug what's being accessed
+        original_full_state = ObjectCentricDynamic2DRobotEnv.full_state.fget
+
+        def debug_full_state(self):
+            print(f"\n[DEBUG] ===== full_state property accessed =====")
+            print(f"[DEBUG] self (environment) ID: {id(self)}")
+            print(f"[DEBUG] _current_state: {[obj.name for obj in self._current_state] if self._current_state else 'None'}")
+            print(f"[DEBUG] _initial_constant_state: {[obj.name for obj in self._initial_constant_state] if self._initial_constant_state else 'None'}")
+            result = original_full_state(self)
+            print(f"[DEBUG] full_state result: {[obj.name for obj in result]}")
+            print(f"[DEBUG] ===== full_state finished =====\n")
+            return result
+
+        ObjectCentricDynamic2DRobotEnv.full_state = property(debug_full_state)
+        print("[PRBENCH_PATCH] Added debug wrapper to full_state property")
 
         # Patch _read_state_from_space to debug right before the assertion
         original_read_state = ObjectCentricDynObstruction2DEnv._read_state_from_space
