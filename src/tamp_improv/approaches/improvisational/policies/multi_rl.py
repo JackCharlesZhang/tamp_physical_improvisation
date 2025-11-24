@@ -331,11 +331,8 @@ class MultiRLPolicy(Policy[ObsType, ActType]):
         valid_base_env = False
 
         # Unwrap environment layers, checking various wrapper attribute names
+        # Continue unwrapping to the deepest level (prefer object-centric envs)
         while True:
-            if hasattr(current_env, "reset_from_state"):
-                valid_base_env = True
-                break
-
             # Try common wrapper attributes in order of preference
             unwrapped = False
             for attr_name in ["env", "_env", "_object_centric_env"]:
