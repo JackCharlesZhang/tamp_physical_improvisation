@@ -387,8 +387,6 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
             obs_x = obs[offset]
             obs_y = obs[offset + 1]
             obs_held = obs[offset + 7] > 0.5
-            print(f"[Perceiver] obstruction{i} held={obs_held}")
-            print(f"[Perceiver] obstruction{i} obs={[offset + 7]}")
             obs_width = obs[offset + 12]  # width feature
             obs_height = obs[offset + 13]  # height feature
             obstruction_data.append((obs_x, obs_y, obs_width, obs_height))
@@ -418,13 +416,11 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
             # Check if holding any obstruction
             for i, obs_held in enumerate(obstruction_held_status):
                 if obs_held:
-                    print(f"[Perceiver] Robot holding obstruction{i}")
                     atoms.add(self.predicates["Holding"]([self._robot, self._obstructions[i]]))
                     holding_something = True
                     break  # Can only hold one object at a time
 
         if not holding_something:
-            print(f"[Perceiver] Adding GripperEmpty predicate")
             atoms.add(self.predicates["GripperEmpty"]([self._robot]))
 
         # Check if target block is on target surface
@@ -474,12 +470,6 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         elif blocking_count == 2:
             atoms.add(self.predicates["TwoObstructionsBlocking"]([self._target_surface]))
         # Note: For num_obstructions > 2, we'd need more count predicates
-
-        # DEBUG: Print all current atoms/predicates
-        print(f"\n[Perceiver] Current state atoms ({len(atoms)}):")
-        for atom in sorted(atoms, key=str):
-            print(f"  {atom}")
-        print()
 
         return atoms
 
@@ -657,8 +647,6 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         p = self._parse_obs(obs)
         target_obj = objects[1]
 
-        print(f"\n[PickUpSkill] Called for target: {target_obj.name}")
-
         if target_obj.name == "target_block":
             obj_x, obj_y = p['block_x'], p['block_y']
             obj_width, obj_height = p['block_width'], p['block_height']
@@ -673,10 +661,6 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             obj_held = bool(obs[44 + 7])
         else:
             raise ValueError(f"Unknown object to pick up: {target_obj.name}")
-
-        print(f"[PickUpSkill] Target: {target_obj.name} at ({obj_x:.3f}, {obj_y:.3f}), w={obj_width:.3f}, h={obj_height:.3f}, held={obj_held}")
-        print(f"[PickUpSkill] Robot: pos=({p['robot_x']:.3f}, {p['robot_y']:.3f}), theta={p['robot_theta']:.3f}")
-        print(f"[PickUpSkill] Robot: arm={p['arm_joint']:.3f}/{p['arm_length_max']:.3f}, gripper={p['finger_gap']:.3f}")
 
         # print(f"\n[PickUpSkill] === STARTING PHASE CHECKS ===")
         # print(f"[PickUpSkill] Target: {target_obj.name} at ({obj_x:.3f}, {obj_y:.3f}), held={obj_held}")
@@ -703,14 +687,12 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             at_safe_y = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
             if not in_descent_phase and not at_safe_y:
                 action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-                print(f"[PickUpSkill] → Phase 0: Move to safe height: {action}")
                 return action
 
         # Phase 1: Rotate gripper
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         if abs(angle_error) > self.POSITION_TOL:
             action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 1: Rotate gripper (error={angle_error:.3f}): {action}")
             return action
 
         # Phase 2: Open gripper and extend arm simultaneously
@@ -729,7 +711,6 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             darm = np.clip(target_arm - p['arm_joint'], -self.MAX_DARM, self.MAX_DARM) if arm_not_extended else 0
             dgripper = self.MAX_DGRIPPER if gripper_not_open else 0
             action = np.array([0, 0, 0, darm, dgripper], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 2: Prep gripper+arm (gripper={p['finger_gap']:.3f}→{target_gap:.3f}, arm={p['arm_joint']:.3f}→{target_arm:.3f}): {action}")
             return action
 
         # Phase 3: Move horizontally to object x (only before grasping)
@@ -740,10 +721,8 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         if gripper_is_open and not x_aligned:
             if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
                 action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-                print(f"[PickUpSkill] → Phase 3a: Return to safe height: {action}")
                 return action
             action = np.array([np.clip(obj_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
-            print(f"[PickUpSkill] → Phase 3: Move to object x={obj_x:.3f}: {action}")
             return action
 
         # Phase 4: Descend to object (only if haven't grasped yet)
@@ -755,7 +734,6 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             need_descend = p['robot_y'] > target_y + self.POSITION_TOL
             if gripper_is_open and need_descend:
                 action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-                print(f"[PickUpSkill] → Phase 4: Descend to target_y={target_y:.3f}: {action}")
                 return action
 
         # Phase 5: Close gripper (only if not holding yet and at grasp position)
@@ -765,7 +743,6 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             gripper_wide = p['finger_gap'] >= p['gripper_base_height'] * 0.7  # Check against max capability
             if at_grasp_position and gripper_wide:
                 action = np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
-                print(f"[PickUpSkill] → Phase 5: Close gripper: {action}")
                 return action
 
         # Phase 6: Lift to safe height (only if holding the object)
@@ -773,12 +750,9 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
             if not at_safe_height:
                 action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-                print(f"[PickUpSkill] → Phase 6: Lift to safe height (y={p['robot_y']:.3f}→{self.SAFE_Y:.3f}): {action}")
                 return action
 
         # All phases complete - skill is done
-        print(f"[PickUpSkill] → COMPLETE (returning zeros)")
-        print(f"[PickUpSkill]   Final: robot=({p['robot_x']:.3f}, {p['robot_y']:.3f}), obj=({obj_x:.3f}, {obj_y:.3f}), held={obj_held}")
         # log_skill_action("PickUp", "DONE", np.zeros(5, dtype=np.float64), {
         #     "robot_y": p['robot_y'], "robot_x": p['robot_x'], "block_x": p['block_x']
         # })
@@ -857,7 +831,6 @@ class PlaceFirstSkill(PlaceSkill):
         return "PlaceFirst"
     
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
-        print("IN PLACE FIRST")
         return super()._get_action_given_objects(objects, obs)
 
 
@@ -868,7 +841,6 @@ class PlaceLastSkill(PlaceSkill):
         return "PlaceLast"
     
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
-        print("IN PLACE LAST")
         return super()._get_action_given_objects(objects, obs)
 
 
@@ -881,8 +853,6 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
 
-        print(f"\n[PlaceOnTarget] ENTRY: target_block_held={p['target_block_held']}, finger_gap={p['finger_gap']:.3f}, robot_y={p['robot_y']:.3f}")
-
         # Normal placement: Place at surface x-position
         # Trust that Clear(surface) precondition ensures surface is actually clear
         target_x = p['surface_x']
@@ -892,15 +862,10 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             block_height=p['block_height'],
             arm_length_max=p['arm_length_max']
         )
-        print(f"[PlaceOnTarget] Placing on target surface")
-        print(f"  target_x={target_x:.3f} (surface_x), target_y={target_y:.3f}")
-        print(f"  surface_y={p['surface_y']:.3f}, surface_height={p['surface_height']:.3f}")
-        print(f"  block_height={p['block_height']:.3f}, arm_length_max={p['arm_length_max']:.3f}")
 
         # Phase 0: Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         if abs(angle_error) > self.POSITION_TOL:
-            print(f"[PlaceOnTarget] Phase 0: Rotating (error={angle_error:.3f})")
             action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
             return action
 
@@ -908,35 +873,17 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         # Once we're at target x, we proceed to descend and don't return to safe height
         not_at_target_x = not np.isclose(p['robot_x'], target_x, atol=self.POSITION_TOL)
         if not_at_target_x and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            print(f"[PlaceOnTarget] Phase 1: Moving to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
 
         # Phase 2: To target x
         if not_at_target_x:
-            print(f"[PlaceOnTarget] Phase 2: Moving to target_x (robot_x={p['robot_x']:.3f}, target_x={target_x:.3f})")
             action = np.array([np.clip(target_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
             return action
 
         # Phase 3: Descend (only if gripper is still holding the object)
         still_holding = p['target_block_held']
         if still_holding and not np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL):
-            block_center_y = p['robot_y'] - p['arm_length_max']
-            block_bottom_y = block_center_y - p['block_height']/2
-            table_top_y = p['surface_y'] + p['surface_height']
-            actual_block_bottom_y = p['block_y'] - p['block_height']/2
-            penetration = table_top_y - actual_block_bottom_y
-
-            print(f"[PlaceOnTarget] Phase 3: Descending")
-            print(f"  robot_y={p['robot_y']:.3f}, target_y={target_y:.3f}")
-            print(f"  CALCULATED: block_center_y={block_center_y:.3f}, block_bottom_y={block_bottom_y:.3f}")
-            print(f"  ACTUAL: block_y={p['block_y']:.3f}, block_bottom_y={actual_block_bottom_y:.3f}")
-            print(f"  table_top_y={table_top_y:.3f}")
-            if penetration > 0:
-                print(f"  ⚠️  BLOCK PENETRATING TABLE BY {penetration:.3f}!")
-            else:
-                print(f"  ✓ Block clearance from table: {-penetration:.3f}")
-
             action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
 
@@ -952,11 +899,9 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         # Check if block is no longer held (not if gripper is opened)
         block_released = not p['target_block_held']
         if block_released and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            print(f"[PlaceOnTarget] Phase 5: Lifting to safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
             return action
 
-        print(f"[PlaceOnTarget] DONE - Returning zeros (robot_y={p['robot_y']:.3f}, held={p['target_block_held']})")
         return np.zeros(5, dtype=np.float64)
 
 
@@ -1068,7 +1013,7 @@ class BaseDynObstruction2DTAMPSystem(
             # Patch the environment (handles wrapper types internally)
             patch_prbench_for_debugging(env, world_bounds)
         except Exception as e:
-            print(f"[WARNING] Failed to apply debug patches: {e}")
+            pass
 
         return env
 
