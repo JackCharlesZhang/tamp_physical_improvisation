@@ -166,38 +166,42 @@ def patch_prbench_for_debugging(env, world_bounds: tuple[float, float, float, fl
     """
     global _original_on_collision_w_static, _original_revert_to_last_state
 
-    print("[DEBUG_PATCH] Applying debug patches to prbench environment...")
+    # print("[DEBUG_PATCH] Applying debug patches to prbench environment...")
 
     # Patch collision handler
     try:
         from prbench.envs.dynamic2d import utils as prbench_utils
         _original_on_collision_w_static = prbench_utils.on_collision_w_static
         prbench_utils.on_collision_w_static = patched_on_collision_w_static
-        print("[DEBUG_PATCH]   ✓ Collision handler patched")
+        # print("[DEBUG_PATCH]   ✓ Collision handler patched")
     except Exception as e:
-        print(f"[DEBUG_PATCH]   ✗ Failed to patch collision handler: {e}")
+        # print(f"[DEBUG_PATCH]   ✗ Failed to patch collision handler: {e}")
+        pass
 
     # Patch robot revert function
     try:
         from prbench.envs.dynamic2d.utils import KinRobot
         _original_revert_to_last_state = KinRobot.revert_to_last_state
         KinRobot.revert_to_last_state = patched_revert_to_last_state
-        print("[DEBUG_PATCH]   ✓ Robot revert function patched")
+        # print("[DEBUG_PATCH]   ✓ Robot revert function patched")
     except Exception as e:
-        print(f"[DEBUG_PATCH]   ✗ Failed to patch revert function: {e}")
+        # print(f"[DEBUG_PATCH]   ✗ Failed to patch revert function: {e}")
+        pass
 
     # Add bounds checking
     try:
         add_bounds_checking_to_env(env, world_bounds)
-        print(f"[DEBUG_PATCH]   ✓ Bounds checking added (bounds: {world_bounds})")
+        # print(f"[DEBUG_PATCH]   ✓ Bounds checking added (bounds: {world_bounds})")
     except Exception as e:
-        print(f"[DEBUG_PATCH]   ✗ Failed to add bounds checking: {e}")
+        # print(f"[DEBUG_PATCH]   ✗ Failed to add bounds checking: {e}")
+        pass
 
     # Add held state logging
     try:
         add_held_state_logging_to_env(env)
-        print("[DEBUG_PATCH]   ✓ Held state transitions logging added")
+        # print("[DEBUG_PATCH]   ✓ Held state transitions logging added")
     except Exception as e:
-        print(f"[DEBUG_PATCH]   ✗ Failed to add held state logging: {e}")
+        # print(f"[DEBUG_PATCH]   ✗ Failed to add held state logging: {e}")
+        pass
 
-    print("[DEBUG_PATCH] Debug patching complete!\n")
+    # print("[DEBUG_PATCH] Debug patching complete!\n")

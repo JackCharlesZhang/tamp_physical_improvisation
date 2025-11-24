@@ -35,12 +35,12 @@ SYSTEM_CLASSES: dict[str, Type[ImprovisationalTAMPSystem[Any, Any]]] = {
 @hydra.main(version_base=None, config_path="configs", config_name="obstacle_tower")
 def main(cfg: DictConfig) -> float:
     """Main training function."""
-    print("=" * 80)
-    print(f"Training Multi-RL on {cfg.env_name}")
-    print("=" * 80)
-    print("\nConfiguration:")
-    print(OmegaConf.to_yaml(cfg))
-    print("=" * 80)
+    # print("=" * 80)
+    # print(f"Training Multi-RL on {cfg.env_name}")
+    # print("=" * 80)
+    # print("\nConfiguration:")
+    # print(OmegaConf.to_yaml(cfg))
+    # print("=" * 80)
 
     system_cls = SYSTEM_CLASSES[cfg.env_name]
     system_kwargs = {
@@ -63,7 +63,7 @@ def main(cfg: DictConfig) -> float:
         deterministic=cfg.deterministic,
         device=device,
     )
-    print(f"\nUsing device: {device}")
+    # print(f"\nUsing device: {device}")
 
     training_config = TrainingConfig(
         seed=cfg.seed,
@@ -95,12 +95,12 @@ def main(cfg: DictConfig) -> float:
         max_skill_steps=cfg.max_skill_steps,
     )
 
-    print("\n" + "=" * 80)
-    print("Results:")
-    print("=" * 80)
-    print(f"Success Rate: {metrics.success_rate:.2%}")
-    print(f"Average Episode Length: {metrics.avg_episode_length:.2f}")
-    print("=" * 80)
+    # print("\n" + "=" * 80)
+    # print("Results:")
+    # print("=" * 80)
+    # print(f"Success Rate: {metrics.success_rate:.2%}")
+    # print(f"Average Episode Length: {metrics.avg_episode_length:.2f}")
+    # print("=" * 80)
 
     output_dir = Path(HydraConfig.get().runtime.output_dir)
     results_file = output_dir / "results.txt"

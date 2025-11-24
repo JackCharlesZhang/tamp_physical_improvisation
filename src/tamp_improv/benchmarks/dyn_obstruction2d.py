@@ -465,7 +465,7 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
                     obs_x=target_surface_x, obs_y=target_surface_y,
                     obs_width=target_surface_width, obs_height=target_surface_height, obs_theta=0.0
                 )
-                print(f"[PERCEIVER] obstruction{i}: pos=({obs_x:.3f}, {obs_y:.3f}), held={obs_held}, overlap={overlap:.3f}, blocking={is_blocking}")
+                # print(f"[PERCEIVER] obstruction{i}: pos=({obs_x:.3f}, {obs_y:.3f}), held={obs_held}, overlap={overlap:.3f}, blocking={is_blocking}")
             if not obs_held and is_blocking:
                 # This obstruction is blocking the surface (and not being held)
                 atoms.add(self.predicates["Blocking"]([self._obstructions[i], self._target_surface]))
@@ -884,9 +884,9 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         )
 
         # DEBUG: Log state AND PyMunk body properties
-        print(f"[PLACE_DEBUG] Robot obs: ({p['robot_x']:.3f}, {p['robot_y']:.3f}, θ={p['robot_theta']:.3f}), static={p['robot_static']}")
-        print(f"[PLACE_DEBUG] Target: ({target_x:.3f}, {target_y:.3f}), SAFE_Y={self.SAFE_Y:.3f}")
-        print(f"[PLACE_DEBUG] Holding: {p['target_block_held']}, finger_gap={p['finger_gap']:.3f}, gripper_height={p['gripper_base_height']:.3f}")
+        # print(f"[PLACE_DEBUG] Robot obs: ({p['robot_x']:.3f}, {p['robot_y']:.3f}, θ={p['robot_theta']:.3f}), static={p['robot_static']}")
+        # print(f"[PLACE_DEBUG] Target: ({target_x:.3f}, {target_y:.3f}), SAFE_Y={self.SAFE_Y:.3f}")
+        # print(f"[PLACE_DEBUG] Holding: {p['target_block_held']}, finger_gap={p['finger_gap']:.3f}, gripper_height={p['gripper_base_height']:.3f}")
 
         # CRITICAL DEBUG: Access PyMunk body directly to see actual physics state
         # We need to drill down through the wrapper layers to get to the actual environment
@@ -896,14 +896,15 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             env = self._components.perceiver  # Get from components
             # Actually, we need a different approach - let's pass env through or access it differently
             # For now, just log what we can from observation
-            print(f"[PLACE_DEBUG] (PyMunk check deferred - need env reference)")
+            # print(f"[PLACE_DEBUG] (PyMunk check deferred - need env reference)")
         except Exception as e:
-            print(f"[PLACE_DEBUG] Could not access PyMunk: {e}")
+            # print(f"[PLACE_DEBUG] Could not access PyMunk: {e}")
+            pass
 
         # Phase 0: Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         if abs(angle_error) > self.POSITION_TOL:
-            print(f"[PLACE_DEBUG] Phase 0: Aligning (angle_error={angle_error:.3f})")
+            # print(f"[PLACE_DEBUG] Phase 0: Aligning (angle_error={angle_error:.3f})")
             action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
             return action
 
@@ -911,27 +912,27 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         # Once we're at target x, we proceed to descend and don't return to safe height
         not_at_target_x = not np.isclose(p['robot_x'], target_x, atol=self.POSITION_TOL)
         at_safe_y = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
-        print(f"[PLACE_DEBUG] Phase 1 check: not_at_target_x={not_at_target_x}, at_safe_y={at_safe_y}")
+        # print(f"[PLACE_DEBUG] Phase 1 check: not_at_target_x={not_at_target_x}, at_safe_y={at_safe_y}")
         if not_at_target_x and not at_safe_y:
             dy = np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY)
-            print(f"[PLACE_DEBUG] Phase 1: Moving to safe height, dy={dy:.3f}")
+            # print(f"[PLACE_DEBUG] Phase 1: Moving to safe height, dy={dy:.3f}")
             action = np.array([0, dy, 0, 0, 0], dtype=np.float64)
             return action
 
         # Phase 2: To target x
         if not_at_target_x:
             dx = np.clip(target_x - p['robot_x'], -self.MAX_DX, self.MAX_DX)
-            print(f"[PLACE_DEBUG] Phase 2: Moving to target x, dx={dx:.3f}")
+            # print(f"[PLACE_DEBUG] Phase 2: Moving to target x, dx={dx:.3f}")
             action = np.array([dx, 0, 0, 0, 0], dtype=np.float64)
             return action
 
         # Phase 3: Descend (only if gripper is still holding the object)
         still_holding = p['target_block_held']
         at_target_y = np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL)
-        print(f"[PLACE_DEBUG] Phase 3 check: still_holding={still_holding}, at_target_y={at_target_y}")
+        # print(f"[PLACE_DEBUG] Phase 3 check: still_holding={still_holding}, at_target_y={at_target_y}")
         if still_holding and not at_target_y:
             dy = np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY)
-            print(f"[PLACE_DEBUG] Phase 3: Descending to place, dy={dy:.3f}")
+            # print(f"[PLACE_DEBUG] Phase 3: Descending to place, dy={dy:.3f}")
             action = np.array([0, dy, 0, 0, 0], dtype=np.float64)
             return action
 
@@ -939,22 +940,22 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         at_target_position = np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL)
         still_holding_at_target = at_target_position and p['target_block_held']
         gripper_open = p['finger_gap'] >= p['gripper_base_height'] * 0.95
-        print(f"[PLACE_DEBUG] Phase 4 check: at_target_position={at_target_position}, still_holding_at_target={still_holding_at_target}, gripper_open={gripper_open}")
+        # print(f"[PLACE_DEBUG] Phase 4 check: at_target_position={at_target_position}, still_holding_at_target={still_holding_at_target}, gripper_open={gripper_open}")
         if still_holding_at_target and not gripper_open:
-            print(f"[PLACE_DEBUG] Phase 4: Opening gripper")
+            # print(f"[PLACE_DEBUG] Phase 4: Opening gripper")
             action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
             return action
 
         # Phase 5: Lift (only after block has been released)
         block_released = not p['target_block_held']
-        print(f"[PLACE_DEBUG] Phase 5 check: block_released={block_released}, at_safe_y={at_safe_y}")
+        # print(f"[PLACE_DEBUG] Phase 5 check: block_released={block_released}, at_safe_y={at_safe_y}")
         if block_released and not at_safe_y:
             dy = np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY)
-            print(f"[PLACE_DEBUG] Phase 5: Lifting to safe height, dy={dy:.3f}")
+            # print(f"[PLACE_DEBUG] Phase 5: Lifting to safe height, dy={dy:.3f}")
             action = np.array([0, dy, 0, 0, 0], dtype=np.float64)
             return action
 
-        print(f"[PLACE_DEBUG] All phases complete - returning zeros")
+        # print(f"[PLACE_DEBUG] All phases complete - returning zeros")
         return np.zeros(5, dtype=np.float64)
 
 

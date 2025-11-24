@@ -193,37 +193,42 @@ def patch_prbench_environments() -> None:
                               abs(after_pos[2] - before_pos[2]) > 0.001)
 
                 if action_magnitude > 0.001 and not pos_changed:
-                    print(f"\n[STEP_DEBUG] ⚠️  ACTION NOT APPLIED!")
-                    print(f"[STEP_DEBUG] Action: dx={dx:.4f}, dy={dy:.4f}, dtheta={dtheta:.4f}, darm={darm:.4f}, dgripper={dgripper:.4f}")
-                    print(f"[STEP_DEBUG] Robot pose: {before_pos} → {after_pos} (NO CHANGE)")
-                    print(f"[STEP_DEBUG] Robot vel: {before_vel} → {after_vel}")
+                    # print(f"\n[STEP_DEBUG] ⚠️  ACTION NOT APPLIED!")
+                    # print(f"[STEP_DEBUG] Action: dx={dx:.4f}, dy={dy:.4f}, dtheta={dtheta:.4f}, darm={darm:.4f}, dgripper={dgripper:.4f}")
+                    # print(f"[STEP_DEBUG] Robot pose: {before_pos} → {after_pos} (NO CHANGE)")
+                    # print(f"[STEP_DEBUG] Robot vel: {before_vel} → {after_vel}")
                     if robot_body:
-                        print(f"[STEP_DEBUG] PyMunk body BEFORE: type={before_body_type}, pos={before_body_pos}, vel={before_body_vel}, mass={before_body_mass}, in_space={body_in_space}")
+                        # print(f"[STEP_DEBUG] PyMunk body BEFORE: type={before_body_type}, pos={before_body_pos}, vel={before_body_vel}, mass={before_body_mass}, in_space={body_in_space}")
+                        pass
                     if robot_body_after:
-                        print(f"[STEP_DEBUG] PyMunk body AFTER: type={robot_body_after.body_type}, pos=({robot_body_after.position.x:.4f}, {robot_body_after.position.y:.4f}), vel=({robot_body_after.velocity.x:.4f}, {robot_body_after.velocity.y:.4f}), mass={robot_body_after.mass}")
-                        print(f"[STEP_DEBUG] PyMunk body in space: {robot_body_after in self.pymunk_space.bodies}")
+                        # print(f"[STEP_DEBUG] PyMunk body AFTER: type={robot_body_after.body_type}, pos=({robot_body_after.position.x:.4f}, {robot_body_after.position.y:.4f}), vel=({robot_body_after.velocity.x:.4f}, {robot_body_after.velocity.y:.4f}), mass={robot_body_after.mass}")
+                        # print(f"[STEP_DEBUG] PyMunk body in space: {robot_body_after in self.pymunk_space.bodies}")
                         # Check for constraints
                         constraints = [c for c in self.pymunk_space.constraints if robot_body_after in (c.a, c.b)]
-                        print(f"[STEP_DEBUG] Constraints on robot body: {len(constraints)}")
+                        # print(f"[STEP_DEBUG] Constraints on robot body: {len(constraints)}")
                         for i, c in enumerate(constraints[:3]):  # Show first 3
-                            print(f"[STEP_DEBUG]   Constraint {i}: {type(c).__name__}")
+                            # print(f"[STEP_DEBUG]   Constraint {i}: {type(c).__name__}")
+                            pass
                     else:
-                        print(f"[STEP_DEBUG] PyMunk body AFTER: NOT FOUND")
+                        # print(f"[STEP_DEBUG] PyMunk body AFTER: NOT FOUND")
+                        pass
 
                     # Check held objects
                     if hasattr(self.robot, 'held_objects'):
-                        print(f"[STEP_DEBUG] Held objects: {len(self.robot.held_objects)}")
+                        # print(f"[STEP_DEBUG] Held objects: {len(self.robot.held_objects)}")
                         for i, held_item in enumerate(self.robot.held_objects):
                             if isinstance(held_item, tuple) and len(held_item) >= 1:
                                 obj = held_item[0]
-                                print(f"[STEP_DEBUG]   Held obj {i}: {type(obj).__name__}, body_type={getattr(obj, 'body_type', 'N/A')}")
+                                # print(f"[STEP_DEBUG]   Held obj {i}: {type(obj).__name__}, body_type={getattr(obj, 'body_type', 'N/A')}")
+                                pass
                             else:
-                                print(f"[STEP_DEBUG]   Held obj {i}: {type(held_item).__name__}")
+                                # print(f"[STEP_DEBUG]   Held obj {i}: {type(held_item).__name__}")
+                                pass
 
             return result
 
         ObjectCentricDynamic2DRobotEnv.step = debug_step
-        print("[PRBENCH_PATCH] Added debug wrapper to step()")
+        # print("[PRBENCH_PATCH] Added debug wrapper to step()")
 
         # Add clone() method to handle deepcopy issue with object identity in cache
         def clone_env(self):
@@ -379,17 +384,18 @@ def patch_prbench_environments() -> None:
                     robot_objs = [obj for obj in state if obj.name == 'robot']
                     if robot_objs:
                         robot_obj_input = robot_objs[0]
-                        print(f"\n[PHYSICS_STATE] ===== BEFORE reset_from_state =====")
-                        print(f"[PHYSICS_STATE] Input state robot: x={state.get(robot_obj_input, 'x'):.4f}, y={state.get(robot_obj_input, 'y'):.4f}, theta={state.get(robot_obj_input, 'theta'):.4f}")
+                        # print(f"\n[PHYSICS_STATE] ===== BEFORE reset_from_state =====")
+                        # print(f"[PHYSICS_STATE] Input state robot: x={state.get(robot_obj_input, 'x'):.4f}, y={state.get(robot_obj_input, 'y'):.4f}, theta={state.get(robot_obj_input, 'theta'):.4f}")
 
                         # Capture physics state BEFORE reset
                         if hasattr(self, '_state_obj_to_pymunk_body') and self._state_obj_to_pymunk_body:
                             robot_cache_objs = [obj for obj in self._state_obj_to_pymunk_body.keys() if obj.name == 'robot']
                             if robot_cache_objs:
                                 robot_body = self._state_obj_to_pymunk_body[robot_cache_objs[0]]
-                                print(f"[PHYSICS_STATE] BEFORE PyMunk robot body: pos=({robot_body.position.x:.4f}, {robot_body.position.y:.4f}), angle={robot_body.angle:.4f}")
-                                print(f"[PHYSICS_STATE] BEFORE PyMunk robot velocity: ({robot_body.velocity.x:.4f}, {robot_body.velocity.y:.4f}), angular_vel={robot_body.angular_velocity:.4f}")
-                                print(f"[PHYSICS_STATE] BEFORE PyMunk robot body_type: {robot_body.body_type}")
+                                # print(f"[PHYSICS_STATE] BEFORE PyMunk robot body: pos=({robot_body.position.x:.4f}, {robot_body.position.y:.4f}), angle={robot_body.angle:.4f}")
+                                # print(f"[PHYSICS_STATE] BEFORE PyMunk robot velocity: ({robot_body.velocity.x:.4f}, {robot_body.velocity.y:.4f}), angular_vel={robot_body.angular_velocity:.4f}")
+                                # print(f"[PHYSICS_STATE] BEFORE PyMunk robot body_type: {robot_body.body_type}")
+                                pass
 
                     result = self.reset(seed=seed, options={"init_state": state})
 
@@ -397,26 +403,27 @@ def patch_prbench_environments() -> None:
                     robot_obs_objs = [obj for obj in obs_state if obj.name == 'robot']
                     if robot_obs_objs:
                         robot_obj_output = robot_obs_objs[0]
-                        print(f"\n[PHYSICS_STATE] ===== AFTER reset_from_state =====")
-                        print(f"[PHYSICS_STATE] Output obs robot: x={obs_state.get(robot_obj_output, 'x'):.4f}, y={obs_state.get(robot_obj_output, 'y'):.4f}, theta={obs_state.get(robot_obj_output, 'theta'):.4f}")
+                        # print(f"\n[PHYSICS_STATE] ===== AFTER reset_from_state =====")
+                        # print(f"[PHYSICS_STATE] Output obs robot: x={obs_state.get(robot_obj_output, 'x'):.4f}, y={obs_state.get(robot_obj_output, 'y'):.4f}, theta={obs_state.get(robot_obj_output, 'theta'):.4f}")
 
                         # Capture physics state AFTER reset
                         if hasattr(self, '_state_obj_to_pymunk_body') and self._state_obj_to_pymunk_body:
                             robot_cache_objs = [obj for obj in self._state_obj_to_pymunk_body.keys() if obj.name == 'robot']
                             if robot_cache_objs:
                                 robot_body = self._state_obj_to_pymunk_body[robot_cache_objs[0]]
-                                print(f"[PHYSICS_STATE] AFTER PyMunk robot body: pos=({robot_body.position.x:.4f}, {robot_body.position.y:.4f}), angle={robot_body.angle:.4f}")
-                                print(f"[PHYSICS_STATE] AFTER PyMunk robot velocity: ({robot_body.velocity.x:.4f}, {robot_body.velocity.y:.4f}), angular_vel={robot_body.angular_velocity:.4f}")
-                                print(f"[PHYSICS_STATE] AFTER PyMunk robot body_type: {robot_body.body_type}")
+                                # print(f"[PHYSICS_STATE] AFTER PyMunk robot body: pos=({robot_body.position.x:.4f}, {robot_body.position.y:.4f}), angle={robot_body.angle:.4f}")
+                                # print(f"[PHYSICS_STATE] AFTER PyMunk robot velocity: ({robot_body.velocity.x:.4f}, {robot_body.velocity.y:.4f}), angular_vel={robot_body.angular_velocity:.4f}")
+                                # print(f"[PHYSICS_STATE] AFTER PyMunk robot body_type: {robot_body.body_type}")
 
                                 # Check for discrepancies
                                 pos_diff_x = abs(robot_body.position.x - obs_state.get(robot_obj_output, 'x'))
                                 pos_diff_y = abs(robot_body.position.y - obs_state.get(robot_obj_output, 'y'))
                                 angle_diff = abs(robot_body.angle - obs_state.get(robot_obj_output, 'theta'))
                                 if pos_diff_x > 0.001 or pos_diff_y > 0.001 or angle_diff > 0.001:
-                                    print(f"[PHYSICS_STATE] ⚠️  MISMATCH: PyMunk body != ObjectCentricState!")
-                                    print(f"[PHYSICS_STATE]   Position diff: ({pos_diff_x:.6f}, {pos_diff_y:.6f}), angle diff: {angle_diff:.6f}")
-                        print(f"[PHYSICS_STATE] =====================================\n")
+                                    # print(f"[PHYSICS_STATE] ⚠️  MISMATCH: PyMunk body != ObjectCentricState!")
+                                    # print(f"[PHYSICS_STATE]   Position diff: ({pos_diff_x:.6f}, {pos_diff_y:.6f}), angle diff: {angle_diff:.6f}")
+                                    pass
+                        # print(f"[PHYSICS_STATE] =====================================\n")
 
                     return result
 
