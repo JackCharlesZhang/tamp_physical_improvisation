@@ -1,5 +1,6 @@
 """Monkey-patch prbench to add debug logging without modifying their code."""
 
+import types
 import pymunk
 from pymunk.vec2d import Vec2d
 from typing import TYPE_CHECKING
@@ -97,7 +98,8 @@ def add_bounds_checking_to_env(env, world_bounds: tuple[float, float, float, flo
 
         return result
 
-    target_env.step = patched_step
+    # Bind the patched function as a method to the instance
+    target_env.step = types.MethodType(patched_step, target_env)
 
 
 def add_held_state_logging_to_env(env) -> None:
@@ -151,7 +153,8 @@ def add_held_state_logging_to_env(env) -> None:
         # Call original with self explicitly to use the correct instance
         original_add_state(self, state)
 
-    target_env._add_state_to_space = patched_add_state
+    # Bind the patched function as a method to the instance
+    target_env._add_state_to_space = types.MethodType(patched_add_state, target_env)
 
 
 def patch_prbench_for_debugging(env, world_bounds: tuple[float, float, float, float]) -> None:
