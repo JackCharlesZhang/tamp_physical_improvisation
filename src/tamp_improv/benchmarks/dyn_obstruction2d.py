@@ -987,6 +987,33 @@ class PushSkill(BaseDynObstruction2DSkill):
         return np.zeros(5, dtype=np.float64)
 
 
+class DynObstruction2DEnvWithReset(DynObstruction2DEnv):
+    """Wrapper that adds proper reset_from_state."""
+
+    def reset_from_state(
+        self, state: NDArray[np.float32], *, seed: int | None = None
+    ) -> tuple[NDArray[np.float32], dict]:
+        """Reset by directly setting PyMunk body states."""
+        from relational_structs.spaces import ObjectCentricBoxSpace
+
+        if not isinstance(self.observation_space, ObjectCentricBoxSpace):
+            raise TypeError("Expected ObjectCentricBoxSpace")
+
+        obj_state = self.observation_space.devectorize(state)
+        base_env = self._object_centric_env
+
+        for obj in obj_state:
+            if obj in base_env._state_obj_to_pymunk_body:
+                body = base_env._state_obj_to_pymunk_body[obj]
+                body.position = (obj_state.get(obj, 'x'), obj_state.get(obj, 'y'))
+                body.angle = obj_state.get(obj, 'theta')
+                body.velocity = (0, 0)
+                body.angular_velocity = 0
+
+        base_env._current_state = obj_state
+        return self.observation_space.vectorize(base_env._get_obs()), {}
+
+
 class BaseDynObstruction2DTAMPSystem(
     BaseTAMPSystem[NDArray[np.float32], NDArray[np.float32]]
 ):
@@ -1012,7 +1039,7 @@ class BaseDynObstruction2DTAMPSystem(
         NOTE: Requires prbench to be installed.
         Install with: pip install -e 'path/to/prbench[dynamic2d]'
         """
-        env = DynObstruction2DEnv(
+        env = DynObstruction2DEnvWithReset(
             num_obstructions=self._num_obstructions, render_mode=self._render_mode
         )
 
