@@ -76,12 +76,16 @@ def patch_prbench_environments() -> None:
         def debug_reset(self, *, seed=None, options=None):
             import traceback
             print(f"\n[DEBUG] ===== reset() called =====")
+            print(f"[DEBUG] self (environment) ID in reset: {id(self)}")
+            print(f"[DEBUG] Cache dict ID before reset: {id(self._state_obj_to_pymunk_body) if hasattr(self, '_state_obj_to_pymunk_body') else 'No cache'}")
             print(f"[DEBUG] Traceback:")
             for line in traceback.format_stack()[:-1]:
                 print(line.strip())
             print(f"[DEBUG] options: {options}")
             print(f"[DEBUG] Cache before reset: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()] if hasattr(self, '_state_obj_to_pymunk_body') and self._state_obj_to_pymunk_body else 'Empty or uninitialized'}")
             result = original_reset(self, seed=seed, options=options)
+            print(f"[DEBUG] self (environment) ID after reset: {id(self)}")
+            print(f"[DEBUG] Cache dict ID after reset: {id(self._state_obj_to_pymunk_body)}")
             print(f"[DEBUG] Cache after reset: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()]}")
             print(f"[DEBUG] ===== reset() finished =====\n")
             return result
