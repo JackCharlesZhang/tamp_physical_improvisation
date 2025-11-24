@@ -824,12 +824,6 @@ class PlaceSkill(BaseDynObstruction2DSkill):
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
         p = self._parse_obs(obs)
-        print("IN PLACE")
-
-        # print(f"\n[Place] ENTRY: robot_x={p['robot_x']:.3f}, robot_y={p['robot_y']:.3f}, robot_theta={p['robot_theta']:.3f}")
-
-        # Calculate placement height: use EXACT same surface parameters as PlaceOnTarget
-        # since we're placing on the same table surface, just at garbage location
         placement_y = self._calculate_placement_height(
             surface_y=p['surface_y'],
             surface_height=p['surface_height'],
@@ -837,35 +831,22 @@ class PlaceSkill(BaseDynObstruction2DSkill):
             arm_length_max=p['arm_length_max']
         )
 
-        # Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         if abs(angle_error) > self.POSITION_TOL:
-            # print(f"[Place] Phase 0: Aligning (angle_error={angle_error:.3f})")
             return np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
-        # To safe height (only if we haven't reached garbage x yet)
         not_at_garbage_x = not np.isclose(p['robot_x'], self.GARBAGE_X, atol=self.POSITION_TOL)
         if not_at_garbage_x and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            # print(f"[Place] Phase 1: To safe height (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-        # To garbage x
         if not_at_garbage_x:
-            # print(f"[Place] Phase 2: To garbage x (robot_x={p['robot_x']:.3f}, GARBAGE_X={self.GARBAGE_X:.3f})")
             return np.array([np.clip(self.GARBAGE_X - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
-        # Phase 3: Descend to calculated placement height (only if still holding the block)
         still_holding = p['target_block_held']
         if still_holding and not np.isclose(p['robot_y'], placement_y, atol=self.POSITION_TOL):
-            # print(f"[Place] Phase 3: Descending (robot_y={p['robot_y']:.3f}, placement_y={placement_y:.3f})")
             return np.array([0, np.clip(placement_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-        # Phase 4: Open gripper (use same logic as PlaceOnTarget)
         if p['finger_gap'] < p['gripper_base_height'] * 0.95:
-            # print(f"[Place] Phase 4: Opening gripper (finger_gap={p['finger_gap']:.3f}, target={p['gripper_base_height']:.3f})")
             return np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
-        # Phase 5: Lift (only after block has been released)
         block_released = not p['target_block_held']
         if block_released and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            # print(f"[Place] Phase 5: Lifting (robot_y={p['robot_y']:.3f}, SAFE_Y={self.SAFE_Y:.3f})")
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
-        # print(f"[Place] DONE")
         return np.zeros(5, dtype=np.float64)
 
 
@@ -874,6 +855,10 @@ class PlaceFirstSkill(PlaceSkill):
 
     def _get_operator_name(self) -> str:
         return "PlaceFirst"
+    
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        print("IN PLACE FIRST")
+        return super()._get_action_given_objects(objects, obs)
 
 
 class PlaceLastSkill(PlaceSkill):
@@ -881,6 +866,10 @@ class PlaceLastSkill(PlaceSkill):
 
     def _get_operator_name(self) -> str:
         return "PlaceLast"
+    
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        print("IN PLACE LAST")
+        return super()._get_action_given_objects(objects, obs)
 
 
 class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
@@ -1168,7 +1157,7 @@ class BaseDynObstruction2DTAMPSystem(
 
         place_first_operator = LiftedOperator(
             "PlaceFirst",
-            [robot, obstruction, surface],  # Place first obstruction (2→1 transition)
+            [robot, obstruction, surface], 
             preconditions={
                 predicates["Holding"]([robot, obstruction]),
                 predicates["OneObstructionBlocking"]([surface]),
