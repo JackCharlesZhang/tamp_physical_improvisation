@@ -144,6 +144,10 @@ def patch_prbench_environments() -> None:
                 # This is a wrapper (ConstantObjectPRBenchEnv)
                 inner_cloned = cloned._object_centric_env
                 print(f"[DEBUG] Cloned wrapper, clearing inner env caches")
+                print(f"[DEBUG] Original inner env ID: {id(self._object_centric_env)}")
+                print(f"[DEBUG] Cloned inner env ID: {id(inner_cloned)}")
+                print(f"[DEBUG] Are they the same? {self._object_centric_env is inner_cloned}")
+
                 if hasattr(inner_cloned, '_state_obj_to_pymunk_body'):
                     print(f"[DEBUG] Clearing inner _state_obj_to_pymunk_body (had {len(inner_cloned._state_obj_to_pymunk_body)} entries)")
                     inner_cloned._state_obj_to_pymunk_body = {}
