@@ -92,6 +92,7 @@ def main(cfg: DictConfig) -> float:
         num_rollouts_per_node=cfg.num_rollouts_per_node,
         max_steps_per_rollout=cfg.max_steps_per_rollout,
         shortcut_success_threshold=cfg.shortcut_success_threshold,
+        max_skill_steps=cfg.max_skill_steps,
     )
 
     print("\n" + "=" * 80)

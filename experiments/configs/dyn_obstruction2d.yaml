@@ -6,6 +6,7 @@ action_scale: 1.0
 seed: 42
 num_episodes: 5
 max_steps: 200
+max_skill_steps: 500
 max_training_steps_per_shortcut: 50
 collect_episodes: 5
 episodes_per_scenario: 200

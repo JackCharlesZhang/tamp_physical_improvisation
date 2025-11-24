@@ -322,6 +322,7 @@ def train_and_evaluate(
     max_steps_per_rollout: int = 50,
     shortcut_success_threshold: int = 1,
     enable_generalization: bool = False,
+    max_skill_steps: int = 150,
 ) -> Metrics:
     """Train and evaluate a policy on a system."""
     seed = config.seed
@@ -337,6 +338,7 @@ def train_and_evaluate(
         system,
         policy,
         seed=config.seed,
+        max_skill_steps=max_skill_steps,
     )
 
     if "_Loaded" not in policy_name:
@@ -442,6 +444,7 @@ def train_and_evaluate_goal_conditioned(
     num_rollouts_per_node: int = 50,
     max_steps_per_rollout: int = 50,
     shortcut_success_threshold: int = 1,
+    max_skill_steps: int = 150,
 ) -> Metrics:
     """Train and evaluate a goal-conditioned policy for shortcut learning."""
     seed = config.seed
@@ -455,6 +458,7 @@ def train_and_evaluate_goal_conditioned(
         system,
         policy,
         seed=config.seed,
+        max_skill_steps=max_skill_steps,
     )
 
     train_data = collect_goal_conditioned_training_data(
