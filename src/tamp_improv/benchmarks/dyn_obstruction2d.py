@@ -168,6 +168,8 @@ class DynObstruction2DPredicates:
             self.blocking,
             self.holding,
             self.gripper_empty,
+            self.one_obstruction_blocking,
+            self.two_obstructions_blocking,
         }
 
 
