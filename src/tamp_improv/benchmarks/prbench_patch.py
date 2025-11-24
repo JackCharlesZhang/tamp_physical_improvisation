@@ -284,39 +284,48 @@ def patch_prbench_environments() -> None:
                         f"but got {type(state)}. The unwrapping logic went too deep."
                     )
                 else:
-                    print(f"\n[PHYSICS_STATE] ===== BEFORE reset_from_state =====")
-                    print(f"[PHYSICS_STATE] Input state robot: x={state.get('robot', 'x'):.4f}, y={state.get('robot', 'y'):.4f}, theta={state.get('robot', 'theta'):.4f}")
+                    # Find robot object in input state
+                    robot_objs = [obj for obj in state if obj.name == 'robot']
+                    if robot_objs:
+                        robot_obj_input = robot_objs[0]
+                        print(f"\n[PHYSICS_STATE] ===== BEFORE reset_from_state =====")
+                        print(f"[PHYSICS_STATE] Input state robot: x={state.get(robot_obj_input, 'x'):.4f}, y={state.get(robot_obj_input, 'y'):.4f}, theta={state.get(robot_obj_input, 'theta'):.4f}")
 
-                    # Capture physics state BEFORE reset
-                    if hasattr(self, '_state_obj_to_pymunk_body') and 'robot' in [obj.name for obj in self._state_obj_to_pymunk_body.keys()]:
-                        robot_obj = next(obj for obj in self._state_obj_to_pymunk_body.keys() if obj.name == 'robot')
-                        robot_body = self._state_obj_to_pymunk_body[robot_obj]
-                        print(f"[PHYSICS_STATE] BEFORE PyMunk robot body: pos=({robot_body.position.x:.4f}, {robot_body.position.y:.4f}), angle={robot_body.angle:.4f}")
-                        print(f"[PHYSICS_STATE] BEFORE PyMunk robot velocity: ({robot_body.velocity.x:.4f}, {robot_body.velocity.y:.4f}), angular_vel={robot_body.angular_velocity:.4f}")
-                        print(f"[PHYSICS_STATE] BEFORE PyMunk robot body_type: {robot_body.body_type}")
+                        # Capture physics state BEFORE reset
+                        if hasattr(self, '_state_obj_to_pymunk_body') and self._state_obj_to_pymunk_body:
+                            robot_cache_objs = [obj for obj in self._state_obj_to_pymunk_body.keys() if obj.name == 'robot']
+                            if robot_cache_objs:
+                                robot_body = self._state_obj_to_pymunk_body[robot_cache_objs[0]]
+                                print(f"[PHYSICS_STATE] BEFORE PyMunk robot body: pos=({robot_body.position.x:.4f}, {robot_body.position.y:.4f}), angle={robot_body.angle:.4f}")
+                                print(f"[PHYSICS_STATE] BEFORE PyMunk robot velocity: ({robot_body.velocity.x:.4f}, {robot_body.velocity.y:.4f}), angular_vel={robot_body.angular_velocity:.4f}")
+                                print(f"[PHYSICS_STATE] BEFORE PyMunk robot body_type: {robot_body.body_type}")
 
                     result = self.reset(seed=seed, options={"init_state": state})
 
-                    print(f"\n[PHYSICS_STATE] ===== AFTER reset_from_state =====")
                     obs_state = result[0]
-                    print(f"[PHYSICS_STATE] Output obs robot: x={obs_state.get('robot', 'x'):.4f}, y={obs_state.get('robot', 'y'):.4f}, theta={obs_state.get('robot', 'theta'):.4f}")
+                    robot_obs_objs = [obj for obj in obs_state if obj.name == 'robot']
+                    if robot_obs_objs:
+                        robot_obj_output = robot_obs_objs[0]
+                        print(f"\n[PHYSICS_STATE] ===== AFTER reset_from_state =====")
+                        print(f"[PHYSICS_STATE] Output obs robot: x={obs_state.get(robot_obj_output, 'x'):.4f}, y={obs_state.get(robot_obj_output, 'y'):.4f}, theta={obs_state.get(robot_obj_output, 'theta'):.4f}")
 
-                    # Capture physics state AFTER reset
-                    if hasattr(self, '_state_obj_to_pymunk_body') and 'robot' in [obj.name for obj in self._state_obj_to_pymunk_body.keys()]:
-                        robot_obj = next(obj for obj in self._state_obj_to_pymunk_body.keys() if obj.name == 'robot')
-                        robot_body = self._state_obj_to_pymunk_body[robot_obj]
-                        print(f"[PHYSICS_STATE] AFTER PyMunk robot body: pos=({robot_body.position.x:.4f}, {robot_body.position.y:.4f}), angle={robot_body.angle:.4f}")
-                        print(f"[PHYSICS_STATE] AFTER PyMunk robot velocity: ({robot_body.velocity.x:.4f}, {robot_body.velocity.y:.4f}), angular_vel={robot_body.angular_velocity:.4f}")
-                        print(f"[PHYSICS_STATE] AFTER PyMunk robot body_type: {robot_body.body_type}")
+                        # Capture physics state AFTER reset
+                        if hasattr(self, '_state_obj_to_pymunk_body') and self._state_obj_to_pymunk_body:
+                            robot_cache_objs = [obj for obj in self._state_obj_to_pymunk_body.keys() if obj.name == 'robot']
+                            if robot_cache_objs:
+                                robot_body = self._state_obj_to_pymunk_body[robot_cache_objs[0]]
+                                print(f"[PHYSICS_STATE] AFTER PyMunk robot body: pos=({robot_body.position.x:.4f}, {robot_body.position.y:.4f}), angle={robot_body.angle:.4f}")
+                                print(f"[PHYSICS_STATE] AFTER PyMunk robot velocity: ({robot_body.velocity.x:.4f}, {robot_body.velocity.y:.4f}), angular_vel={robot_body.angular_velocity:.4f}")
+                                print(f"[PHYSICS_STATE] AFTER PyMunk robot body_type: {robot_body.body_type}")
 
-                        # Check for discrepancies
-                        pos_diff_x = abs(robot_body.position.x - obs_state.get('robot', 'x'))
-                        pos_diff_y = abs(robot_body.position.y - obs_state.get('robot', 'y'))
-                        angle_diff = abs(robot_body.angle - obs_state.get('robot', 'theta'))
-                        if pos_diff_x > 0.001 or pos_diff_y > 0.001 or angle_diff > 0.001:
-                            print(f"[PHYSICS_STATE] ⚠️  MISMATCH: PyMunk body != ObjectCentricState!")
-                            print(f"[PHYSICS_STATE]   Position diff: ({pos_diff_x:.6f}, {pos_diff_y:.6f}), angle diff: {angle_diff:.6f}")
-                    print(f"[PHYSICS_STATE] =====================================\n")
+                                # Check for discrepancies
+                                pos_diff_x = abs(robot_body.position.x - obs_state.get(robot_obj_output, 'x'))
+                                pos_diff_y = abs(robot_body.position.y - obs_state.get(robot_obj_output, 'y'))
+                                angle_diff = abs(robot_body.angle - obs_state.get(robot_obj_output, 'theta'))
+                                if pos_diff_x > 0.001 or pos_diff_y > 0.001 or angle_diff > 0.001:
+                                    print(f"[PHYSICS_STATE] ⚠️  MISMATCH: PyMunk body != ObjectCentricState!")
+                                    print(f"[PHYSICS_STATE]   Position diff: ({pos_diff_x:.6f}, {pos_diff_y:.6f}), angle diff: {angle_diff:.6f}")
+                        print(f"[PHYSICS_STATE] =====================================\n")
 
                     return result
 
