@@ -138,6 +138,10 @@ def patch_prbench_environments() -> None:
 
             cloned = copy.deepcopy(self)
 
+            # BUG FIX: After deepcopy, the cloned wrapper's _object_centric_env might still
+            # point to the original environment due to some reference issue in deepcopy.
+            # We need to find the actual cloned inner environment and fix the reference.
+
             # Clear the pymunk cache in the cloned environment
             # Need to handle both the wrapper case (ConstantObjectPRBenchEnv) and direct env case
             if hasattr(cloned, '_object_centric_env'):
@@ -147,6 +151,16 @@ def patch_prbench_environments() -> None:
                 print(f"[DEBUG] Original inner env ID: {id(self._object_centric_env)}")
                 print(f"[DEBUG] Cloned inner env ID: {id(inner_cloned)}")
                 print(f"[DEBUG] Are they the same? {self._object_centric_env is inner_cloned}")
+
+                # CRITICAL FIX: If deepcopy failed to copy _object_centric_env properly,
+                # we need to find the actual cloned environment in the memo dict or
+                # do a manual copy
+                if self._object_centric_env is inner_cloned:
+                    print("[DEBUG] WARNING: Deepcopy failed to clone _object_centric_env!")
+                    print("[DEBUG] Manually deep copying the inner environment...")
+                    cloned._object_centric_env = copy.deepcopy(self._object_centric_env)
+                    inner_cloned = cloned._object_centric_env
+                    print(f"[DEBUG] New cloned inner env ID: {id(inner_cloned)}")
 
                 if hasattr(inner_cloned, '_state_obj_to_pymunk_body'):
                     print(f"[DEBUG] Clearing inner _state_obj_to_pymunk_body (had {len(inner_cloned._state_obj_to_pymunk_body)} entries)")
@@ -188,6 +202,9 @@ def patch_prbench_environments() -> None:
                     Tuple of (observation, info)
                 """
                 # Debug: check what kind of state we're getting
+                print(f"[DEBUG] ConstantObjectPRBenchEnv.reset_from_state called")
+                print(f"[DEBUG] self (wrapper) ID: {id(self)}")
+                print(f"[DEBUG] self._object_centric_env ID: {id(self._object_centric_env)}")
                 if isinstance(state, np.ndarray):
                     print(f"[DEBUG] reset_from_state: got numpy array of shape {state.shape}")
                     print(f"[DEBUG] _constant_objects: {[obj.name for obj in self._constant_objects]}")
@@ -231,6 +248,8 @@ def patch_prbench_environments() -> None:
                     )
                 else:
                     print(f"[DEBUG] ObjectCentric reset_from_state: got state with objects: {[obj.name for obj in state]}")
+                    print(f"[DEBUG] self (wrapper) ID: {id(self)}")
+                    print(f"[DEBUG] self._object_centric_env ID: {id(self._object_centric_env)}")
                     print(f"[DEBUG] _initial_constant_state has: {[obj.name for obj in self._initial_constant_state] if self._initial_constant_state else 'None'}")
                     print(f"[DEBUG] _state_obj_to_pymunk_body has: {list(self._state_obj_to_pymunk_body.keys()) if hasattr(self, '_state_obj_to_pymunk_body') else 'No cache yet'}")
 
