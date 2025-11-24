@@ -1002,6 +1002,14 @@ class DynObstruction2DEnvWithReset(DynObstruction2DEnv):
         obj_state = self.observation_space.devectorize(state)
         base_env = self._object_centric_env
 
+        # Update _current_state first
+        base_env._current_state = obj_state
+
+        # Clear and rebuild physics space with new state
+        base_env._setup_physics_space()
+        base_env._add_state_to_space(base_env.full_state)
+
+        # Now directly update body positions/velocities to match exactly
         for obj in obj_state:
             if obj in base_env._state_obj_to_pymunk_body:
                 body = base_env._state_obj_to_pymunk_body[obj]
@@ -1010,7 +1018,6 @@ class DynObstruction2DEnvWithReset(DynObstruction2DEnv):
                 body.velocity = (0, 0)
                 body.angular_velocity = 0
 
-        base_env._current_state = obj_state
         return self.observation_space.vectorize(base_env._get_obs()), {}
 
 
