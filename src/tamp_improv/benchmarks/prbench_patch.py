@@ -27,8 +27,21 @@ def patch_prbench_environments() -> None:
             print(f"[DEBUG] _add_state_to_space called with objects: {[obj.name for obj in state]}")
             print(f"[DEBUG] _current_state has: {[obj.name for obj in self._current_state] if self._current_state else 'None'}")
             print(f"[DEBUG] _initial_constant_state has: {[obj.name for obj in self._initial_constant_state] if self._initial_constant_state else 'None'}")
+
+            # Check object IDs before adding
+            if self._current_state:
+                obstruction_objs = [obj for obj in self._current_state if obj.name == 'obstruction0']
+                if obstruction_objs:
+                    print(f"[DEBUG] obstruction0 object ID in _current_state: {id(obstruction_objs[0])}")
+
             result = original_add_state(self, state)  # Need to pass self explicitly
+
             print(f"[DEBUG] After _add_state_to_space, cache has: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()]}")
+            # Check if obstruction0 is in cache with its ID
+            cache_obstruction = [obj for obj in self._state_obj_to_pymunk_body.keys() if obj.name == 'obstruction0']
+            if cache_obstruction:
+                print(f"[DEBUG] obstruction0 object ID in cache: {id(cache_obstruction[0])}")
+
             return result
 
         ObjectCentricDynObstruction2DEnv._add_state_to_space = debug_add_state_to_space
