@@ -103,6 +103,39 @@ def patch_prbench_environments() -> None:
         ObjectCentricDynamic2DRobotEnv._get_obs = debug_get_obs
         print("[PRBENCH_PATCH] Added debug wrapper to _get_obs")
 
+        # Add clone() method to handle deepcopy issue with object identity in cache
+        def clone_env(self):
+            """Clone environment, properly handling the pymunk body cache.
+
+            The issue: deepcopy creates new object instances for _current_state but
+            the _state_obj_to_pymunk_body cache still has old object instances as keys.
+            Since the cache uses object identity (id(obj)), lookups fail after deepcopy.
+
+            Solution: Clear the cache after deepcopy. It will be rebuilt on next reset.
+            """
+            import copy
+            print("[DEBUG] clone() called - performing deepcopy")
+            print(f"[DEBUG] Cache before deepcopy: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()] if hasattr(self, '_state_obj_to_pymunk_body') and self._state_obj_to_pymunk_body else 'Empty'}")
+
+            cloned = copy.deepcopy(self)
+
+            # Clear the pymunk cache in the cloned environment
+            # It will be rebuilt when reset_from_state is called
+            if hasattr(cloned, '_state_obj_to_pymunk_body'):
+                print(f"[DEBUG] Clearing cache in cloned env (had {len(cloned._state_obj_to_pymunk_body)} entries)")
+                cloned._state_obj_to_pymunk_body = {}
+            if hasattr(cloned, '_static_object_body_cache'):
+                print(f"[DEBUG] Clearing static cache in cloned env")
+                cloned._static_object_body_cache = {}
+
+            print("[DEBUG] clone() complete - caches cleared in clone")
+            return cloned
+
+        # Add to both ConstantObjectPRBenchEnv and ObjectCentricDynamic2DRobotEnv
+        ConstantObjectPRBenchEnv.clone = clone_env
+        ObjectCentricDynamic2DRobotEnv.clone = clone_env
+        print("[PRBENCH_PATCH] Added clone() method to handle deepcopy cache issue")
+
         # Patch ConstantObjectPRBenchEnv
         if not hasattr(ConstantObjectPRBenchEnv, "reset_from_state"):
 
