@@ -857,11 +857,21 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         """Create a separate environment instance for planning simulations."""
         current_env = self.system.env
         valid_base_env = False
-        while hasattr(current_env, "env"):
-            if hasattr(current_env, "reset_from_state"):
-                valid_base_env = True
+
+        # Unwrap all the way to the deepest level (prefer object-centric envs)
+        while True:
+            # Try common wrapper attributes in order of preference
+            unwrapped = False
+            for attr_name in ["env", "_env", "_object_centric_env"]:
+                if hasattr(current_env, attr_name):
+                    current_env = getattr(current_env, attr_name)
+                    unwrapped = True
+                    break
+
+            if not unwrapped:
+                # No more wrappers to unwrap
                 break
-            current_env = current_env.env
+
         if hasattr(current_env, "reset_from_state"):
             valid_base_env = True
         if not valid_base_env:
