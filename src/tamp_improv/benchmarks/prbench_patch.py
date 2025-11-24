@@ -67,6 +67,42 @@ def patch_prbench_environments() -> None:
         ObjectCentricDynObstruction2DEnv._read_state_from_space = debug_read_state_from_space
         print("[PRBENCH_PATCH] Added debug wrapper to _read_state_from_space")
 
+        # Patch reset to debug when cache is cleared
+        original_reset = ObjectCentricDynamic2DRobotEnv.reset
+
+        def debug_reset(self, *, seed=None, options=None):
+            import traceback
+            print(f"\n[DEBUG] ===== reset() called =====")
+            print(f"[DEBUG] Traceback:")
+            for line in traceback.format_stack()[:-1]:
+                print(line.strip())
+            print(f"[DEBUG] options: {options}")
+            print(f"[DEBUG] Cache before reset: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()] if hasattr(self, '_state_obj_to_pymunk_body') and self._state_obj_to_pymunk_body else 'Empty or uninitialized'}")
+            result = original_reset(self, seed=seed, options=options)
+            print(f"[DEBUG] Cache after reset: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()]}")
+            print(f"[DEBUG] ===== reset() finished =====\n")
+            return result
+
+        ObjectCentricDynamic2DRobotEnv.reset = debug_reset
+        print("[PRBENCH_PATCH] Added debug wrapper to reset")
+
+        # Patch _get_obs to see when observations are retrieved
+        original_get_obs = ObjectCentricDynamic2DRobotEnv._get_obs
+
+        def debug_get_obs(self):
+            import traceback
+            print(f"\n[DEBUG] ===== _get_obs() called =====")
+            print(f"[DEBUG] Traceback (last 5 frames):")
+            for line in traceback.format_stack()[-6:-1]:
+                print(line.strip())
+            print(f"[DEBUG] Cache before _read_state_from_space: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()] if self._state_obj_to_pymunk_body else 'Empty'}")
+            result = original_get_obs(self)
+            print(f"[DEBUG] ===== _get_obs() finished =====\n")
+            return result
+
+        ObjectCentricDynamic2DRobotEnv._get_obs = debug_get_obs
+        print("[PRBENCH_PATCH] Added debug wrapper to _get_obs")
+
         # Patch ConstantObjectPRBenchEnv
         if not hasattr(ConstantObjectPRBenchEnv, "reset_from_state"):
 
