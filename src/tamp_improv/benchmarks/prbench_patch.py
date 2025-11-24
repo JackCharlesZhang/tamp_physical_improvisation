@@ -46,28 +46,39 @@ def patch_prbench_environments() -> None:
         if not hasattr(ObjectCentricDynamic2DRobotEnv, "reset_from_state"):
 
             def reset_from_state_base(
-                self, state: ObjectCentricState, *, seed: int | None = None
+                self, state: ObjectCentricState | NDArray[Any], *, seed: int | None = None
             ) -> tuple[ObjectCentricState, dict]:
                 """Reset environment to a specific state.
 
                 Args:
-                    state: ObjectCentricState to reset to
+                    state: ObjectCentricState or numpy array to reset to
                     seed: Optional random seed
 
                 Returns:
                     Tuple of (observation, info)
                 """
-                # Debug: check objects in state
-                print(f"[DEBUG] ObjectCentric reset_from_state: got state with objects: {[obj.name for obj in state]}")
-                print(f"[DEBUG] _initial_constant_state has: {[obj.name for obj in self._initial_constant_state] if self._initial_constant_state else 'None'}")
-                print(f"[DEBUG] _state_obj_to_pymunk_body has: {list(self._state_obj_to_pymunk_body.keys()) if hasattr(self, '_state_obj_to_pymunk_body') else 'No cache yet'}")
+                # Debug: check what we got
+                if isinstance(state, np.ndarray):
+                    print(f"[DEBUG] ObjectCentric reset_from_state: got numpy array of shape {state.shape}")
+                    print("[DEBUG] ERROR: ObjectCentricDynamic2DRobotEnv.reset_from_state expects ObjectCentricState, not numpy array!")
+                    print("[DEBUG] This means unwrapping went too deep - should stop at ConstantObjectPRBenchEnv wrapper")
+                    # The ConstantObjectPRBenchEnv wrapper handles numpy array -> ObjectCentricState conversion
+                    # We shouldn't be calling reset_from_state on the object-centric env directly with a numpy array
+                    raise TypeError(
+                        "ObjectCentricDynamic2DRobotEnv.reset_from_state expects ObjectCentricState, "
+                        f"but got {type(state)}. The unwrapping logic went too deep."
+                    )
+                else:
+                    print(f"[DEBUG] ObjectCentric reset_from_state: got state with objects: {[obj.name for obj in state]}")
+                    print(f"[DEBUG] _initial_constant_state has: {[obj.name for obj in self._initial_constant_state] if self._initial_constant_state else 'None'}")
+                    print(f"[DEBUG] _state_obj_to_pymunk_body has: {list(self._state_obj_to_pymunk_body.keys()) if hasattr(self, '_state_obj_to_pymunk_body') else 'No cache yet'}")
 
-                result = self.reset(seed=seed, options={"init_state": state})
+                    result = self.reset(seed=seed, options={"init_state": state})
 
-                print(f"[DEBUG] After reset, _state_obj_to_pymunk_body has: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()]}")
-                print(f"[DEBUG] After reset, _current_state has: {[obj.name for obj in self._current_state]}")
+                    print(f"[DEBUG] After reset, _state_obj_to_pymunk_body has: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()]}")
+                    print(f"[DEBUG] After reset, _current_state has: {[obj.name for obj in self._current_state]}")
 
-                return result
+                    return result
 
             ObjectCentricDynamic2DRobotEnv.reset_from_state = reset_from_state_base
             print(

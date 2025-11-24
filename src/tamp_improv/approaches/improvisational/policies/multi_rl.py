@@ -330,12 +330,13 @@ class MultiRLPolicy(Policy[ObsType, ActType]):
             current_env = self.env
         valid_base_env = False
 
-        # Unwrap environment layers, checking various wrapper attribute names
-        # Continue unwrapping to the deepest level (prefer object-centric envs)
+        # Unwrap through standard wrappers, but NOT into prbench's internal structure
+        # Stop at the ConstantObjectPRBenchEnv level which can handle numpy array states
         while True:
-            # Try common wrapper attributes in order of preference
+            # Only unwrap through standard gym wrapper attributes (env, _env)
+            # Don't unwrap _object_centric_env as that's prbench's internal structure
             unwrapped = False
-            for attr_name in ["env", "_env", "_object_centric_env"]:
+            for attr_name in ["env", "_env"]:
                 if hasattr(current_env, attr_name):
                     current_env = getattr(current_env, attr_name)
                     unwrapped = True
