@@ -20,6 +20,20 @@ def patch_prbench_environments() -> None:
             ObjectCentricDynObstruction2DEnv,
         )
 
+        # Patch _add_state_to_space to debug what's being added
+        original_add_state = ObjectCentricDynObstruction2DEnv._add_state_to_space
+
+        def debug_add_state_to_space(self, state):
+            print(f"[DEBUG] _add_state_to_space called with objects: {[obj.name for obj in state]}")
+            print(f"[DEBUG] _current_state has: {[obj.name for obj in self._current_state] if self._current_state else 'None'}")
+            print(f"[DEBUG] _initial_constant_state has: {[obj.name for obj in self._initial_constant_state] if self._initial_constant_state else 'None'}")
+            result = original_add_state(state)
+            print(f"[DEBUG] After _add_state_to_space, cache has: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()]}")
+            return result
+
+        ObjectCentricDynObstruction2DEnv._add_state_to_space = debug_add_state_to_space
+        print("[PRBENCH_PATCH] Added debug wrapper to _add_state_to_space")
+
         # Patch ConstantObjectPRBenchEnv
         if not hasattr(ConstantObjectPRBenchEnv, "reset_from_state"):
 
