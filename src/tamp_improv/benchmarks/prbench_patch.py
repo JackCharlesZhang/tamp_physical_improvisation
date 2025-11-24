@@ -120,18 +120,41 @@ def patch_prbench_environments() -> None:
             """
             import copy
             print("[DEBUG] clone() called - performing deepcopy")
-            print(f"[DEBUG] Cache before deepcopy: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()] if hasattr(self, '_state_obj_to_pymunk_body') and self._state_obj_to_pymunk_body else 'Empty'}")
+            print(f"[DEBUG] self type: {type(self).__name__}")
+            print(f"[DEBUG] self ID: {id(self)}")
+
+            # Check if this is the wrapper or the inner env
+            if hasattr(self, '_object_centric_env'):
+                inner_env = self._object_centric_env
+                print(f"[DEBUG] Found inner _object_centric_env, ID: {id(inner_env)}")
+                if hasattr(inner_env, '_state_obj_to_pymunk_body'):
+                    print(f"[DEBUG] Inner env cache before deepcopy: {[obj.name for obj in inner_env._state_obj_to_pymunk_body.keys()] if inner_env._state_obj_to_pymunk_body else 'Empty'}")
+            elif hasattr(self, '_state_obj_to_pymunk_body'):
+                print(f"[DEBUG] Direct env cache before deepcopy: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()] if self._state_obj_to_pymunk_body else 'Empty'}")
 
             cloned = copy.deepcopy(self)
 
             # Clear the pymunk cache in the cloned environment
-            # It will be rebuilt when reset_from_state is called
-            if hasattr(cloned, '_state_obj_to_pymunk_body'):
-                print(f"[DEBUG] Clearing cache in cloned env (had {len(cloned._state_obj_to_pymunk_body)} entries)")
-                cloned._state_obj_to_pymunk_body = {}
-            if hasattr(cloned, '_static_object_body_cache'):
-                print(f"[DEBUG] Clearing static cache in cloned env")
-                cloned._static_object_body_cache = {}
+            # Need to handle both the wrapper case (ConstantObjectPRBenchEnv) and direct env case
+            if hasattr(cloned, '_object_centric_env'):
+                # This is a wrapper (ConstantObjectPRBenchEnv)
+                inner_cloned = cloned._object_centric_env
+                print(f"[DEBUG] Cloned wrapper, clearing inner env caches")
+                if hasattr(inner_cloned, '_state_obj_to_pymunk_body'):
+                    print(f"[DEBUG] Clearing inner _state_obj_to_pymunk_body (had {len(inner_cloned._state_obj_to_pymunk_body)} entries)")
+                    inner_cloned._state_obj_to_pymunk_body = {}
+                if hasattr(inner_cloned, '_static_object_body_cache'):
+                    print(f"[DEBUG] Clearing inner _static_object_body_cache")
+                    inner_cloned._static_object_body_cache = {}
+            else:
+                # This is the direct ObjectCentricDynamic2DRobotEnv
+                print(f"[DEBUG] Cloned direct env, clearing caches")
+                if hasattr(cloned, '_state_obj_to_pymunk_body'):
+                    print(f"[DEBUG] Clearing _state_obj_to_pymunk_body (had {len(cloned._state_obj_to_pymunk_body)} entries)")
+                    cloned._state_obj_to_pymunk_body = {}
+                if hasattr(cloned, '_static_object_body_cache'):
+                    print(f"[DEBUG] Clearing _static_object_body_cache")
+                    cloned._static_object_body_cache = {}
 
             print("[DEBUG] clone() complete - caches cleared in clone")
             return cloned
