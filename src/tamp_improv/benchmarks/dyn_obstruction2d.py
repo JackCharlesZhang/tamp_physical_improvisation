@@ -651,6 +651,10 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         p = self._parse_obs(obs)
         target_obj = objects[1]
 
+        print(f"\n[SKILL_EXEC] PickUpSkill._get_action_given_objects called")
+        print(f"[SKILL_EXEC]   Target object: {target_obj.name}")
+        print(f"[SKILL_EXEC]   Robot position: ({p['robot_x']:.3f}, {p['robot_y']:.3f}, θ={p['robot_theta']:.3f})")
+
         if target_obj.name == "target_block":
             obj_x, obj_y = p['block_x'], p['block_y']
             obj_width, obj_height = p['block_width'], p['block_height']
@@ -658,7 +662,7 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         elif target_obj.name == "obstruction0":
             obj_x, obj_y = p['obs0_x'], p['obs0_y']
             obj_width, obj_height = p['obs0_width'], p['obs0_height']
-            obj_held = bool(obs[29 + 7]) 
+            obj_held = bool(obs[29 + 7])
         elif target_obj.name == "obstruction1":
             obj_x, obj_y = p['obs1_x'], p['obs1_y']
             obj_width, obj_height = p['obs1_width'], p['obs1_height']
@@ -691,6 +695,7 @@ class PickUpSkill(BaseDynObstruction2DSkill):
             at_safe_y = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
             if not in_descent_phase and not at_safe_y:
                 action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+              
                 return action
 
         # Phase 1: Rotate gripper
@@ -801,6 +806,7 @@ class PlaceSkill(BaseDynObstruction2DSkill):
         return "Place"
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        print(f"\n[SKILL_EXEC] PlaceSkill._get_action_given_objects called")
         p = self._parse_obs(obs)
         placement_y = self._calculate_placement_height(
             surface_y=p['surface_y'],
@@ -855,6 +861,7 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         return "PlaceOnTarget"
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        print(f"\n[SKILL_EXEC] PlaceOnTargetSkill._get_action_given_objects called")
         p = self._parse_obs(obs)
 
         # Normal placement: Place at surface x-position
