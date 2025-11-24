@@ -134,6 +134,97 @@ def patch_prbench_environments() -> None:
         ObjectCentricDynamic2DRobotEnv._get_obs = debug_get_obs
         # print("[PRBENCH_PATCH] Added debug wrapper to _get_obs")
 
+        # Patch step() to debug robot movement
+        original_step = ObjectCentricDynamic2DRobotEnv.step
+
+        def debug_step(self, action):
+            import numpy as np
+            dx, dy, dtheta, darm, dgripper = action
+
+            # Capture robot state BEFORE step
+            if self.robot:
+                before_pos = (self.robot.base_pose.x, self.robot.base_pose.y, self.robot.base_pose.theta)
+                # Get velocity from the PyMunk body instead
+                before_vel = None
+
+                # Check if robot body exists in pymunk space
+                robot_bodies = [b for b in self.pymunk_space.bodies if hasattr(b, 'body_type')]
+                robot_body = None
+                for body in robot_bodies:
+                    # Try to find the robot's base body
+                    if hasattr(body, 'position') and abs(body.position.x - before_pos[0]) < 0.01 and abs(body.position.y - before_pos[1]) < 0.01:
+                        robot_body = body
+                        break
+
+                if robot_body:
+                    before_body_type = robot_body.body_type
+                    before_body_pos = (robot_body.position.x, robot_body.position.y)
+                    before_body_vel = (robot_body.velocity.x, robot_body.velocity.y)
+                    before_body_mass = robot_body.mass
+                    # Check if body is in space
+                    body_in_space = robot_body in self.pymunk_space.bodies
+                else:
+                    before_body_type = "NOT_FOUND"
+                    before_body_pos = None
+                    before_body_vel = None
+                    before_body_mass = None
+                    body_in_space = False
+
+            # Execute step
+            result = original_step(self, action)
+
+            # Capture robot state AFTER step
+            if self.robot:
+                after_pos = (self.robot.base_pose.x, self.robot.base_pose.y, self.robot.base_pose.theta)
+                after_vel = None
+
+                # Find robot body again
+                robot_bodies = [b for b in self.pymunk_space.bodies if hasattr(b, 'body_type')]
+                robot_body_after = None
+                for body in robot_bodies:
+                    if hasattr(body, 'position') and abs(body.position.x - after_pos[0]) < 0.01 and abs(body.position.y - after_pos[1]) < 0.01:
+                        robot_body_after = body
+                        break
+
+                # Log if action was non-zero but position didn't change
+                action_magnitude = abs(dx) + abs(dy) + abs(dtheta)
+                pos_changed = (abs(after_pos[0] - before_pos[0]) > 0.001 or
+                              abs(after_pos[1] - before_pos[1]) > 0.001 or
+                              abs(after_pos[2] - before_pos[2]) > 0.001)
+
+                if action_magnitude > 0.001 and not pos_changed:
+                    print(f"\n[STEP_DEBUG] ⚠️  ACTION NOT APPLIED!")
+                    print(f"[STEP_DEBUG] Action: dx={dx:.4f}, dy={dy:.4f}, dtheta={dtheta:.4f}, darm={darm:.4f}, dgripper={dgripper:.4f}")
+                    print(f"[STEP_DEBUG] Robot pose: {before_pos} → {after_pos} (NO CHANGE)")
+                    print(f"[STEP_DEBUG] Robot vel: {before_vel} → {after_vel}")
+                    if robot_body:
+                        print(f"[STEP_DEBUG] PyMunk body BEFORE: type={before_body_type}, pos={before_body_pos}, vel={before_body_vel}, mass={before_body_mass}, in_space={body_in_space}")
+                    if robot_body_after:
+                        print(f"[STEP_DEBUG] PyMunk body AFTER: type={robot_body_after.body_type}, pos=({robot_body_after.position.x:.4f}, {robot_body_after.position.y:.4f}), vel=({robot_body_after.velocity.x:.4f}, {robot_body_after.velocity.y:.4f}), mass={robot_body_after.mass}")
+                        print(f"[STEP_DEBUG] PyMunk body in space: {robot_body_after in self.pymunk_space.bodies}")
+                        # Check for constraints
+                        constraints = [c for c in self.pymunk_space.constraints if robot_body_after in (c.a, c.b)]
+                        print(f"[STEP_DEBUG] Constraints on robot body: {len(constraints)}")
+                        for i, c in enumerate(constraints[:3]):  # Show first 3
+                            print(f"[STEP_DEBUG]   Constraint {i}: {type(c).__name__}")
+                    else:
+                        print(f"[STEP_DEBUG] PyMunk body AFTER: NOT FOUND")
+
+                    # Check held objects
+                    if hasattr(self.robot, 'held_objects'):
+                        print(f"[STEP_DEBUG] Held objects: {len(self.robot.held_objects)}")
+                        for i, held_item in enumerate(self.robot.held_objects):
+                            if isinstance(held_item, tuple) and len(held_item) >= 1:
+                                obj = held_item[0]
+                                print(f"[STEP_DEBUG]   Held obj {i}: {type(obj).__name__}, body_type={getattr(obj, 'body_type', 'N/A')}")
+                            else:
+                                print(f"[STEP_DEBUG]   Held obj {i}: {type(held_item).__name__}")
+
+            return result
+
+        ObjectCentricDynamic2DRobotEnv.step = debug_step
+        print("[PRBENCH_PATCH] Added debug wrapper to step()")
+
         # Add clone() method to handle deepcopy issue with object identity in cache
         def clone_env(self):
             """Clone environment, properly handling the pymunk body cache.

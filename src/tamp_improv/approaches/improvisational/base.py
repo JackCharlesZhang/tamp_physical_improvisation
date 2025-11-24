@@ -165,6 +165,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
     ) -> ApproachStepResult[ActType]:
         """Reset approach with initial observation."""
         objects, atoms, goal = self.system.perceiver.reset(obs, info)
+        print(f"\n[APPROACH_RESET] Initial atoms for planning graph: {sorted([str(a) for a in atoms])}")
         self._goal = goal
         self.observed_states = {}
         self.edge_action_cache.clear()
@@ -656,9 +657,19 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         current_path: tuple[int, ...] = tuple(),
     ) -> tuple[float, ObsType, dict[str, Any], bool]:
         """Execute a single edge and return the cost and end state."""
-        raw_env.reset_from_state(start_state)  # type: ignore
+        # FIXED: Don't call reset_from_state() - it breaks PyMunk physics constraints
+        # for held objects. We rely on sequential execution from initial reset.
+        # raw_env.reset_from_state(start_state)  # type: ignore
 
-        _, init_atoms, _ = self.system.perceiver.reset(start_state, start_info)
+        # Get current atoms from the current environment state (not from start_state)
+        # Need to get the vectorized observation, not the raw ObjectCentricState
+        if hasattr(raw_env, '_object_centric_env'):
+            obj_state = raw_env._object_centric_env._get_obs()
+            current_obs = raw_env.observation_space.vectorize(obj_state)
+        else:
+            obj_state = raw_env._get_obs()
+            current_obs = raw_env.observation_space.vectorize(obj_state)
+        _, init_atoms, _ = self.system.perceiver.reset(current_obs, start_info)
         goal_atoms = set(edge.target.atoms)
         actions: list[Any] = []
 
@@ -703,14 +714,24 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             skill.reset(edge.operator)
             aug_obs = start_state  # type: ignore[assignment]
 
+        # Debug logging for edge execution
+        print(f"\n[EDGE_EXEC] Edge {edge.source.id} -> {edge.target.id}")
+        print(f"[EDGE_EXEC] Operator: {edge.operator.name if edge.operator else 'shortcut'}")
+        print(f"[EDGE_EXEC] Goal atoms: {sorted([str(a) for a in goal_atoms])}")
+        start_atoms = self.system.perceiver.step(start_state)
+        print(f"[EDGE_EXEC] Start atoms: {sorted([str(a) for a in start_atoms])}")
+
         num_steps = 0
         curr_raw_obs = start_state
         curr_aug_obs = aug_obs
-        for _ in range(self.max_skill_steps):
+        for step_idx in range(self.max_skill_steps):
             act = skill.get_action(curr_aug_obs)
             if act is None:
                 print("No action returned by skill")
                 return float("inf"), start_state, start_info, False
+            # Debug: check if action is all zeros (first 3 steps only)
+            if step_idx < 3 and isinstance(act, np.ndarray):
+                print(f"[SKILL_ACTION] Step {step_idx}: action = {act}, all_zeros = {np.allclose(act, 0)}")
             actions.append(copy.deepcopy(act))
             next_raw_obs, _, _, _, info = raw_env.step(act)
             curr_raw_obs = next_raw_obs
@@ -742,7 +763,12 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
 
             num_steps += 1
 
+            # Log progress every 50 steps
+            if num_steps % 50 == 0:
+                print(f"[EDGE_EXEC] Step {num_steps}: Current atoms: {sorted([str(a) for a in atoms])}")
+
             if goal_atoms == atoms:
+                print(f"[EDGE_EXEC] SUCCESS at step {num_steps}! Goal atoms reached.")
                 target_id = edge.target.id
                 if target_id not in self.observed_states:
                     self.observed_states[target_id] = []
@@ -771,6 +797,9 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                 return num_steps, curr_raw_obs, info, True
 
         # Skill timed out
+        print(f"[EDGE_EXEC] TIMEOUT after {num_steps} steps")
+        print(f"[EDGE_EXEC] Final atoms: {sorted([str(a) for a in atoms])}")
+        print(f"[EDGE_EXEC] Goal atoms: {sorted([str(a) for a in goal_atoms])}")
         return float("inf"), start_state, start_info, False
 
     def _compute_planning_graph_edge_costs(
@@ -791,11 +820,26 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         empty_path: tuple[int, ...] = tuple()
         path_states[(empty_path, initial_node, initial_node)] = (obs, info)
 
-        raw_env = self._create_planning_env()
+        # FIXED: Use the actual system.env instead of creating a clone
+        # We can't use reset_from_state to synchronize clones as it breaks physics
+        # Instead, we execute edges sequentially on the real environment
+        raw_env = self.system.env
+        # Unwrap to get the base environment
+        while hasattr(raw_env, 'env') or hasattr(raw_env, '_env'):
+            if hasattr(raw_env, 'env'):
+                raw_env = raw_env.env
+            elif hasattr(raw_env, '_env'):
+                raw_env = raw_env._env
+            else:
+                break
+
         using_goal_env, goal_env = self._using_goal_env(self.system.wrapped_env)
         using_context_env, context_env = self._using_context_env(
             self.system.wrapped_env
         )
+
+        # The environment is already at the initial state from the reset() call
+        # before this function was called. No need to reset again.
 
         queue = [(initial_node, empty_path)]
         explored_segments = set()
@@ -817,8 +861,12 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                 if edge.target.id <= node.id:
                     continue
 
-                raw_env.reset_from_state(path_state)  # type: ignore
-                _ = self.system.perceiver.reset(path_state, path_info)
+                # FIXED: Don't call reset_from_state() as it breaks PyMunk physics constraints
+                # for held objects. Instead, we rely on sequential execution from the initial
+                # reset. This means we can only explore one path per attempt, but physics works.
+                # The path_state is only used for logging and edge cost metadata.
+                # raw_env.reset_from_state(path_state)  # type: ignore
+                # _ = self.system.perceiver.reset(path_state, path_info)
 
                 edge_cost, end_state, _, success = self._execute_edge(
                     edge,
@@ -848,6 +896,27 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                 print(
                     f"Added edge {edge.source.id} -> {edge.target.id} cost: {edge_cost} via {path_str}. Is shortcut? {edge.is_shortcut}"  # pylint: disable=line-too-long
                 )
+
+                # Debug: log end state robot position
+                if hasattr(end_state, 'nodes'):
+                    # GraphInstance
+                    robot_nodes = [n for n in end_state.nodes if int(n[0]) == 0]
+                    if robot_nodes:
+                        rx, ry, rtheta = robot_nodes[0][1], robot_nodes[0][2], robot_nodes[0][3]
+                        print(f"[END_STATE] Robot at: ({rx:.3f}, {ry:.3f}, θ={rtheta:.3f})")
+                elif isinstance(end_state, np.ndarray):
+                    # Try to parse from numpy array - robot is typically first object
+                    try:
+                        from relational_structs.spaces import ObjectCentricBoxSpace
+                        if isinstance(raw_env.observation_space, ObjectCentricBoxSpace):
+                            obj_state = raw_env.observation_space.devectorize(end_state)
+                            robot_objs = [obj for obj in obj_state if 'robot' in str(obj.name).lower()]
+                            if robot_objs:
+                                robot = robot_objs[0]
+                                rx, ry, rtheta = obj_state.get(robot, 'x'), obj_state.get(robot, 'y'), obj_state.get(robot, 'theta')
+                                print(f"[END_STATE] Robot at: ({rx:.3f}, {ry:.3f}, θ={rtheta:.3f})")
+                    except Exception:
+                        pass
 
                 new_path = path + (node.id,)
                 path_states[(new_path, edge.target, edge.target)] = (end_state, info)

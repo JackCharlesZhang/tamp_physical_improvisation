@@ -447,7 +447,7 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
         # BUT only if the obstruction is NOT being held!
         for i, (obs_x, obs_y, obs_width, obs_height) in enumerate(obstruction_data):
             obs_held = obstruction_held_status[i]
-            if not obs_held and self._is_obstructing(
+            is_blocking = self._is_obstructing(
                 obs_x,
                 obs_y,
                 obs_width,
@@ -456,7 +456,17 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
                 target_surface_y,
                 target_surface_width,
                 target_surface_height,
-            ):
+            )
+            # Debug: print obstruction positions and blocking status
+            if i < 2:  # Only log first 2 obstructions
+                overlap = compute_horizontal_overlap_percentage(
+                    block_x=obs_x, block_y=obs_y,
+                    block_width=obs_width, block_height=obs_height, block_theta=0.0,
+                    obs_x=target_surface_x, obs_y=target_surface_y,
+                    obs_width=target_surface_width, obs_height=target_surface_height, obs_theta=0.0
+                )
+                print(f"[PERCEIVER] obstruction{i}: pos=({obs_x:.3f}, {obs_y:.3f}), held={obs_held}, overlap={overlap:.3f}, blocking={is_blocking}")
+            if not obs_held and is_blocking:
                 # This obstruction is blocking the surface (and not being held)
                 atoms.add(self.predicates["Blocking"]([self._obstructions[i], self._target_surface]))
 
@@ -584,7 +594,7 @@ class BaseDynObstruction2DSkill(
             'block_x': obs[14], 'block_y': obs[15], 'block_width': obs[26], 'block_height': obs[27], 'target_block_held': bool(obs[21]),
             'obs0_x': obs[29], 'obs0_y': obs[30], 'obs0_width': obs[41], 'obs0_height': obs[42],
             'obs1_x': obs[44], 'obs1_y': obs[45], 'obs1_width': obs[56], 'obs1_height': obs[57],
-            'robot_x': obs[59], 'robot_y': obs[60], 'robot_theta': obs[61],
+            'robot_x': obs[59], 'robot_y': obs[60], 'robot_theta': obs[61], 'robot_static': bool(obs[71]),
             'arm_joint': obs[73], 'arm_length_max': obs[74], 'gripper_base_height': obs[76], 'finger_gap': obs[77]
         }
 
@@ -861,7 +871,6 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         return "PlaceOnTarget"
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
-        # print(f"\n[SKILL_EXEC] PlaceOnTargetSkill._get_action_given_objects called")
         p = self._parse_obs(obs)
 
         # Normal placement: Place at surface x-position
@@ -874,45 +883,78 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
             arm_length_max=p['arm_length_max']
         )
 
+        # DEBUG: Log state AND PyMunk body properties
+        print(f"[PLACE_DEBUG] Robot obs: ({p['robot_x']:.3f}, {p['robot_y']:.3f}, θ={p['robot_theta']:.3f}), static={p['robot_static']}")
+        print(f"[PLACE_DEBUG] Target: ({target_x:.3f}, {target_y:.3f}), SAFE_Y={self.SAFE_Y:.3f}")
+        print(f"[PLACE_DEBUG] Holding: {p['target_block_held']}, finger_gap={p['finger_gap']:.3f}, gripper_height={p['gripper_base_height']:.3f}")
+
+        # CRITICAL DEBUG: Access PyMunk body directly to see actual physics state
+        # We need to drill down through the wrapper layers to get to the actual environment
+        try:
+            # Get the actual base environment (unwrap all wrappers)
+            import gymnasium as gym
+            env = self._components.perceiver  # Get from components
+            # Actually, we need a different approach - let's pass env through or access it differently
+            # For now, just log what we can from observation
+            print(f"[PLACE_DEBUG] (PyMunk check deferred - need env reference)")
+        except Exception as e:
+            print(f"[PLACE_DEBUG] Could not access PyMunk: {e}")
+
         # Phase 0: Ensure alignment - use shortest angular path
         angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
         if abs(angle_error) > self.POSITION_TOL:
+            print(f"[PLACE_DEBUG] Phase 0: Aligning (angle_error={angle_error:.3f})")
             action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
             return action
 
         # Phase 1: To safe height (only if we haven't reached target x yet)
         # Once we're at target x, we proceed to descend and don't return to safe height
         not_at_target_x = not np.isclose(p['robot_x'], target_x, atol=self.POSITION_TOL)
-        if not_at_target_x and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        at_safe_y = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+        print(f"[PLACE_DEBUG] Phase 1 check: not_at_target_x={not_at_target_x}, at_safe_y={at_safe_y}")
+        if not_at_target_x and not at_safe_y:
+            dy = np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY)
+            print(f"[PLACE_DEBUG] Phase 1: Moving to safe height, dy={dy:.3f}")
+            action = np.array([0, dy, 0, 0, 0], dtype=np.float64)
             return action
 
         # Phase 2: To target x
         if not_at_target_x:
-            action = np.array([np.clip(target_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
+            dx = np.clip(target_x - p['robot_x'], -self.MAX_DX, self.MAX_DX)
+            print(f"[PLACE_DEBUG] Phase 2: Moving to target x, dx={dx:.3f}")
+            action = np.array([dx, 0, 0, 0, 0], dtype=np.float64)
             return action
 
         # Phase 3: Descend (only if gripper is still holding the object)
         still_holding = p['target_block_held']
-        if still_holding and not np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL):
-            action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        at_target_y = np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL)
+        print(f"[PLACE_DEBUG] Phase 3 check: still_holding={still_holding}, at_target_y={at_target_y}")
+        if still_holding and not at_target_y:
+            dy = np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY)
+            print(f"[PLACE_DEBUG] Phase 3: Descending to place, dy={dy:.3f}")
+            action = np.array([0, dy, 0, 0, 0], dtype=np.float64)
             return action
 
         # Phase 4: Open gripper (only if we're at target position and still holding)
         at_target_position = np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL)
         still_holding_at_target = at_target_position and p['target_block_held']
-        # Open gripper if not yet fully open (check if finger_gap is less than fully open)
-        if still_holding_at_target and p['finger_gap'] < p['gripper_base_height'] * 0.95:
+        gripper_open = p['finger_gap'] >= p['gripper_base_height'] * 0.95
+        print(f"[PLACE_DEBUG] Phase 4 check: at_target_position={at_target_position}, still_holding_at_target={still_holding_at_target}, gripper_open={gripper_open}")
+        if still_holding_at_target and not gripper_open:
+            print(f"[PLACE_DEBUG] Phase 4: Opening gripper")
             action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
             return action
 
         # Phase 5: Lift (only after block has been released)
-        # Check if block is no longer held (not if gripper is opened)
         block_released = not p['target_block_held']
-        if block_released and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
-            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+        print(f"[PLACE_DEBUG] Phase 5 check: block_released={block_released}, at_safe_y={at_safe_y}")
+        if block_released and not at_safe_y:
+            dy = np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY)
+            print(f"[PLACE_DEBUG] Phase 5: Lifting to safe height, dy={dy:.3f}")
+            action = np.array([0, dy, 0, 0, 0], dtype=np.float64)
             return action
 
+        print(f"[PLACE_DEBUG] All phases complete - returning zeros")
         return np.zeros(5, dtype=np.float64)
 
 
@@ -988,37 +1030,13 @@ class PushSkill(BaseDynObstruction2DSkill):
 
 
 class DynObstruction2DEnvWithReset(DynObstruction2DEnv):
-    """Wrapper that adds proper reset_from_state."""
+    """Wrapper that uses prbench_patch's reset_from_state.
 
-    def reset_from_state(
-        self, state: NDArray[np.float32], *, seed: int | None = None
-    ) -> tuple[NDArray[np.float32], dict]:
-        """Reset by directly setting PyMunk body states."""
-        from relational_structs.spaces import ObjectCentricBoxSpace
-
-        if not isinstance(self.observation_space, ObjectCentricBoxSpace):
-            raise TypeError("Expected ObjectCentricBoxSpace")
-
-        obj_state = self.observation_space.devectorize(state)
-        base_env = self._object_centric_env
-
-        # Update _current_state first
-        base_env._current_state = obj_state
-
-        # Clear and rebuild physics space with new state
-        base_env._setup_physics_space()
-        base_env._add_state_to_space(base_env.full_state)
-
-        # Now directly update body positions/velocities to match exactly
-        for obj in obj_state:
-            if obj in base_env._state_obj_to_pymunk_body:
-                body = base_env._state_obj_to_pymunk_body[obj]
-                body.position = (obj_state.get(obj, 'x'), obj_state.get(obj, 'y'))
-                body.angle = obj_state.get(obj, 'theta')
-                body.velocity = (0, 0)
-                body.angular_velocity = 0
-
-        return self.observation_space.vectorize(base_env._get_obs()), {}
+    The prbench_patch.py file adds a proper reset_from_state method that
+    uses reset(options={"init_state": state}), which correctly handles
+    PyMunk physics setup. We don't need to override it here.
+    """
+    pass
 
 
 class BaseDynObstruction2DTAMPSystem(
@@ -1180,6 +1198,7 @@ class BaseDynObstruction2DTAMPSystem(
             [robot, block, surface],
             preconditions={
                 predicates["Holding"]([robot, block]),
+                predicates["Clear"]([surface]),  # FIXED: Must check surface is clear!
             },
             add_effects={
                 predicates["On"]([block, surface]),

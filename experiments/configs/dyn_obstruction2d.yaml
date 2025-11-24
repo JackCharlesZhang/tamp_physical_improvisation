@@ -3,7 +3,7 @@ num_obstructions: 2
 render_mode: null
 action_scale: 1.0
 
-seed: 42
+seed: 200
 num_episodes: 5
 max_steps: 200
 max_skill_steps: 500

@@ -276,18 +276,36 @@ def run_dyn_obstruction2d_planning(
 
     print(f"\n[DEBUG] Starting execution...")
 
+    prev_obs = obs
     for step in range(max_steps):
-        # # Show current plan state
-        # if hasattr(planner, '_current_operator') and planner._current_operator:
-        #     print(f"\n[STEP {step}] Current operator: {planner._current_operator}")
-        # if hasattr(planner, '_plan') and planner._plan:
-        #     print(f"[STEP {step}] Remaining plan length: {len(planner._plan)}")
-
-        # # Only print action every 10 steps during stuttering to reduce spam
-        # print_action = (step < 95) or (step % 10 == 0)
+        # Track operator transitions
+        prev_operator = getattr(planner, '_current_operator', None)
 
         try:
             action = planner.step(obs)
+
+            # Detect operator change
+            curr_operator = getattr(planner, '_current_operator', None)
+            if prev_operator != curr_operator and curr_operator is not None:
+                # Operator changed! Log robot position at transition
+                from relational_structs.spaces import ObjectCentricBoxSpace
+                if isinstance(system.env.observation_space, ObjectCentricBoxSpace):
+                    # Log the PREVIOUS observation (end state of previous operator)
+                    if 'prev_obs' in locals():
+                        obj_state_prev = system.env.observation_space.devectorize(prev_obs)
+                        robot_objs_prev = [obj for obj in obj_state_prev if 'robot' in str(obj.name).lower()]
+                        if robot_objs_prev:
+                            robot_prev = robot_objs_prev[0]
+                            rx_prev, ry_prev, rtheta_prev = obj_state_prev.get(robot_prev, 'x'), obj_state_prev.get(robot_prev, 'y'), obj_state_prev.get(robot_prev, 'theta')
+                            print(f"\n[OPERATOR_CHANGE] Step {step-1}: {prev_operator.name} ended at: ({rx_prev:.3f}, {ry_prev:.3f}, θ={rtheta_prev:.3f})")
+
+                    # Log the CURRENT observation (start state of new operator)
+                    obj_state = system.env.observation_space.devectorize(obs)
+                    robot_objs = [obj for obj in obj_state if 'robot' in str(obj.name).lower()]
+                    if robot_objs:
+                        robot = robot_objs[0]
+                        rx, ry, rtheta = obj_state.get(robot, 'x'), obj_state.get(robot, 'y'), obj_state.get(robot, 'theta')
+                        print(f"[OPERATOR_CHANGE] Step {step}: {curr_operator.name} starts at: ({rx:.3f}, {ry:.3f}, θ={rtheta:.3f})")
             # if print_action:
             #     print(f"[STEP {step}] Action returned: {action}, all_zeros={all(action == 0)}")
         except Exception as e:
@@ -297,6 +315,7 @@ def run_dyn_obstruction2d_planning(
             planner.reset(obs, info)
             action = planner.step(obs)
 
+        prev_obs = obs
         obs, reward, done, _, info = system.env.step(action)
 
         # if step % 20 == 0:

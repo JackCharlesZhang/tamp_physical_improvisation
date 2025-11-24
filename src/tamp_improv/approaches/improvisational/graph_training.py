@@ -194,8 +194,10 @@ def collect_graph_based_training_data(
 
     for episode in range(collect_episodes):
         print(f"\n=== Building planning graph for episode {episode + 1} ===")
-        episode_seed = sample_seed_from_rng(rng)
-        obs, info = system.reset()
+        episode_seed = seed if episode == 0 else sample_seed_from_rng(rng)
+        print(f"[DEBUG] Using episode_seed: {episode_seed}")
+        obs, info = system.reset(seed=episode_seed)
+        print(f"[DEBUG] Called system.reset(seed={episode_seed})")
         _ = approach.reset(obs, info)
         assert (
             hasattr(approach, "planning_graph") and approach.planning_graph is not None
