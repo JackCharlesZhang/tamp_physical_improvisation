@@ -45,6 +45,10 @@ if not hasattr(tomsgeoms2d.structs, "Tobject"):
 
 from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv, DynObstruction2DEnvConfig
 
+# Patch prbench environments to add reset_from_state method
+from tamp_improv.benchmarks.prbench_patch import patch_prbench_environments
+patch_prbench_environments()
+
 
 # ==============================================================================
 # HELPER FUNCTIONS
