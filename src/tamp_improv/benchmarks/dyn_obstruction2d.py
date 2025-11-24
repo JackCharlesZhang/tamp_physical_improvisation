@@ -1175,15 +1175,13 @@ class BaseDynObstruction2DTAMPSystem(
             [robot, obstruction, surface],  # Place last obstruction (1→0/Clear transition)
             preconditions={
                 predicates["Holding"]([robot, obstruction]),
-                predicates["OneObstructionBlocking"]([surface]),
+                predicates["Clear"]([surface]),
             },
             add_effects={
                 predicates["GripperEmpty"]([robot]),
-                predicates["Clear"]([surface]),
             },
             delete_effects={
                 predicates["Holding"]([robot, obstruction]),
-                predicates["OneObstructionBlocking"]([surface]),
             },
         )
 
