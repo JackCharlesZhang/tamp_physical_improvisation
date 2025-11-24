@@ -64,9 +64,10 @@ def log_bounds_check(
 def log_robot_revert(reason: str, robot_pos: tuple[float, float], held_objects: list[str]) -> None:
     """Log when robot reverts to last state due to collision."""
     if DEBUG_COLLISIONS:
-        print(f"[ROBOT_REVERT] {reason} at ({robot_pos[0]:.3f}, {robot_pos[1]:.3f})")
+        # print(f"[ROBOT_REVERT] {reason} at ({robot_pos[0]:.3f}, {robot_pos[1]:.3f})")
         if held_objects:
-            print(f"  Held objects also reverted: {held_objects}")
+            # print(f"  Held objects also reverted: {held_objects}")
+            pass
 
 
 def log_skill_action(skill_name: str, phase: str, action: NDArray[np.float64], details: dict = None) -> None:

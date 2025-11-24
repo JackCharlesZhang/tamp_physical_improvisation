@@ -651,9 +651,9 @@ class PickUpSkill(BaseDynObstruction2DSkill):
         p = self._parse_obs(obs)
         target_obj = objects[1]
 
-        print(f"\n[SKILL_EXEC] PickUpSkill._get_action_given_objects called")
-        print(f"[SKILL_EXEC]   Target object: {target_obj.name}")
-        print(f"[SKILL_EXEC]   Robot position: ({p['robot_x']:.3f}, {p['robot_y']:.3f}, θ={p['robot_theta']:.3f})")
+        # print(f"\n[SKILL_EXEC] PickUpSkill._get_action_given_objects called")
+        # print(f"[SKILL_EXEC]   Target object: {target_obj.name}")
+        # print(f"[SKILL_EXEC]   Robot position: ({p['robot_x']:.3f}, {p['robot_y']:.3f}, θ={p['robot_theta']:.3f})")
 
         if target_obj.name == "target_block":
             obj_x, obj_y = p['block_x'], p['block_y']
@@ -806,7 +806,7 @@ class PlaceSkill(BaseDynObstruction2DSkill):
         return "Place"
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
-        print(f"\n[SKILL_EXEC] PlaceSkill._get_action_given_objects called")
+        # print(f"\n[SKILL_EXEC] PlaceSkill._get_action_given_objects called")
         p = self._parse_obs(obs)
         placement_y = self._calculate_placement_height(
             surface_y=p['surface_y'],
@@ -861,7 +861,7 @@ class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
         return "PlaceOnTarget"
 
     def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
-        print(f"\n[SKILL_EXEC] PlaceOnTargetSkill._get_action_given_objects called")
+        # print(f"\n[SKILL_EXEC] PlaceOnTargetSkill._get_action_given_objects called")
         p = self._parse_obs(obs)
 
         # Normal placement: Place at surface x-position
