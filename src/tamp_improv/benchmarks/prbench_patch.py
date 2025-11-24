@@ -163,20 +163,35 @@ def patch_prbench_environments() -> None:
                     print(f"[DEBUG] New cloned inner env ID: {id(inner_cloned)}")
 
                 if hasattr(inner_cloned, '_state_obj_to_pymunk_body'):
+                    original_cache_id = id(self._object_centric_env._state_obj_to_pymunk_body)
+                    cloned_cache_id = id(inner_cloned._state_obj_to_pymunk_body)
+                    print(f"[DEBUG] Original cache ID: {original_cache_id}")
+                    print(f"[DEBUG] Cloned cache ID before fix: {cloned_cache_id}")
+                    print(f"[DEBUG] Are they the same dict? {original_cache_id == cloned_cache_id}")
                     print(f"[DEBUG] Clearing inner _state_obj_to_pymunk_body (had {len(inner_cloned._state_obj_to_pymunk_body)} entries)")
-                    inner_cloned._state_obj_to_pymunk_body = {}
+                    # CRITICAL: Create a NEW dict object, don't just clear the existing one
+                    # If deepcopy failed to create separate dicts, this ensures independence
+                    inner_cloned._state_obj_to_pymunk_body = dict()
+                    print(f"[DEBUG] Cloned cache ID after creating new dict: {id(inner_cloned._state_obj_to_pymunk_body)}")
                 if hasattr(inner_cloned, '_static_object_body_cache'):
                     print(f"[DEBUG] Clearing inner _static_object_body_cache")
-                    inner_cloned._static_object_body_cache = {}
+                    inner_cloned._static_object_body_cache = dict()
             else:
                 # This is the direct ObjectCentricDynamic2DRobotEnv
                 print(f"[DEBUG] Cloned direct env, clearing caches")
                 if hasattr(cloned, '_state_obj_to_pymunk_body'):
+                    original_cache_id = id(self._state_obj_to_pymunk_body)
+                    cloned_cache_id = id(cloned._state_obj_to_pymunk_body)
+                    print(f"[DEBUG] Original cache ID: {original_cache_id}")
+                    print(f"[DEBUG] Cloned cache ID before fix: {cloned_cache_id}")
+                    print(f"[DEBUG] Are they the same dict? {original_cache_id == cloned_cache_id}")
                     print(f"[DEBUG] Clearing _state_obj_to_pymunk_body (had {len(cloned._state_obj_to_pymunk_body)} entries)")
-                    cloned._state_obj_to_pymunk_body = {}
+                    # CRITICAL: Create a NEW dict object to ensure independence
+                    cloned._state_obj_to_pymunk_body = dict()
+                    print(f"[DEBUG] Cloned cache ID after creating new dict: {id(cloned._state_obj_to_pymunk_body)}")
                 if hasattr(cloned, '_static_object_body_cache'):
                     print(f"[DEBUG] Clearing _static_object_body_cache")
-                    cloned._static_object_body_cache = {}
+                    cloned._static_object_body_cache = dict()
 
             print("[DEBUG] clone() complete - caches cleared in clone")
             return cloned
