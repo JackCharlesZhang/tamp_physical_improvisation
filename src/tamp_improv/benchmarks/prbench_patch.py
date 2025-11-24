@@ -27,6 +27,8 @@ def patch_prbench_environments() -> None:
             print(f"[DEBUG] _add_state_to_space called with objects: {[obj.name for obj in state]}")
             print(f"[DEBUG] _current_state has: {[obj.name for obj in self._current_state] if self._current_state else 'None'}")
             print(f"[DEBUG] _initial_constant_state has: {[obj.name for obj in self._initial_constant_state] if self._initial_constant_state else 'None'}")
+            print(f"[DEBUG] Cache dictionary ID: {id(self._state_obj_to_pymunk_body)}")
+            print(f"[DEBUG] self (environment) ID: {id(self)}")
 
             # Check object IDs before adding
             if self._current_state:
@@ -37,6 +39,7 @@ def patch_prbench_environments() -> None:
             result = original_add_state(self, state)  # Need to pass self explicitly
 
             print(f"[DEBUG] After _add_state_to_space, cache has: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()]}")
+            print(f"[DEBUG] Cache dictionary ID after: {id(self._state_obj_to_pymunk_body)}")
             # Check if obstruction0 is in cache with its ID
             cache_obstruction = [obj for obj in self._state_obj_to_pymunk_body.keys() if obj.name == 'obstruction0']
             if cache_obstruction:
@@ -92,6 +95,8 @@ def patch_prbench_environments() -> None:
         def debug_get_obs(self):
             import traceback
             print(f"\n[DEBUG] ===== _get_obs() called =====")
+            print(f"[DEBUG] self (environment) ID: {id(self)}")
+            print(f"[DEBUG] Cache dictionary ID: {id(self._state_obj_to_pymunk_body)}")
             print(f"[DEBUG] Traceback (last 5 frames):")
             for line in traceback.format_stack()[-6:-1]:
                 print(line.strip())
