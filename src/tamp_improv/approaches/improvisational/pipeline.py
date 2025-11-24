@@ -5,6 +5,7 @@ import json
 import pickle
 import random
 import shutil
+from socket import herror
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, TypeVar
@@ -31,9 +32,6 @@ from tamp_improv.approaches.improvisational.policies.multi_rl import MultiRLPoli
 from tamp_improv.approaches.improvisational.pruning import (
     prune_training_data,
     train_distance_heuristic,
-)
-from tamp_improv.approaches.improvisational.iterative_pruning import (
-    iteratively_prune_training_data
 )
 from tamp_improv.approaches.improvisational.training import (
     Metrics,
@@ -368,7 +366,6 @@ def prune_full_data(
     rng: np.random.Generator,
     heuristic: "GoalConditionedDistanceHeuristic | None" = None,
     force_prune: bool = False,
-    iterative_pruning: bool = False,
 ) -> GoalConditionedTrainingData:
     """
     Stage 3: Apply pruning method to full training data.
@@ -462,13 +459,9 @@ def prune_full_data(
             "Call get_or_train_heuristic() first."
         )
 
-    if iterative_pruning:
-        pruned_data = iteratively_prune_training_data(training_data, system, planning_graph, config, rng, heuristic=heuristic
+    pruned_data = prune_training_data(
+        training_data, system, planning_graph, config, rng, heuristic=heuristic
     )
-    else:
-        pruned_data = prune_training_data(
-            training_data, system, planning_graph, config, rng, heuristic=heuristic
-        )
 
     # Save pruned data and config
     pruning_dir.mkdir(parents=True, exist_ok=True)
@@ -485,6 +478,148 @@ def prune_full_data(
 
     print(f"  Saved {len(pruned_data.valid_shortcuts)} pruned shortcuts")
     return pruned_data
+
+
+def iteratively_train_heuristic_and_prune_data(
+    training_data: GoalConditionedTrainingData,
+    system: ImprovisationalTAMPSystem[ObsType, ActType],
+    planning_graph: PlanningGraph,
+    config: dict[str, Any],
+    save_dir: Path,
+    rng: np.random.Generator,
+    ) -> GoalConditionedTrainingData:
+
+    """
+    Stage (2,3): Iteratively trains a heuristic and applies a pruning method to full training data.
+
+    Args:
+        training_data: Full collected training data
+        system: The TAMP system
+        planning_graph: The planning graph
+        config: Full config dictionary
+        save_dir: Directory to save/load the heuristic and pruned data
+        rng: Random number generator
+
+    Returns:
+        Pruned GoalConditionedTrainingData
+    """
+
+    ##############################
+    # HEURISTIC CACHE SAVE SETUP #
+    ##############################
+    heuristic = None
+    heuristic_dir = save_dir / "distance_heuristic"
+    config_path = heuristic_dir / "config.json"
+
+    # Config keys that affect heuristic training
+    heuristic_config_keys = [
+        "seed",
+        "heuristic_training_pairs",
+        "heuristic_training_steps",
+        "heuristic_learning_rate",
+        "heuristic_batch_size",
+        "heuristic_buffer_size",
+        "heuristic_max_steps",
+        "max_pruning_iterations",
+    ]
+
+    # Collection fingerprint (to detect if upstream data changed)
+    collection_config_keys = [
+        "seed",
+        "collect_episodes",
+        "use_random_rollouts",
+        "num_rollouts_per_node",
+    ]
+    collection_fingerprint = _hash_config(config, collection_config_keys)
+
+    ############################
+    # PRUNING CACHE SAVE SETUP #
+    ############################
+    pruning_method = config.get("pruning_method", "none")
+    pruning_dir = save_dir / f"pruned_data_{pruning_method}"
+    data_path = pruning_dir / "data.pkl"
+    config_path = pruning_dir / "config.json"
+
+    # Config keys that affect pruning
+    pruning_config_keys = ["seed", "pruning_method"]
+
+    # Add method-specific config keys
+    if pruning_method == "random":
+        pruning_config_keys.extend(["num_shortcuts_to_keep"])
+    elif pruning_method == "rollouts":
+        pruning_config_keys.extend(
+            [
+                "num_rollouts_per_node",
+                "max_steps_per_rollout",
+                "shortcut_success_threshold",
+            ]
+        )
+    elif pruning_method == "distance_heuristic":
+        pruning_config_keys.extend(["heuristic_practical_horizon"])
+
+    # Heuristic fingerprint (to detect if upstream heuristic changed)
+    heuristic_fingerprint = None
+    if pruning_method == "distance_heuristic":
+        heuristic_config_keys = [
+            "seed",
+            "heuristic_training_pairs",
+            "heuristic_training_steps",
+            "heuristic_learning_rate",
+        ]
+        heuristic_fingerprint = _hash_config(config, heuristic_config_keys)
+
+    ######################
+    # MAIN TRAINING LOOP #
+    ######################
+    max_pruning_iterations = config.get('max_pruning_iterations', 3)
+    full_data = training_data
+    for iteration in range(max_pruning_iterations):
+        print(f"Train and prune iteration number: {iteration}")
+        
+        # First, get the distance heuristic or train it if it is not cached.
+        train_heuristic_start = time.time()
+        heuristic = train_distance_heuristic(training_data, system, config, rng, heuristic=heuristic)
+        total_heuristic_training_time = time.time() - train_heuristic_start
+
+        # Now, given heuristic, prune from full data.
+        prune_start = time.time()
+        pruned_data = prune_training_data(full_data, system, planning_graph, config, rng, heuristic=heuristic)
+        total_pruning_time = time.time() - prune_start
+
+        # Use the pruned data as the training data for the heuristic
+        training_data = pruned_data
+
+        print(f"Total Heuristic Training Time in iteration {iteration}: {total_heuristic_training_time}")
+        print(f"Total Pruning Time in iteration {iteration}: {total_pruning_time}")
+    
+    # Save final heuristic and config
+    heuristic_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\nSaving heuristic to {heuristic_dir}")
+    heuristic.save(str(heuristic_dir))
+
+    # Save config with collection fingerprint
+    saved_config = {k: config.get(k) for k in heuristic_config_keys}
+    saved_config["collection_fingerprint"] = collection_fingerprint
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(saved_config, f, indent=2)
+    print("  Heuristic saved successfully")
+    
+    # Save final pruned data and config
+    pruning_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\nSaving pruned data to {pruning_dir}")
+    with open(data_path, "wb") as f:
+        pickle.dump(pruned_data, f)
+
+    # Save config with heuristic fingerprint (if applicable)
+    saved_config = {k: config.get(k) for k in pruning_config_keys}
+    if heuristic_fingerprint is not None:
+        saved_config["heuristic_fingerprint"] = heuristic_fingerprint
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(saved_config, f, indent=2)
+
+    print(f"  Saved {len(pruned_data.valid_shortcuts)} pruned shortcuts")
+
+    return training_data
 
 
 def get_or_train_policy(
@@ -660,45 +795,64 @@ def train_and_evaluate_with_pipeline(
     if planning_graph is None:
         raise ValueError("Planning graph is required for pruning but not found in training data")
 
-    # Stage 2: Get or train heuristic (if using distance_heuristic pruning)
     heuristic = None
     pruning_method = config.get("pruning_method", "none")
-    if pruning_method == "distance_heuristic":
+    should_iterate = config.get("iterative_pruning", False)
+    # Stage 2/3: Iteratively train heuristic and prune training data
+    if should_iterate and pruning_method == "distance_heuristic":
         print("\n" + "=" * 80)
-        print("STAGE 2: Distance Heuristic Training")
+        print("STAGE 2/3: Iterative Distance Heuristic Training and Pruning")
         print("=" * 80)
         stage_start = time.time()
-        heuristic = get_or_train_heuristic(
-            system,
+        pruned_data = iteratively_train_heuristic_and_prune_data(
             full_data,
+            system,
+            planning_graph,
             config,
             save_dir,
             rng,
-            force_train=config.get("force_train_heuristic", False),
         )
-        stage_times["heuristic"] = time.time() - stage_start
-        print(f"  Stage 2 completed in {stage_times['heuristic']:.1f}s")
+        stage_times["iterative_heuristic"] = time.time() - stage_start
+        print(f"  Stage 2/3 completed in {stage_times['iterative_heuristic']:.1f}s")
     else:
-        stage_times["heuristic"] = 0.0
+        # Stage 2: Get or train heuristic (if using distance_heuristic pruning)
+        
+        if pruning_method == "distance_heuristic":
+            print("\n" + "=" * 80)
+            print("STAGE 2: Distance Heuristic Training")
+            print("=" * 80)
+            stage_start = time.time()
+            heuristic = get_or_train_heuristic(
+                system,
+                full_data,
+                config,
+                save_dir,
+                rng,
+                force_train=config.get("force_train_heuristic", False),
+            )
+            stage_times["heuristic"] = time.time() - stage_start
+            print(f"  Stage 2 completed in {stage_times['heuristic']:.1f}s")
+        else:
+            stage_times["heuristic"] = 0.0
 
-    # Stage 3: Prune data
-    print("\n" + "=" * 80)
-    print("STAGE 3: Pruning")
-    print("=" * 80)
-    stage_start = time.time()
-    pruned_data = prune_full_data(
-        full_data,
-        system,
-        planning_graph,
-        config,
-        save_dir,
-        rng,
-        heuristic=heuristic,
-        force_prune=config.get("force_prune", False),
-        iterative_pruning=config.get("iterative_pruning", False)
-    )
-    stage_times["pruning"] = time.time() - stage_start
-    print(f"  Stage 3 completed in {stage_times['pruning']:.1f}s")
+        # Stage 3: Prune data
+        print("\n" + "=" * 80)
+        print("STAGE 3: Pruning")
+        print("=" * 80)
+        stage_start = time.time()
+        pruned_data = prune_full_data(
+            full_data,
+            system,
+            planning_graph,
+            config,
+            save_dir,
+            rng,
+            heuristic=heuristic,
+            force_prune=config.get("force_prune", False),
+            iterative_pruning=config.get("iterative_pruning", False)
+        )
+        stage_times["pruning"] = time.time() - stage_start
+        print(f"  Stage 3 completed in {stage_times['pruning']:.1f}s")
 
     # Stage 4: Get or train policy
     print("\n" + "=" * 80)
@@ -794,8 +948,9 @@ def train_and_evaluate_with_pipeline(
     print(f"  Avg reward: {avg_reward:.2f}")
     print(f"\nStage Timing Breakdown:")
     print(f"  Stage 1 (Collection):     {stage_times['collection']:>8.1f}s")
-    print(f"  Stage 2 (Heuristic):      {stage_times['heuristic']:>8.1f}s")
-    print(f"  Stage 3 (Pruning):        {stage_times['pruning']:>8.1f}s")
+    print(f"  Stage 2/3 (Iterative Heuristic):      {stage_times['iterative_heuristic']:>8.1f}s")
+    # print(f"  Stage 2 (Heuristic):      {stage_times['heuristic']:>8.1f}s")
+    # print(f"  Stage 3 (Pruning):        {stage_times['pruning']:>8.1f}s")
     print(f"  Stage 4 (Policy Train):   {stage_times['policy_training']:>8.1f}s")
     print(f"  Stage 5 (Evaluation):     {stage_times['evaluation']:>8.1f}s")
     print(f"  Total Training Time:      {training_time:>8.1f}s")

@@ -28,27 +28,27 @@ def iteratively_prune_training_data(
     rng: np.random.Generator,
     heuristic: "GoalConditionedDistanceHeuristic | None" = None,
 ):
-    """This function should iterative train and then prune the training data for 
+    """
+    This function should iterative train and then prune the training data for 
     max_pruning_iterations number of steps.
     
     Returns the trained heuristic.
     """
 
-    max_pruning_iterations = config.get('max_pruning_iterations', 2)
-    max_shortcuts = config.get("max_shortcuts_per_graph", 150)
+    # max_pruning_iterations = config.get('max_pruning_iterations', 3)
+    # max_shortcuts = config.get("max_shortcuts_per_graph", 150)
     
-    for _ in range(max_pruning_iterations):
-        print(" FIRST TIME PRUNING TRAINING DATA")
-        # First, train the distance heuristic
-        heuristic = train_distance_heuristic(training_data, system, config, rng)
+    # for _ in range(max_pruning_iterations):
+    #     print(" FIRST TIME PRUNING TRAINING DATA")
+    #     heuristic = train_distance_heuristic(training_data, system, config, rng)
 
-        # Given heuristic, prune the training data
-        pruned_data = prune_with_distance_heuristic(
-            training_data, system, planning_graph, config, rng, heuristic=heuristic
-        )
+    #     # Given heuristic, prune the training data
+    #     pruned_data = prune_with_distance_heuristic(
+    #         training_data, system, planning_graph, config, rng, heuristic=heuristic
+    #     )
 
-        # Limit the number of training data to be max_shortcuts
-        training_data = prune_random(pruned_data, max_shortcuts, rng)
+    #     # Limit the number of training data to be max_shortcuts
+    #     training_data = prune_random(pruned_data, max_shortcuts, rng)
     
-    return heuristic
+    # return training_data
 

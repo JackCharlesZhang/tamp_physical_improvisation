@@ -29,8 +29,8 @@ def train_distance_heuristic(
     system: ImprovisationalTAMPSystem,
     config: dict[str, Any],
     rng: np.random.Generator,
-    planning_graph: Optional[PlanningGraph] = None,
     sampler: Optional["BaseTrainingDataSampler"] = None,
+    heuristic: Optional[GoalConditionedDistanceHeuristic] = None,
 ) -> "GoalConditionedDistanceHeuristic":
     """Train a distance heuristic on the collected training data.
 
@@ -80,21 +80,27 @@ def train_distance_heuristic(
     training_pairs = sampler.sample()
     print(f"  Selected {len(training_pairs)} pairs for training")
 
-    # Create and train heuristic
-    heuristic_config = DistanceHeuristicConfig(
-        learning_rate=config.get("heuristic_learning_rate", 3e-4),
-        batch_size=config.get("heuristic_batch_size", 256),
-        buffer_size=config.get("heuristic_buffer_size", 100000),
-        max_episode_steps=config.get("heuristic_max_steps", 200),
-        device=config.get("device", "cuda"),
-    )
-
-    heuristic = GoalConditionedDistanceHeuristic(
-        config=heuristic_config, seed=config.get("seed", 42)
-    )
-
     heuristic_training_steps = config.get("heuristic_training_steps", 50000)
-    heuristic.train(system.env, training_pairs, system.perceiver, heuristic_training_steps)
+
+    # If there is an existing heuristic, train it.
+    if heuristic is not None:
+        print(f"Training existing heuristic")
+        heuristic.train(system.env, training_pairs, system.perceiver, heuristic_training_steps)
+    else:
+        # Create and train heuristic
+        heuristic_config = DistanceHeuristicConfig(
+            learning_rate=config.get("heuristic_learning_rate", 3e-4),
+            batch_size=config.get("heuristic_batch_size", 256),
+            buffer_size=config.get("heuristic_buffer_size", 100000),
+            max_episode_steps=config.get("heuristic_max_steps", 200),
+            device=config.get("device", "cuda"),
+        )
+
+        heuristic = GoalConditionedDistanceHeuristic(
+            config=heuristic_config, seed=config.get("seed", 42)
+        )
+
+        heuristic.train(system.env, training_pairs, system.perceiver, heuristic_training_steps)
 
     print("  Heuristic training complete")
     return heuristic
@@ -517,6 +523,7 @@ def prune_with_distance_heuristic(
 
         # Use average distance as the robust estimate
         avg_learned_dist = sum(learned_distances) / len(learned_distances)
+        print(f" ")
         node_pair_distances[node_pair] = avg_learned_dist
 
     print(f"Computed average distances for {len(node_pair_distances)} node pairs")
@@ -534,6 +541,9 @@ def prune_with_distance_heuristic(
         avg_learned_dist = node_pair_distances[(source_id, target_id)]
         graph_dist = graph_distances.get((source_id, target_id), float("inf"))
 
+        print(f"Average Learned Distance: {avg_learned_dist} for source node: {source_id} to target node: {target_id}")
+        print(f"Graph distance: {graph_dist} for source node: {source_id} to target node: {target_id}")
+        
         # Compute the threshold: min(D, K)
         if graph_dist == float("inf"):
             threshold = practical_horizon
