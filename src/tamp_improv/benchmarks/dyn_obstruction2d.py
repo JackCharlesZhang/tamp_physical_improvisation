@@ -1113,7 +1113,7 @@ class BaseDynObstruction2DTAMPSystem(
 
         pick_up_operator = LiftedOperator(
             "PickUp",
-            [robot, block],  # Pick up target_block only (not obstructions)
+            [robot, block, surface],  # Pick up target_block from clear surface
             preconditions={
                 predicates["GripperEmpty"]([robot]),
                 predicates["Clear"]([surface]),
