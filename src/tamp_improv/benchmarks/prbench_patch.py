@@ -27,7 +27,7 @@ def patch_prbench_environments() -> None:
             print(f"[DEBUG] _add_state_to_space called with objects: {[obj.name for obj in state]}")
             print(f"[DEBUG] _current_state has: {[obj.name for obj in self._current_state] if self._current_state else 'None'}")
             print(f"[DEBUG] _initial_constant_state has: {[obj.name for obj in self._initial_constant_state] if self._initial_constant_state else 'None'}")
-            result = original_add_state(state)
+            result = original_add_state(self, state)  # Need to pass self explicitly
             print(f"[DEBUG] After _add_state_to_space, cache has: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()]}")
             return result
 
