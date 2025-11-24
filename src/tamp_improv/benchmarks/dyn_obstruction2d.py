@@ -152,6 +152,9 @@ class DynObstruction2DPredicates:
         self.blocking = Predicate("Blocking", [types.obstruction, types.surface])  # Obstruction blocking surface
         self.holding = Predicate("Holding", [types.robot, types.pickable])  # Use pickable parent type
         self.gripper_empty = Predicate("GripperEmpty", [types.robot])
+        # Count predicates for tracking number of obstructions blocking
+        self.one_obstruction_blocking = Predicate("OneObstructionBlocking", [types.surface])
+        self.two_obstructions_blocking = Predicate("TwoObstructionsBlocking", [types.surface])
 
     def __getitem__(self, key: str) -> Predicate:
         """Get predicate by name."""
@@ -455,17 +458,20 @@ class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
                 # This obstruction is blocking the surface (and not being held)
                 atoms.add(self.predicates["Blocking"]([self._obstructions[i], self._target_surface]))
 
-        # Surface is clear if no Blocking atoms exist for it (derived predicate)
-        any_blocking = any(
-            atom.predicate.name == "Blocking" and atom.entities[1] == self._target_surface
-            for atom in atoms
+        # Count how many obstructions are blocking the target surface
+        blocking_count = sum(
+            1 for atom in atoms
+            if atom.predicate.name == "Blocking" and atom.entities[1] == self._target_surface
         )
-        if not any_blocking:
-            #print(f"[Perceiver] Adding Clear predicate (no blocking atoms)")
+
+        # Add count predicates based on how many obstructions are blocking
+        if blocking_count == 0:
             atoms.add(self.predicates["Clear"]([self._target_surface]))
-        else:
-            blocking_atoms = [atom for atom in atoms if atom.predicate.name == "Blocking"]
-            #print(f"[Perceiver] NOT adding Clear predicate - Blocking atoms: {blocking_atoms}")
+        elif blocking_count == 1:
+            atoms.add(self.predicates["OneObstructionBlocking"]([self._target_surface]))
+        elif blocking_count == 2:
+            atoms.add(self.predicates["TwoObstructionsBlocking"]([self._target_surface]))
+        # Note: For num_obstructions > 2, we'd need more count predicates
 
         # DEBUG: Print all current atoms/predicates
         print(f"\n[Perceiver] Current state atoms ({len(atoms)}):")
@@ -788,6 +794,26 @@ class PickUpFromTargetSkill(PickUpSkill):
         return super()._get_action_given_objects(objects, obs)
 
 
+class PickUpFirstFromTargetSkill(PickUpSkill):
+    """SLAP skill for picking up first obstruction (2→1 transition)."""
+
+    def _get_operator_name(self) -> str:
+        return "PickUpFirstFromTarget"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        return super()._get_action_given_objects(objects, obs)
+
+
+class PickUpLastFromTargetSkill(PickUpSkill):
+    """SLAP skill for picking up last obstruction (1→0/Clear transition)."""
+
+    def _get_operator_name(self) -> str:
+        return "PickUpLastFromTarget"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        return super()._get_action_given_objects(objects, obs)
+
+
 class PlaceSkill(BaseDynObstruction2DSkill):
     """SLAP skill for placing to garbage zone."""
 
@@ -839,6 +865,20 @@ class PlaceSkill(BaseDynObstruction2DSkill):
             return np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
         # print(f"[Place] DONE")
         return np.zeros(5, dtype=np.float64)
+
+
+class PlaceFirstSkill(PlaceSkill):
+    """SLAP skill for placing first obstruction (2→1 transition)."""
+
+    def _get_operator_name(self) -> str:
+        return "PlaceFirst"
+
+
+class PlaceLastSkill(PlaceSkill):
+    """SLAP skill for placing last obstruction (1→0/Clear transition)."""
+
+    def _get_operator_name(self) -> str:
+        return "PlaceLast"
 
 
 class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
@@ -1071,12 +1111,12 @@ class BaseDynObstruction2DTAMPSystem(
         pickable_obj = Variable("?obj", types_container.pickable)  # Parent type for PickUp
         surface = Variable("?surface", types_container.surface)
 
-        # Create operators as a dict first (for easy pairing with controllers)
         pick_up_operator = LiftedOperator(
             "PickUp",
             [robot, block],  # Pick up target_block only (not obstructions)
             preconditions={
                 predicates["GripperEmpty"]([robot]),
+                predicates["Clear"]([surface]),
             },
             add_effects={
                 predicates["Holding"]([robot, block]),
@@ -1086,35 +1126,73 @@ class BaseDynObstruction2DTAMPSystem(
             },
         )
 
-        pick_up_from_target_operator = LiftedOperator(
-            "PickUpFromTarget",
-            [robot, obstruction, surface],  # Pick up blocking obstructions from target surface
+        pick_up_first_from_target_operator = LiftedOperator(
+            "PickUpFirstFromTarget",
+            [robot, obstruction, surface],
             preconditions={
                 predicates["GripperEmpty"]([robot]),
-                predicates["Blocking"]([obstruction, surface]),  # MUST be blocking to pick up
+                predicates["Blocking"]([obstruction, surface]),
+                predicates["TwoObstructionsBlocking"]([surface]),
             },
             add_effects={
                 predicates["Holding"]([robot, obstruction]),
+                predicates["OneObstructionBlocking"]([surface]),
             },
             delete_effects={
                 predicates["GripperEmpty"]([robot]),
-                predicates["Blocking"]([obstruction, surface]),  # Remove blocking when picked up
+                predicates["Blocking"]([obstruction, surface]),
+                predicates["TwoObstructionsBlocking"]([surface]),
             },
         )
 
-        place_operator = LiftedOperator(
-            "Place",
-            [robot, obstruction, surface],  # Place obstruction in garbage zone
+        pick_up_last_from_target_operator = LiftedOperator(
+            "PickUpLastFromTarget",
+            [robot, obstruction, surface],
+            preconditions={
+                predicates["GripperEmpty"]([robot]),
+                predicates["Blocking"]([obstruction, surface]),
+                predicates["OneObstructionBlocking"]([surface]),
+            },
+            add_effects={
+                predicates["Holding"]([robot, obstruction]),
+                predicates["Clear"]([surface]),
+            },
+            delete_effects={
+                predicates["GripperEmpty"]([robot]),
+                predicates["Blocking"]([obstruction, surface]),
+                predicates["OneObstructionBlocking"]([surface]),
+            },
+        )
+
+        place_first_operator = LiftedOperator(
+            "PlaceFirst",
+            [robot, obstruction, surface],  # Place first obstruction (2→1 transition)
             preconditions={
                 predicates["Holding"]([robot, obstruction]),
+                predicates["OneObstructionBlocking"]([surface]),
             },
             add_effects={
                 predicates["GripperEmpty"]([robot]),
-                # Note: We don't add Clear here - PickUpFromTarget already deleted Blocking
-                # Clear will be computed by Perceiver if no more Blocking atoms exist
             },
             delete_effects={
                 predicates["Holding"]([robot, obstruction]),
+            },
+        )
+
+        place_last_operator = LiftedOperator(
+            "PlaceLast",
+            [robot, obstruction, surface],  # Place last obstruction (1→0/Clear transition)
+            preconditions={
+                predicates["Holding"]([robot, obstruction]),
+                predicates["OneObstructionBlocking"]([surface]),
+            },
+            add_effects={
+                predicates["GripperEmpty"]([robot]),
+                predicates["Clear"]([surface]),
+            },
+            delete_effects={
+                predicates["Holding"]([robot, obstruction]),
+                predicates["OneObstructionBlocking"]([surface]),
             },
         )
 
@@ -1145,8 +1223,10 @@ class BaseDynObstruction2DTAMPSystem(
 
         operators_dict = {
             "PickUp": pick_up_operator,
-            "PickUpFromTarget": pick_up_from_target_operator,
-            "Place": place_operator,
+            "PickUpFirstFromTarget": pick_up_first_from_target_operator,
+            "PickUpLastFromTarget": pick_up_last_from_target_operator,
+            "PlaceFirst": place_first_operator,
+            "PlaceLast": place_last_operator,
             "PlaceOnTarget": place_on_target_operator,
             # "Push": push_operator,  # Commented out for now
         }
@@ -1177,8 +1257,10 @@ class BaseDynObstruction2DTAMPSystem(
         # Add SLAP skills
         system.components.skills.update({
             PickUpSkill(system.components),  # type: ignore
-            PickUpFromTargetSkill(system.components),  # type: ignore
-            PlaceSkill(system.components),  # type: ignore
+            PickUpFirstFromTargetSkill(system.components),  # type: ignore
+            PickUpLastFromTargetSkill(system.components),  # type: ignore
+            PlaceFirstSkill(system.components),  # type: ignore
+            PlaceLastSkill(system.components),  # type: ignore
             PlaceOnTargetSkill(system.components),  # type: ignore
             # PushSkill(system.components),  # type: ignore  # Commented out for now
         })
@@ -1234,8 +1316,10 @@ class DynObstruction2DTAMPSystem(
         # Add SLAP skills
         system.components.skills.update({
             PickUpSkill(system.components),  # type: ignore
-            PickUpFromTargetSkill(system.components),  # type: ignore
-            PlaceSkill(system.components),  # type: ignore
+            PickUpFirstFromTargetSkill(system.components),  # type: ignore
+            PickUpLastFromTargetSkill(system.components),  # type: ignore
+            PlaceFirstSkill(system.components),  # type: ignore
+            PlaceLastSkill(system.components),  # type: ignore
             PlaceOnTargetSkill(system.components),  # type: ignore
             # PushSkill(system.components),  # type: ignore  # Commented out for now
         })
