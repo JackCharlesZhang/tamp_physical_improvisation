@@ -47,6 +47,26 @@ def patch_prbench_environments() -> None:
         ObjectCentricDynObstruction2DEnv._add_state_to_space = debug_add_state_to_space
         print("[PRBENCH_PATCH] Added debug wrapper to _add_state_to_space")
 
+        # Patch _read_state_from_space to debug right before the assertion
+        original_read_state = ObjectCentricDynObstruction2DEnv._read_state_from_space
+
+        def debug_read_state_from_space(self):
+            print(f"[DEBUG] _read_state_from_space called")
+            print(f"[DEBUG] _current_state has objects: {[obj.name for obj in self._current_state]}")
+            print(f"[DEBUG] cache has objects: {[obj.name for obj in self._state_obj_to_pymunk_body.keys()]}")
+            # Check obstruction0 IDs
+            current_obstruction = [obj for obj in self._current_state if obj.name == 'obstruction0']
+            cache_obstruction = [obj for obj in self._state_obj_to_pymunk_body.keys() if obj.name == 'obstruction0']
+            if current_obstruction and cache_obstruction:
+                print(f"[DEBUG] obstruction0 ID in _current_state: {id(current_obstruction[0])}")
+                print(f"[DEBUG] obstruction0 ID in cache: {id(cache_obstruction[0])}")
+                print(f"[DEBUG] Are they the same object? {current_obstruction[0] is cache_obstruction[0]}")
+                print(f"[DEBUG] Is current_obstruction[0] in cache keys? {current_obstruction[0] in self._state_obj_to_pymunk_body}")
+            return original_read_state(self)
+
+        ObjectCentricDynObstruction2DEnv._read_state_from_space = debug_read_state_from_space
+        print("[PRBENCH_PATCH] Added debug wrapper to _read_state_from_space")
+
         # Patch ConstantObjectPRBenchEnv
         if not hasattr(ConstantObjectPRBenchEnv, "reset_from_state"):
 
