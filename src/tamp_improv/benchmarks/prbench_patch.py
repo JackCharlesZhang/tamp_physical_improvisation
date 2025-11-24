@@ -16,6 +16,9 @@ def patch_prbench_environments() -> None:
     try:
         from prbench.core import ConstantObjectPRBenchEnv
         from prbench.envs.dynamic2d.base_env import ObjectCentricDynamic2DRobotEnv
+        from prbench.envs.dynamic2d.dyn_obstruction2d import (
+            ObjectCentricDynObstruction2DEnv,
+        )
 
         # Patch ConstantObjectPRBenchEnv
         if not hasattr(ConstantObjectPRBenchEnv, "reset_from_state"):
@@ -35,6 +38,12 @@ def patch_prbench_environments() -> None:
                 # Debug: check what kind of state we're getting
                 if isinstance(state, np.ndarray):
                     print(f"[DEBUG] reset_from_state: got numpy array of shape {state.shape}")
+                    print(f"[DEBUG] _constant_objects: {[obj.name for obj in self._constant_objects]}")
+                    # Devectorize to see what objects will be in the state
+                    from relational_structs.spaces import ObjectCentricBoxSpace
+                    if isinstance(self.observation_space, ObjectCentricBoxSpace):
+                        devectorized = self.observation_space.devectorize(state)
+                        print(f"[DEBUG] Devectorized state has objects: {[obj.name for obj in devectorized]}")
                 else:
                     print(f"[DEBUG] reset_from_state: got ObjectCentricState with objects: {[obj.name for obj in state]}")
                 return self.reset(seed=seed, options={"init_state": state})
