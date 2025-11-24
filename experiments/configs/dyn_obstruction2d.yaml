@@ -16,7 +16,7 @@ batch_size: 32
 
 use_random_rollouts: true
 num_rollouts_per_node: 1000
-max_steps_per_rollout: 100
+max_steps_per_rollout: 1000
 shortcut_success_threshold: 1
 
 learning_rate: 3.0e-4
