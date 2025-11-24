@@ -73,20 +73,21 @@ def add_bounds_checking_to_env(env, world_bounds: tuple[float, float, float, flo
     else:
         target_env = env
 
-    original_step = target_env.step
+    # Get the UNBOUND method from the class to avoid capturing instance reference
+    original_step = type(target_env).step
 
-    def patched_step(action):
+    def patched_step(self, action):
         # Call original step
-        result = original_step(action)
+        result = original_step(self, action)
 
         # Check bounds for all objects (skip walls and static objects)
-        if hasattr(target_env, '_state_obj_to_pymunk_body'):
-            for obj, body in target_env._state_obj_to_pymunk_body.items():
+        if hasattr(self, '_state_obj_to_pymunk_body'):
+            for obj, body in self._state_obj_to_pymunk_body.items():
                 # Skip walls, table, and target_surface (static objects)
                 if 'wall' in obj.name.lower() or obj.name in ['table', 'target_surface']:
                     continue
 
-                if hasattr(target_env, 'pymunk_space') and body in target_env.pymunk_space.bodies:
+                if hasattr(self, 'pymunk_space') and body in self.pymunk_space.bodies:
                     log_bounds_check(
                         obj_name=obj.name,
                         position=(body.position.x, body.position.y),
@@ -114,12 +115,15 @@ def add_held_state_logging_to_env(env) -> None:
     if not hasattr(target_env, '_add_state_to_space'):
         raise AttributeError(f"Environment {type(target_env).__name__} does not have _add_state_to_space")
 
-    original_add_state = target_env._add_state_to_space
+    # Get the UNBOUND method from the class, not the bound method from the instance
+    # This is critical for deepcopy to work correctly - we don't want to capture
+    # a reference to a specific environment instance
+    original_add_state = type(target_env)._add_state_to_space
 
     # Track previous states
     _obj_states = {}
 
-    def patched_add_state(state):
+    def patched_add_state(self, state):
         """Log state transitions before adding to space."""
         nonlocal _obj_states
 
@@ -144,8 +148,8 @@ def add_held_state_logging_to_env(env) -> None:
             except Exception:
                 pass  # Skip objects without 'held' attribute
 
-        # Call original
-        original_add_state(state)
+        # Call original with self explicitly to use the correct instance
+        original_add_state(self, state)
 
     target_env._add_state_to_space = patched_add_state
 
