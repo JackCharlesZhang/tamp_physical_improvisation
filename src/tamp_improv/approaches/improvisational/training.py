@@ -40,7 +40,7 @@ class TrainingConfig:
 
     seed: int = 42
     num_episodes: int = 50
-    max_steps: int = 100
+    eval_max_steps: int = 100
     max_training_steps_per_shortcut: int = 50
 
     collect_episodes: int = 100
@@ -178,6 +178,21 @@ def run_evaluation_episode(
     step_count = 0
     success = False
 
+    # Check for early termination cases from reset
+    if step_result.terminate:
+        # Check if it's "already at goal" (success) or "no path found" (failure)
+        if step_result.info.get("already_at_goal", False):
+            success = True
+        elif step_result.info.get("no_path_found", False):
+            success = False
+        else:
+            # Other termination reasons - treat as failure
+            success = False
+        if config.render and can_render:
+            cast(Any, system.env).close()
+            system.env = recording_env
+        return total_reward, step_count, success
+
     # Execute first action from the reset
     obs, reward, terminated, truncated, info = system.env.step(step_result.action)
     total_reward += float(reward)
@@ -190,7 +205,7 @@ def run_evaluation_episode(
         return total_reward, step_count, success
 
     # Rest of steps
-    for _ in range(1, config.max_steps):
+    for _ in range(1, config.eval_max_steps):
         step_result = approach.step(obs, total_reward, False, False, info)
         obs, reward, terminated, truncated, info = system.env.step(step_result.action)
         total_reward += float(reward)
@@ -230,6 +245,20 @@ def run_evaluation_episode_with_caching(
 
     obs, info = system.reset()
     step_result = approach.reset(obs, info)
+
+    print("First step result:", step_result)
+    print("Current path:", approach.current_path)
+
+    # Check for early termination cases from reset
+    if step_result.terminate:
+        # Check if it's "already at goal" (success) or "no path found" (failure)
+        if step_result.info.get("already_at_goal", False):
+            return 0.0, 0, True
+        elif step_result.info.get("no_path_found", False):
+            return 0.0, 0, False
+        else:
+            # Other termination reasons - treat as failure
+            return 0.0, 0, False
 
     if config.fast_eval and not (config.render and can_render):
         step_count = approach.best_eval_total_steps
@@ -296,7 +325,7 @@ def run_evaluation_episode_with_caching(
             break
 
     if not done:
-        for _ in range(1, config.max_steps):
+        for _ in range(1, config.eval_max_steps):
             step_result = approach.step(obs, total_reward, False, False, info)
             obs, reward, terminated, truncated, info = system.env.step(
                 step_result.action
@@ -365,7 +394,7 @@ def train_and_evaluate(
                     system.wrapped_env,
                     system.perceiver,
                     max_atom_size=config.max_atom_size,
-                    max_episode_steps=config.max_steps,
+                    max_episode_steps=config.eval_max_steps,
                 )
                 system.wrapped_env = context_env
 
@@ -489,7 +518,7 @@ def train_and_evaluate_goal_conditioned(
                 success_threshold=config.success_threshold,
                 success_reward=config.success_reward,
                 step_penalty=config.step_penalty,
-                max_episode_steps=config.max_steps,
+                max_episode_steps=config.eval_max_steps,
             )
             system.wrapped_env = goal_env
 
@@ -582,7 +611,7 @@ def train_and_evaluate_rl_baseline(
             env=system.env,
             perceiver=system.perceiver,
             goal_atoms=goal_atoms,
-            max_episode_steps=config.max_steps,
+            max_episode_steps=config.eval_max_steps,
             step_penalty=config.step_penalty,
             achievement_bonus=config.success_reward,
             action_scale=config.action_scale,
@@ -593,14 +622,14 @@ def train_and_evaluate_rl_baseline(
             perceiver=system.perceiver,
             goal_atoms=goal_atoms,
             max_atom_size=max_atom_size,
-            max_episode_steps=config.max_steps,
+            max_episode_steps=config.eval_max_steps,
             step_penalty=config.step_penalty,
             success_reward=config.success_reward,
         )
     else:
         wrapped_env = HierarchicalRLWrapper(
             tamp_system=system,
-            max_episode_steps=config.max_steps,
+            max_episode_steps=config.eval_max_steps,
             max_skill_steps=max_skill_steps,
             step_penalty=config.step_penalty,
             achievement_bonus=config.success_reward,

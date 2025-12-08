@@ -109,6 +109,7 @@ def collect_states_for_all_nodes(
                     break
 
             if success:
+                # print("Success:", target_node, obs)
                 observed_states[target_node.id] = obs
                 break
 

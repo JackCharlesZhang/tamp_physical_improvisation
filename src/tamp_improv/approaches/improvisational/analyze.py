@@ -9,9 +9,8 @@ from tamp_improv.approaches.improvisational.graph import PlanningGraph, Planning
 from tamp_improv.approaches.improvisational.policies.base import Policy, PolicyContext
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
 
-if TYPE_CHECKING:
-    from tamp_improv.benchmarks.gridworld import GridworldTAMPSystem, GraphInstance
-
+from tamp_improv.benchmarks.gridworld import GridworldTAMPSystem, GraphInstance
+from tamp_improv.benchmarks.gridworld_fixed import GridworldFixedTAMPSystem
 ObsType = TypeVar("ObsType")
 
 
@@ -107,6 +106,8 @@ def execute_edge_once(
             - success: Whether the target atoms were reached
             - num_steps: Number of steps taken (max_steps if failed)
     """
+    # print("Executing edge", edge, "from", start_state)
+
     if edge.operator is None or edge.is_shortcut:
         # Can't execute edge without operator, or if it's a shortcut
         return False, max_steps
@@ -133,11 +134,13 @@ def execute_edge_once(
     for _ in range(max_steps):
         # Get action from skill
         action = skill.get_action(obs)
+        # print(action)
         if action is None:
             break
 
         # Step environment
-        obs, _, terminated, truncated, info = env.step(action)
+        obs, _, _, _, _ = env.step(action)
+
         num_steps += 1
 
         # Check if we reached target atoms
@@ -146,9 +149,6 @@ def execute_edge_once(
             success = True
             break
 
-        # Check if episode ended
-        if terminated or truncated:
-            break
 
     return success, num_steps
 
@@ -193,8 +193,9 @@ def compute_average_edge_cost(
             costs.append(max_steps)  # Penalty for failure
 
     # Return average cost
+    # print("Costs of edge", edge, "are", costs)
     if costs:
-        return float(np.mean(costs))
+        return float(np.max(costs))
     return float("inf")
 
 
@@ -236,12 +237,87 @@ def compute_all_edge_costs(
             system, edge, node_states[source_atoms], num_samples, max_steps
         )
 
+
         # Print progress every 10 edges
         if (edge_idx + 1) % 10 == 0:
             print(f"  Processed {edge_idx + 1}/{len(graph.edges)} edges")
 
     print(f"Edge cost computation complete!")
 
+def compute_true_distance_gridworld_fixed(
+    system: "GridworldFixedTAMPSystem",
+    start_state: "GraphInstance",
+    goal_node_atoms: set[GroundAtom],
+) -> float:
+    """Compute true minimum Manhattan distance from start state to goal node.
+
+    For gridworld, we can compute the exact minimum distance because:
+    1. The state space is continuous positions in a grid
+    2. Goal nodes are defined by cell predicates (e.g., InRow1, InCol2)
+    3. Manhattan distance is the true optimal distance (no teleporters case)
+
+    Args:
+        system: GridworldTAMPSystem instance
+        start_state: Low-level state (GraphInstance observation)
+        goal_node_atoms: Set of atoms defining the goal node
+
+    Returns:
+        Minimum Manhattan distance from start_state to any state satisfying goal_node_atoms
+
+    Example:
+        Grid is 3x3 cells with 10x10 states per cell (total 30x30 continuous space)
+        Start state: robot at (0, 2)
+        Goal node: InRow1, InCol1 (cell (1,1))
+        The closest state in cell (1,1) is at position (10, 10)
+        True distance = |0-10| + |2-10| = 10 + 8 = 18
+    """
+    # Extract robot position from start state
+    robot_node = start_state.nodes[0]  # type=0 is robot
+    robot_x, robot_y = robot_node[0], robot_node[1]
+
+    # Parse goal atoms to determine target cell
+    # Atoms are like: InRow1(robot0), InCol2(robot0)
+    target_row = None
+    target_col = None
+
+    for atom in goal_node_atoms:
+        atom_str = str(atom)
+        if "InRow" in atom_str or "Row" in atom_str:
+            # Extract row number from atom like "InRow1(robot0)" or "Row1(robot0)"
+            for i in range(system.env.num_cells):
+                if f"Row{i}" in atom_str or f"InRow{i}" in atom_str:
+                    target_row = i
+                    break
+        elif "InCol" in atom_str or "Col" in atom_str:
+            # Extract col number from atom like "InCol2(robot0)" or "Col2(robot0)"
+            for i in range(system.env.num_cells):
+                if f"Col{i}" in atom_str or f"InCol{i}" in atom_str:
+                    target_col = i
+                    break
+
+    if target_row is None or target_col is None:
+        # Incomplete goal specification
+        return float("inf")
+
+    # Compute cell boundaries
+    # Each cell spans [row*states_per_cell, (row+1)*states_per_cell]
+    num_states_per_cell = system.env.num_states_per_cell
+
+    # Target cell boundaries in continuous space
+    target_x_min = target_col * num_states_per_cell
+    target_x_max = (target_col + 1) * num_states_per_cell
+    target_y_min = target_row * num_states_per_cell
+    target_y_max = (target_row + 1) * num_states_per_cell
+
+    # Find closest point in target cell to robot position
+    # Clamp robot position to cell boundaries
+    closest_x = np.clip(robot_x, target_x_min, target_x_max)
+    closest_y = np.clip(robot_y, target_y_min, target_y_max)
+
+    # Manhattan distance
+    distance = abs(robot_x - closest_x) + abs(robot_y - closest_y)
+
+    return float(distance)
 
 def compute_true_distance_gridworld(
     system: "GridworldTAMPSystem",
@@ -330,6 +406,18 @@ def compute_true_distance_gridworld(
 
     return float(distance)
 
+def compute_graph_node_distance(
+    planning_graph: PlanningGraph,
+    start_node_atoms: set[GroundAtom],
+    goal_node_atoms: set[GroundAtom]
+):
+    path = planning_graph.find_shortest_path(start_node_atoms, goal_node_atoms)
+    dist = 0
+    for edge in path:
+        dist += edge.cost
+    return dist
+
+    
 
 def compute_true_distance(
     system: ImprovisationalTAMPSystem,
@@ -352,7 +440,19 @@ def compute_true_distance(
 
     if isinstance(system, GridworldTAMPSystem):
         return compute_true_distance_gridworld(system, start_state, goal_node_atoms)
+    elif isinstance(system, GridworldFixedTAMPSystem):
+        return compute_true_distance_gridworld_fixed(system, start_state, goal_node_atoms)
     else:
         raise NotImplementedError(
             f"True distance computation not implemented for {type(system).__name__}"
         )
+
+def compute_true_node_distance(
+    system: ImprovisationalTAMPSystem,
+    start_states: list[ObsType],
+    goal_node_atoms: set[GroundAtom],
+) -> float:
+    dists = []
+    for s in start_states:
+        dists.append(compute_true_distance(system, s, goal_node_atoms))
+    return np.max(dists)

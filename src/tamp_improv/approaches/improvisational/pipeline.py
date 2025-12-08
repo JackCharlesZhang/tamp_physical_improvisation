@@ -36,6 +36,7 @@ from tamp_improv.approaches.improvisational.training import (
     Metrics,
     TrainingConfig,
     run_evaluation_episode_with_caching,
+    run_evaluation_episode
 )
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
 from tamp_improv.utils.gpu_utils import set_torch_seed
@@ -924,7 +925,7 @@ def train_and_evaluate_with_pipeline(
     successes = []
 
     for episode in range(num_eval_episodes):
-        reward, length, success = run_evaluation_episode_with_caching(
+        reward, length, success = run_evaluation_episode(
             system, approach, policy_name, eval_config, episode
         )
         rewards.append(reward)

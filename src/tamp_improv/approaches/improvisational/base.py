@@ -175,13 +175,46 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         self.observed_states[initial_node.id] = []
         self.observed_states[initial_node.id].append(obs)
 
+        # Check if already at goal
+        if goal.issubset(atoms):
+            # Already at goal - episode immediately succeeds
+            self.current_path = []
+            self.best_eval_path = []
+            self.best_eval_total_steps = 0
+            self._current_operator = None
+            self._current_skill = None
+            self._current_edge = None
+            self._goal_atoms = set()
+            self.policy_active = False
+            # Terminate with success
+            return ApproachStepResult(
+                action=self.system.wrapped_env.action_space.sample(),
+                terminate=True,
+                info={"already_at_goal": True}
+            )
+
         # Compute edge costs and find shortest path
+        print("Training mode:", self.training_mode)
         if not self.training_mode:
             self._try_add_shortcuts(self.planning_graph)
             self.current_path = self._compute_eval_path(obs, info, goal)
+            # print("Computed eval path:", self.current_path)
         else:
             self._compute_planning_graph_edge_costs(obs, info)
             self.current_path = self.planning_graph.find_shortest_path(atoms, goal)
+
+        # If no path found, terminate with failure
+        if not self.current_path:
+            self._current_operator = None
+            self._current_skill = None
+            self._current_edge = None
+            self._goal_atoms = set()
+            self.policy_active = False
+            return ApproachStepResult(
+                action=self.system.wrapped_env.action_space.sample(),
+                terminate=True,
+                info={"no_path_found": True}
+            )
 
         self.best_eval_path = list(self.current_path)
         self.best_eval_total_steps = int(
@@ -306,6 +339,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             raise TaskThenMotionPlanningFailure("No current skill")
 
         try:
+            print("I am getting my current skill's action:", self._current_skill)
             action = self._current_skill.get_action(obs)
             if action is None:
                 print(f"No action returned by skill {self._current_skill}")
@@ -511,8 +545,16 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             node for node in self.planning_graph.nodes if goal.issubset(node.atoms)
         ]
 
+        print("Initial node:", initial_node)
+        print("Goal nodes:", goal_nodes)
+
         if not goal_nodes:
             print("No goal nodes found in planning graph")
+            return []
+
+        # Check if already at goal
+        if initial_node in goal_nodes:
+            print("Already at goal node - no path needed")
             return []
 
         raw_env = self._create_planning_env()
@@ -567,7 +609,8 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             for edge in self.planning_graph.node_to_outgoing_edges.get(
                 current_node, []
             ):
-                if edge.target.id <= current_node.id:
+                # Check if target node is already in current path to prevent cycles
+                if edge.target.id in current_path:
                     continue
 
                 edge_cost, end_state, end_info, success = self._execute_edge(

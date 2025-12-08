@@ -185,7 +185,7 @@ class PlanningGraph:
                     distances[new_state] = float(new_dist)
                     previous[new_state] = (current_state, edge)
                     heapq.heappush(queue, (new_dist, next(counter), new_state))
-
+        print("Start node:", init_atoms)
         print("Goal nodes:", goal_nodes)
         best_goal_states = {}
         for goal_node in goal_nodes:
