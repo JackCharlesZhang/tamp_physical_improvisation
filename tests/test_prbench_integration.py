@@ -1,6 +1,16 @@
 """Tests for PRBench integration adapters."""
 
 import pytest
+
+# Monkey-patch Tobject into tomsgeoms2d if it doesn't exist
+# MUST happen BEFORE importing prbench!
+import tomsgeoms2d.structs
+
+if not hasattr(tomsgeoms2d.structs, "Tobject"):
+    from tomsgeoms2d.structs import Lobject
+
+    tomsgeoms2d.structs.Tobject = Lobject
+
 from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv
 from prbench_bilevel_planning.env_models import create_bilevel_planning_models
 

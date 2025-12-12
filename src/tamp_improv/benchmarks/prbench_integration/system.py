@@ -5,6 +5,18 @@ from typing import Any
 import gymnasium as gym
 import numpy as np
 from numpy.typing import NDArray
+
+# Monkey-patch Tobject into tomsgeoms2d if it doesn't exist
+# (prbench imports it but dyn_obstruction2d doesn't actually use it)
+# MUST happen BEFORE importing prbench!
+import tomsgeoms2d.structs
+
+if not hasattr(tomsgeoms2d.structs, "Tobject"):
+    # Create a dummy Tobject class to satisfy prbench imports
+    from tomsgeoms2d.structs import Lobject
+
+    tomsgeoms2d.structs.Tobject = Lobject  # Use Lobject as a stand-in
+
 from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv
 from prbench_bilevel_planning.env_models import create_bilevel_planning_models
 from relational_structs import PDDLDomain
