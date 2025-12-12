@@ -1,7 +1,10 @@
 """Tests for PRBench integration adapters."""
 
 import pytest
-from prbench.envs.dynamic2d.dyn_obstruction2d import ObjectCentricDynObstruction2DEnv
+from prbench.envs.dynamic2d.dyn_obstruction2d import (
+    ObjectCentricDynObstruction2DEnv,
+    VectorizedDynObstruction2DEnv,
+)
 from prbench_bilevel_planning.env_models.dynamic2d.dynobstruction2d import (
     create_bilevel_planning_models,
 )
@@ -17,7 +20,7 @@ class TestPRBenchPredicateContainer:
 
     def test_initialization(self):
         """Test that container can be created from PRBench predicates."""
-        env = ObjectCentricDynObstruction2DEnv(num_obstructions=2)
+        env = VectorizedDynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
             env.observation_space, env.action_space, num_obstructions=2
         )
@@ -29,7 +32,7 @@ class TestPRBenchPredicateContainer:
 
     def test_getitem(self):
         """Test predicate access by name."""
-        env = ObjectCentricDynObstruction2DEnv(num_obstructions=2)
+        env = VectorizedDynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
             env.observation_space, env.action_space, num_obstructions=2
         )
@@ -51,7 +54,7 @@ class TestPRBenchPredicateContainer:
 
     def test_as_set(self):
         """Test conversion to set."""
-        env = ObjectCentricDynObstruction2DEnv(num_obstructions=2)
+        env = VectorizedDynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
             env.observation_space, env.action_space, num_obstructions=2
         )
@@ -68,7 +71,7 @@ class TestPRBenchPredicateContainer:
 
     def test_contains(self):
         """Test membership checking."""
-        env = ObjectCentricDynObstruction2DEnv(num_obstructions=2)
+        env = VectorizedDynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
             env.observation_space, env.action_space, num_obstructions=2
         )
@@ -85,7 +88,7 @@ class TestPRBenchPerceiver:
 
     def test_initialization(self):
         """Test that perceiver can be created."""
-        env = ObjectCentricDynObstruction2DEnv(num_obstructions=2)
+        env = VectorizedDynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
             env.observation_space, env.action_space, num_obstructions=2
         )
@@ -101,7 +104,7 @@ class TestPRBenchPerceiver:
 
     def test_reset(self):
         """Test perceiver reset returns objects, atoms, and goal."""
-        env = ObjectCentricDynObstruction2DEnv(num_obstructions=2)
+        env = VectorizedDynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
             env.observation_space, env.action_space, num_obstructions=2
         )
@@ -136,7 +139,7 @@ class TestPRBenchPerceiver:
 
     def test_step(self):
         """Test perceiver step returns current atoms."""
-        env = ObjectCentricDynObstruction2DEnv(num_obstructions=2)
+        env = VectorizedDynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
             env.observation_space, env.action_space, num_obstructions=2
         )
@@ -165,7 +168,7 @@ class TestPRBenchPerceiver:
 
     def test_no_counting_predicates(self):
         """Verify PRBench uses simple predicates, not counting predicates."""
-        env = ObjectCentricDynObstruction2DEnv(num_obstructions=2)
+        env = VectorizedDynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
             env.observation_space, env.action_space, num_obstructions=2
         )
