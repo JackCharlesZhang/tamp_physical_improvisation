@@ -21,11 +21,12 @@ class PRBenchPerceiver(Perceiver[ObjectCentricState]):
     - Returns clean, simple predicates
 
     Example:
-        >>> from prbench_bilevel_planning.env_models.dynamic2d.dynobstruction2d import (
-        ...     create_bilevel_planning_models
+        >>> from prbench_bilevel_planning.env_models import create_bilevel_planning_models
+        >>> sesame_models = create_bilevel_planning_models(
+        ...     "dynobstruction2d", obs_space, action_space, num_obstructions=2
         ... )
-        >>> sesame_models = create_bilevel_planning_models(obs_space, action_space, 2)
         >>> perceiver = PRBenchPerceiver(
+        ...     observation_to_state_fn=sesame_models.observation_to_state,
         ...     state_abstractor_fn=sesame_models.state_abstractor,
         ...     goal_deriver_fn=sesame_models.goal_deriver
         ... )
@@ -35,29 +36,33 @@ class PRBenchPerceiver(Perceiver[ObjectCentricState]):
 
     def __init__(
         self,
+        observation_to_state_fn: Callable[[Any], ObjectCentricState],
         state_abstractor_fn: Callable[[ObjectCentricState], Any],
         goal_deriver_fn: Callable[[ObjectCentricState], Any],
     ) -> None:
         """Initialize perceiver with PRBench's abstraction functions.
 
         Args:
+            observation_to_state_fn: PRBench's observation_to_state function that converts
+                vectorized observation → ObjectCentricState
             state_abstractor_fn: PRBench's state_abstractor function that converts
                 ObjectCentricState → RelationalAbstractState
             goal_deriver_fn: PRBench's goal_deriver function that extracts goal
                 atoms from ObjectCentricState
         """
+        self.observation_to_state = observation_to_state_fn
         self.state_abstractor = state_abstractor_fn
         self.goal_deriver = goal_deriver_fn
 
     def reset(
         self,
-        obs: ObjectCentricState,
+        obs: Any,
         info: dict[str, Any],
     ) -> tuple[set[Object], set[GroundAtom], set[GroundAtom]]:
         """Reset perceiver and return objects, initial atoms, and goal atoms.
 
         Args:
-            obs: ObjectCentricState from PRBench environment
+            obs: Vectorized observation from PRBench environment
             info: Environment info dict (unused, for compatibility)
 
         Returns:
@@ -65,11 +70,14 @@ class PRBenchPerceiver(Perceiver[ObjectCentricState]):
             atoms: Set of ground atoms describing initial state
             goal: Set of ground atoms describing goal
         """
+        # Convert vectorized observation to ObjectCentricState
+        state = self.observation_to_state(obs)
+
         # Use PRBench's state_abstractor to get abstract state
-        abstract_state = self.state_abstractor(obs)
+        abstract_state = self.state_abstractor(state)
 
         # Get goal from goal_deriver
-        goal = self.goal_deriver(obs)
+        goal = self.goal_deriver(state)
 
         # Extract objects and atoms from abstract state
         objects = abstract_state.objects
@@ -80,14 +88,16 @@ class PRBenchPerceiver(Perceiver[ObjectCentricState]):
 
         return objects, atoms, goal_atoms
 
-    def step(self, obs: ObjectCentricState) -> set[GroundAtom]:
+    def step(self, obs: Any) -> set[GroundAtom]:
         """Get current ground atoms from observation.
 
         Args:
-            obs: ObjectCentricState from PRBench environment
+            obs: Vectorized observation from PRBench environment
 
         Returns:
             atoms: Set of ground atoms describing current state
         """
-        abstract_state = self.state_abstractor(obs)
+        # Convert vectorized observation to ObjectCentricState
+        state = self.observation_to_state(obs)
+        abstract_state = self.state_abstractor(state)
         return abstract_state.atoms

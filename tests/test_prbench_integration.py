@@ -2,9 +2,7 @@
 
 import pytest
 from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv
-from prbench_bilevel_planning.env_models.dynamic2d.dynobstruction2d import (
-    create_bilevel_planning_models,
-)
+from prbench_bilevel_planning.env_models import create_bilevel_planning_models
 
 from tamp_improv.benchmarks.prbench_integration import (
     PRBenchPerceiver,
@@ -19,19 +17,19 @@ class TestPRBenchPredicateContainer:
         """Test that container can be created from PRBench predicates."""
         env = DynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
-            env.observation_space, env.action_space, num_obstructions=2
+            "dynobstruction2d", env.observation_space, env.action_space, num_obstructions=2
         )
 
         container = PRBenchPredicateContainer(sesame_models.predicates)
 
-        # Should have 4 predicates (PRBench's simple set)
-        assert len(container) == 4
+        # Should have 5 predicates (PRBench's set including AboveTgt)
+        assert len(container) == 5
 
     def test_getitem(self):
         """Test predicate access by name."""
         env = DynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
-            env.observation_space, env.action_space, num_obstructions=2
+            "dynobstruction2d", env.observation_space, env.action_space, num_obstructions=2
         )
 
         container = PRBenchPredicateContainer(sesame_models.predicates)
@@ -46,14 +44,14 @@ class TestPRBenchPredicateContainer:
         holding_obs = container["HoldingObstruction"]
         assert holding_obs.name == "HoldingObstruction"
 
-        on_surface = container["OnTgtSurface"]
-        assert on_surface.name == "OnTgtSurface"
+        on_surface = container["OnTgt"]
+        assert on_surface.name == "OnTgt"
 
     def test_as_set(self):
         """Test conversion to set."""
         env = DynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
-            env.observation_space, env.action_space, num_obstructions=2
+            "dynobstruction2d", env.observation_space, env.action_space, num_obstructions=2
         )
 
         container = PRBenchPredicateContainer(sesame_models.predicates)
@@ -61,7 +59,7 @@ class TestPRBenchPredicateContainer:
 
         # Should return a set
         assert isinstance(pred_set, set)
-        assert len(pred_set) == 4
+        assert len(pred_set) == 5
 
         # Should contain same predicates as original
         assert pred_set == sesame_models.predicates
@@ -70,7 +68,7 @@ class TestPRBenchPredicateContainer:
         """Test membership checking."""
         env = DynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
-            env.observation_space, env.action_space, num_obstructions=2
+            "dynobstruction2d", env.observation_space, env.action_space, num_obstructions=2
         )
 
         container = PRBenchPredicateContainer(sesame_models.predicates)
@@ -87,10 +85,11 @@ class TestPRBenchPerceiver:
         """Test that perceiver can be created."""
         env = DynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
-            env.observation_space, env.action_space, num_obstructions=2
+            "dynobstruction2d", env.observation_space, env.action_space, num_obstructions=2
         )
 
         perceiver = PRBenchPerceiver(
+            observation_to_state_fn=sesame_models.observation_to_state,
             state_abstractor_fn=sesame_models.state_abstractor,
             goal_deriver_fn=sesame_models.goal_deriver,
         )
@@ -103,10 +102,11 @@ class TestPRBenchPerceiver:
         """Test perceiver reset returns objects, atoms, and goal."""
         env = DynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
-            env.observation_space, env.action_space, num_obstructions=2
+            "dynobstruction2d", env.observation_space, env.action_space, num_obstructions=2
         )
 
         perceiver = PRBenchPerceiver(
+            observation_to_state_fn=sesame_models.observation_to_state,
             state_abstractor_fn=sesame_models.state_abstractor,
             goal_deriver_fn=sesame_models.goal_deriver,
         )
@@ -138,10 +138,11 @@ class TestPRBenchPerceiver:
         """Test perceiver step returns current atoms."""
         env = DynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
-            env.observation_space, env.action_space, num_obstructions=2
+            "dynobstruction2d", env.observation_space, env.action_space, num_obstructions=2
         )
 
         perceiver = PRBenchPerceiver(
+            observation_to_state_fn=sesame_models.observation_to_state,
             state_abstractor_fn=sesame_models.state_abstractor,
             goal_deriver_fn=sesame_models.goal_deriver,
         )
@@ -167,10 +168,11 @@ class TestPRBenchPerceiver:
         """Verify PRBench uses simple predicates, not counting predicates."""
         env = DynObstruction2DEnv(num_obstructions=2)
         sesame_models = create_bilevel_planning_models(
-            env.observation_space, env.action_space, num_obstructions=2
+            "dynobstruction2d", env.observation_space, env.action_space, num_obstructions=2
         )
 
         perceiver = PRBenchPerceiver(
+            observation_to_state_fn=sesame_models.observation_to_state,
             state_abstractor_fn=sesame_models.state_abstractor,
             goal_deriver_fn=sesame_models.goal_deriver,
         )
@@ -189,8 +191,8 @@ class TestPRBenchPerceiver:
         assert "Clear" not in all_pred_names
         assert "Blocking" not in all_pred_names
 
-        # Should have PRBench's simple predicates
-        expected_predicates = {"HandEmpty", "HoldingTgt", "HoldingObstruction", "OnTgtSurface"}
+        # Should have PRBench's simple predicates (including AboveTgt for dynamic2d)
+        expected_predicates = {"HandEmpty", "HoldingTgt", "HoldingObstruction", "OnTgt", "AboveTgt"}
         assert all_pred_names.issubset(expected_predicates)
 
         print(f"Predicates used: {all_pred_names}")
