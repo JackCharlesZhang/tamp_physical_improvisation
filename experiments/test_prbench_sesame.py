@@ -150,7 +150,42 @@ def run_sesame_planning(
     print("Running Sesame bilevel planner...")
     print(f"{'='*80}")
 
-    plan, bpg = planner.run(problem, timeout=timeout)
+    print(f"\n[DEBUG] Problem details:")
+    print(f"  Observation space: {problem.observation_space}")
+    print(f"  Action space: {problem.action_space}")
+    print(f"  Initial state type: {type(initial_state)}")
+    print(f"  Goal type: {type(goal)}")
+    print(f"  Goal atoms: {goal.atoms}")
+
+    print(f"\n[DEBUG] Testing abstract plan generator directly...")
+    test_gen = abstract_plan_generator(
+        initial_state,
+        sesame_models.state_abstractor(initial_state),
+        goal,
+        timeout=10.0,
+        bilevel_planning_graph=None,
+    )
+    try:
+        s_plan, a_plan = next(test_gen)
+        print(f"[DEBUG] ✓ Abstract planner generated a plan:")
+        print(f"  State plan length: {len(s_plan)}")
+        print(f"  Action plan length: {len(a_plan)}")
+        for i, (s, a) in enumerate(zip(s_plan, a_plan)):
+            print(f"  Step {i}: {a}")
+    except StopIteration:
+        print(f"[DEBUG] ✗ Abstract planner generated NO plans (StopIteration)")
+    except Exception as e:
+        print(f"[DEBUG] ✗ Abstract planner error: {type(e).__name__}: {e}")
+
+    print(f"\n[DEBUG] Calling planner.run()...")
+    try:
+        plan, bpg = planner.run(problem, timeout=timeout)
+        print(f"[DEBUG] planner.run() returned successfully")
+    except Exception as e:
+        print(f"[DEBUG] ERROR in planner.run(): {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
     if plan is not None:
         print(f"\n✓ SUCCESS! Found plan with {len(plan.actions)} actions")
