@@ -8,6 +8,7 @@ from gymnasium.wrappers import RecordVideo
 from task_then_motion_planning.planning import TaskThenMotionPlanner
 
 from tamp_improv.benchmarks.dyn_obstruction2d import BaseDynObstruction2DTAMPSystem
+from tamp_improv.benchmarks.prbench_integration import BasePRBenchSLAPSystem
 
 # Enable logging for debugging
 logging.basicConfig(level=logging.INFO)
@@ -184,10 +185,12 @@ def run_dyn_obstruction2d_planning(
     num_obstructions: int = 2,
     record_video: bool = False,
     video_folder: str = "videos/dyn_obstruction2d_planning",
+    use_prbench: bool = False,
 ) -> None:
     """Run pure planning baseline on DynObstruction2D environment."""
+    system_name = "PRBench" if use_prbench else "SLAP"
     print("\n" + "=" * 80)
-    print("Running Pure Planning on DynObstruction2D Environment")
+    print(f"Running Pure Planning on DynObstruction2D Environment ({system_name})")
     print("=" * 80)
     print(f"Number of obstructions: {num_obstructions}")
     print(f"Seed: {seed}")
@@ -196,11 +199,18 @@ def run_dyn_obstruction2d_planning(
         print(f"Recording video to: {video_folder}")
     print("=" * 80)
 
-    system = BaseDynObstruction2DTAMPSystem.create_default(
-        seed=seed,
-        render_mode=render_mode,
-        num_obstructions=num_obstructions,
-    )
+    if use_prbench:
+        system = BasePRBenchSLAPSystem.create_default(
+            seed=seed,
+            render_mode=render_mode,
+            num_obstructions=num_obstructions,
+        )
+    else:
+        system = BaseDynObstruction2DTAMPSystem.create_default(
+            seed=seed,
+            render_mode=render_mode,
+            num_obstructions=num_obstructions,
+        )
 
     # Wrap with video recording if requested
     if record_video:
@@ -384,6 +394,11 @@ def main() -> None:
         default="videos",
         help="Folder to save videos (default: videos/)",
     )
+    parser.add_argument(
+        "--use-prbench",
+        action="store_true",
+        help="Use PRBench implementation instead of SLAP (for dyn_obstruction2d)",
+    )
 
     args = parser.parse_args()
     render_mode = "rgb_array" if (args.render or args.record_video) else None
@@ -407,7 +422,8 @@ def main() -> None:
             max_steps=args.max_steps,
         )
     elif args.env == "dyn_obstruction2d":
-        video_folder = f"{args.video_folder}/dyn_obstruction2d_planning"
+        system_suffix = "prbench" if args.use_prbench else "slap"
+        video_folder = f"{args.video_folder}/dyn_obstruction2d_planning_{system_suffix}"
         run_dyn_obstruction2d_planning(
             seed=args.seed,
             render_mode=render_mode,
@@ -415,6 +431,7 @@ def main() -> None:
             num_obstructions=args.num_obstructions,
             record_video=args.record_video,
             video_folder=video_folder,
+            use_prbench=args.use_prbench,
         )
 
 
