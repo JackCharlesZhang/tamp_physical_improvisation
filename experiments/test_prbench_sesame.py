@@ -158,7 +158,8 @@ def run_sesame_planning(
         print(f"  Final state reached goal: {goal.check(plan.states[-1])}")
     else:
         print(f"\n✗ FAILED: No plan found within {timeout}s")
-        print(f"  Bilevel planning graph nodes: {len(bpg._state_nodes)}")
+        if bpg is not None:
+            print(f"  Bilevel planning graph nodes: {len(bpg._state_ids)}")
 
     env.close()
 
