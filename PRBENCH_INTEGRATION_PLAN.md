@@ -69,7 +69,9 @@ def _execute_edge(self, ...):
 **Solution**: PRBenchSkill will wrap controllers and provide the `get_action(obs)` interface
 
 ### Environment Wrapper Choice
-- **Use**: `VectorizedDynObstruction2DEnv` (returns `ObjectCentricBoxSpace`)
+- **Use**: `DynObstruction2DEnv` (returns `ObjectCentricBoxSpace`)
+  - Inherits from `ConstantObjectPRBenchEnv`
+  - Wraps `ObjectCentricDynObstruction2DEnv` with fixed object ordering
 - **Not**: `ObjectCentricDynObstruction2DEnv` (returns `ObjectCentricStateSpace`)
 - **Reason**: `create_bilevel_planning_models()` requires `ObjectCentricBoxSpace`
 
@@ -165,7 +167,7 @@ class PRBenchSkill(LiftedOperatorSkill):
 class PRBenchSLAPSystem(BaseTAMPSystem):
     def __init__(self, num_obstructions: int = 2):
         # Create PRBench environment
-        self.env = VectorizedDynObstruction2DEnv(num_obstructions)
+        self.env = DynObstruction2DEnv(num_obstructions)
 
         # Create PRBench models
         self.sesame_models = create_bilevel_planning_models(
