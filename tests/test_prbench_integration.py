@@ -254,7 +254,7 @@ class TestPRBenchSkill:
         # Create a ground operator by selecting appropriate objects
         # (this would normally be done by a planner)
         if len(operator.parameters) <= len(objects):
-            ground_params = objects[:len(operator.parameters)]
+            ground_params = tuple(objects[:len(operator.parameters)])
             ground_op = operator.ground(ground_params)
 
             # Skill should recognize this operator
