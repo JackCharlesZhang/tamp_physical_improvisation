@@ -265,5 +265,35 @@ All adapters live in `tamp_physical_improvisation/src/tamp_improv/benchmarks/prb
 6. Learned shortcuts improve task completion
 
 ## Current Status
-- **Phase 1**: ✅ COMPLETED - Core adapters implemented and tested
-- **Next Step**: Implement PRBenchSkill in Phase 2
+- **Phase 1**: ✅ COMPLETED - Core adapters (PRBenchPerceiver, PRBenchPredicateContainer)
+- **Phase 2**: ✅ COMPLETED - Skill adapter (PRBenchSkill)
+- **Phase 3**: ✅ COMPLETED - System integration (BasePRBenchSLAPSystem, PRBenchSLAPSystem)
+- **Next Step**: Phase 4 - Training script
+
+## How to Run Tests on della-gpu
+
+**IMPORTANT**: Must set complete PYTHONPATH including `bilevel-planning/src`!
+
+```bash
+ssh jz4267@della-gpu.princeton.edu
+cd ~/tamp_physical_improvisation
+git pull origin jcz/integrate_2d_dyn_obstruction
+
+# Load modules and activate environment
+module load anaconda3/2024.10
+source .venv/bin/activate
+
+# Export PYTHONPATH (CRITICAL - must include bilevel-planning!)
+export PYTHONPATH=/scratch/gpfs/TRIDAO/jz4267/prpl-mono/bilevel-planning/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-bilevel-planning/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-models/src:$PYTHONPATH
+
+# Run all integration tests
+python -m pytest tests/test_prbench_integration.py -v -s
+
+# Run specific phase tests
+python -m pytest tests/test_prbench_integration.py::TestPRBenchPredicateContainer -v -s
+python -m pytest tests/test_prbench_integration.py::TestPRBenchPerceiver -v -s
+python -m pytest tests/test_prbench_integration.py::TestPRBenchSkill -v -s
+python -m pytest tests/test_prbench_integration.py::TestPRBenchSLAPSystem -v -s
+```
+
+**Note**: The `/scratch/gpfs/TRIDAO/jz4267/prpl-mono` folder on della-gpu is identical to local `~/Desktop/slapo/prpl-mono`
