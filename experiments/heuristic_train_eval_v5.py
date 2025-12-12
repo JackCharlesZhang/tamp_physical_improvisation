@@ -1,10 +1,10 @@
-"""Training and evaluation script for distance heuristic V4.
+"""Training and evaluation script for distance heuristic v5.
 
-This script performs the complete pipeline mirroring heuristic_train_v4.ipynb:
+This script performs the complete pipeline mirroring heuristic_train_v5.ipynb:
 1. Initialize environment (GridworldFixed)
 2. Collect training data using collect_total_shortcuts
 3. Extract state-node pairs from training data
-4. Train the distance heuristic V4
+4. Train the distance heuristic v5
 5. Evaluate policy with rollouts
 6. Compare estimated vs true node distances
 7. Save the trained heuristic
@@ -29,9 +29,9 @@ from tamp_improv.approaches.improvisational.base import ImprovisationalTAMPAppro
 from tamp_improv.approaches.improvisational.collection import (
     collect_total_shortcuts,
 )
-from tamp_improv.approaches.improvisational.distance_heuristic_v4 import (
-    DistanceHeuristicV4,
-    DistanceHeuristicV4Config,
+from tamp_improv.approaches.improvisational.distance_heuristic_v5 import (
+    DistanceHeuristicV5,
+    DistanceHeuristicV5Config,
 )
 from tamp_improv.approaches.improvisational.policies.multi_rl import MultiRLPolicy
 from tamp_improv.approaches.improvisational.policies.rl import RLConfig
@@ -66,7 +66,7 @@ def main(cfg: DictConfig) -> float:
     sys.stderr.reconfigure(line_buffering=True)
 
     print("=" * 80, flush=True)
-    print("Distance Heuristic V4 Training and Evaluation", flush=True)
+    print("Distance Heuristic V5 Training and Evaluation", flush=True)
     print("=" * 80, flush=True)
     print("\nConfiguration:", flush=True)
     print(OmegaConf.to_yaml(cfg), flush=True)
@@ -106,9 +106,6 @@ def main(cfg: DictConfig) -> float:
     approach.training_mode = True
 
     print(f"\nUsing device: {device}", flush=True)
-
-    output_dir = Path(HydraConfig.get().runtime.output_dir)
-
 
     # Add memory tracking
     import psutil
@@ -156,7 +153,7 @@ def main(cfg: DictConfig) -> float:
     print_memory()
 
     # =========================================================================
-    # Step 2: (Skipped - no need for graph distances in V4)
+    # Step 2: (Skipped - no need for graph distances in v5)
     # =========================================================================
 
     # =========================================================================
@@ -193,15 +190,15 @@ def main(cfg: DictConfig) -> float:
     print_memory()
 
     # =========================================================================
-    # Step 4: Train Distance Heuristic V4
+    # Step 4: Train Distance Heuristic v5
     # =========================================================================
     print("\n" + "=" * 80)
-    print("Step 4: Training distance heuristic V4")
+    print("Step 4: Training distance heuristic v5")
     print("=" * 80)
 
     print("[DEBUG] Creating heuristic config...")
     # Create heuristic config
-    heuristic_config = DistanceHeuristicV4Config(
+    heuristic_config = DistanceHeuristicV5Config(
         hidden_dims=cfg['hidden_dims'],
         latent_dim=cfg['latent_dim'],
         normalize_embeddings=cfg.get('normalize_embeddings', True),
@@ -214,14 +211,12 @@ def main(cfg: DictConfig) -> float:
         eval_temperature=cfg['eval_temperature'],
         iters_per_epoch=cfg['iters_per_epoch'],
         learn_frequency=cfg['learn_frequency'],
-        num_rounds=cfg.get('num_rounds', 1),
-        keep_fraction=cfg.get('keep_fraction', 0.5),
         device=device,
     )
 
     print(f"[DEBUG] Initializing heuristic (k={heuristic_config.latent_dim})...")
     # Initialize heuristic
-    heuristic = DistanceHeuristicV4(config=heuristic_config, 
+    heuristic = DistanceHeuristicV5(config=heuristic_config, 
                                     env=system.env,
                                     perceiver=system.perceiver,
                                     atoms_to_node=atoms_to_node,
@@ -235,44 +230,12 @@ def main(cfg: DictConfig) -> float:
     print("[DEBUG] Training heuristic...")
     print_memory()
 
-    # Compute graph distances if using multi-round training (num_rounds > 1)
-    graph_distances = None
-    if heuristic_config.num_rounds > 1:
-        print(f"\n[DEBUG] Computing graph distances for multi-round training...")
-        print(f"  num_rounds={heuristic_config.num_rounds}, keep_fraction={heuristic_config.keep_fraction}")
-
-        # Get unique node pairs from state-node pairs
-        unique_node_pairs = set()
-        for state, target_node in state_node_pairs:
-            source_node = heuristic.get_node(state)
-            unique_node_pairs.add((source_node, target_node))
-
-        print(f"  Computing distances for {len(unique_node_pairs)} unique node-node pairs...")
-
-        # Compute graph distance for each unique node pair
-        graph_distances = {}
-        for i, (source_node, target_node) in enumerate(unique_node_pairs):
-            if i % 100 == 0:
-                print(f"    Progress: {i}/{len(unique_node_pairs)}")
-
-            graph_dist = compute_graph_node_distance(
-                planning_graph,
-                start_node_atoms=training_data.node_atoms[source_node],
-                goal_node_atoms=training_data.node_atoms[target_node]
-            )
-            graph_distances[(source_node, target_node)] = graph_dist if graph_dist is not None else float('inf')
-
-        print(f"  Computed {len(graph_distances)} graph distances")
-
-    # Train using multi_train (which calls train internally if num_rounds=1)
-    training_history = heuristic.multi_train(
+    # Train and capture training history
+    training_history = heuristic.train(
         state_node_pairs=state_node_pairs,
-        graph_distances=graph_distances if graph_distances else {},
-        num_rounds=heuristic_config.num_rounds,
-        num_epochs_per_round=cfg['num_epochs'],
+        num_epochs=cfg['num_epochs'],
         trajectories_per_epoch=cfg['trajectories_per_epoch'],
-        max_episode_steps=cfg['max_episode_steps'],
-        keep_fraction=heuristic_config.keep_fraction,
+        max_episode_steps=cfg['max_episode_steps']
     )
 
     training_end_time = time.time()
@@ -280,17 +243,6 @@ def main(cfg: DictConfig) -> float:
 
     print(f"[DEBUG] Training complete in {training_duration:.1f} seconds ({training_duration/60:.1f} minutes)")
     print_memory()
-
-    # Save distance matrices from multi-round training (if any)
-    if 'distance_matrices' in training_history and len(training_history['distance_matrices']) > 0:
-        import pickle
-        distance_matrices_path = output_dir / "distance_matrices.pkl"
-        with open(distance_matrices_path, 'wb') as f:
-            pickle.dump({
-                'distance_matrices': training_history['distance_matrices'],
-                'graph_distances': training_history.get('graph_distances', {}),
-            }, f)
-        print(f"\n[DEBUG] Saved {len(training_history['distance_matrices'])} distance matrices to {distance_matrices_path}")
 
     # =========================================================================
     # Step 5: Evaluate Policy with Rollouts
@@ -440,7 +392,7 @@ def main(cfg: DictConfig) -> float:
     output_dir = Path(HydraConfig.get().runtime.output_dir)
 
     # Save heuristic using built-in save method
-    heuristic_path = output_dir / "distance_heuristic_v4.pkl"
+    heuristic_path = output_dir / "distance_heuristic_v5.pkl"
     heuristic.save(str(heuristic_path))
     print(f"  Saved heuristic to: {heuristic_path}")
 
@@ -490,7 +442,7 @@ def main(cfg: DictConfig) -> float:
         },
     }
 
-    results_path = output_dir / "heuristic_v4_results.pkl"
+    results_path = output_dir / "heuristic_v5_results.pkl"
     with open(results_path, 'wb') as f:
         pickle.dump(results, f)
     print(f"  Saved results to: {results_path}")

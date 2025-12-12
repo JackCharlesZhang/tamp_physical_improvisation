@@ -238,6 +238,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         info: dict[str, Any],
     ) -> ApproachStepResult[ActType]:
         """Step approach with new observation."""
+        print("Step")
         atoms = self.system.perceiver.step(obs)
         using_goal_env, goal_env = self._using_goal_env(self.system.wrapped_env)
         using_context_env, context_env = self._using_context_env(
@@ -339,8 +340,10 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             raise TaskThenMotionPlanningFailure("No current skill")
 
         try:
-            print("I am getting my current skill's action:", self._current_skill)
+            print("I am in state:", obs)
+            print("I am getting my current skill's action:", self._current_skill, "from edge:", self._current_edge)
             action = self._current_skill.get_action(obs)
+            print("I am executing action:", action)
             if action is None:
                 print(f"No action returned by skill {self._current_skill}")
         except AssertionError as e:
@@ -558,6 +561,9 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             return []
 
         raw_env = self._create_planning_env()
+        # CRITICAL: Reset planning env to match current state before planning
+        # Otherwise the deepcopy will have a different random initialization
+        raw_env.reset_from_state(obs)  # type: ignore
         using_goal_env, goal_env = self._using_goal_env(self.system.wrapped_env)
         using_context_env, context_env = self._using_context_env(
             self.system.wrapped_env

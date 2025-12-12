@@ -154,6 +154,7 @@ class GridworldFixedEnv(gym.Env):
         Goal is a random cell in the C×C grid.
         Portals remain fixed at their initialized locations.
         """
+        print("reset")
         super().reset(seed=seed)
 
         # Robot starts randomly anywhere in the grid
@@ -180,6 +181,7 @@ class GridworldFixedEnv(gym.Env):
         Returns:
             Observation and info dict
         """
+        print("env reset from state")
         # Extract robot position from GraphInstance
         # Node format: [x, y]
         robot_node = state.nodes[0]
@@ -205,6 +207,7 @@ class GridworldFixedEnv(gym.Env):
         Args:
             action: 0=up, 1=down, 2=left, 3=right, 4=teleport
         """
+        print("env step")
         assert self.robot_pos is not None
         assert self.goal_cell is not None
 
@@ -230,7 +233,9 @@ class GridworldFixedEnv(gym.Env):
                     break
             # If not on a portal, teleport has no effect (wastes a step)
 
+        print(f"env step: new_pos={new_pos}, about to assign to robot_pos={self.robot_pos}")
         self.robot_pos = new_pos
+        print(f"env step: robot_pos AFTER={self.robot_pos}")
         self.step_count += 1
 
         # Check if goal cell reached

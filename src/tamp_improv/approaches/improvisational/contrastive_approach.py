@@ -73,17 +73,17 @@ class ContrastiveShortcutSkill(LiftedOperatorSkill[ObsType, ActType]):
 
         # Debug: check if we're at goal already
         current_node = self._heuristic.get_node(obs)
-        print(f"[DEBUG ContrastiveSkill {self._operator.name}] Current node: {current_node}, Target node: {self._target_node_id}")
+        # print(f"[DEBUG ContrastiveSkill {self._operator.name}] Current node: {current_node}, Target node: {self._target_node_id}")
         if current_node == self._target_node_id:
-            print(f"[DEBUG ContrastiveSkill] Already at goal node {self._target_node_id}, returning None")
+            # print(f"[DEBUG ContrastiveSkill] Already at goal node {self._target_node_id}, returning None")
             return None  # Signal completion
 
         # Return action or default if None
         if action is None:
-            print(f"[DEBUG ContrastiveSkill] Heuristic returned None for node {current_node} -> {self._target_node_id}, sampling random")
+            # print(f"[DEBUG ContrastiveSkill] Heuristic returned None for node {current_node} -> {self._target_node_id}, sampling random")
             # Fall back to first valid action
             return self._env.action_space.sample()
-        print(f"[DEBUG ContrastiveSkill] Returning action {action}")
+        # print(f"[DEBUG ContrastiveSkill] Returning action {action}")
         return action
 
 
@@ -185,6 +185,17 @@ class ContrastiveApproach(ImprovisationalTAMPApproach[ObsType, ActType]):
             add_effects=add_effects,
             delete_effects=delete_effects,
         )
+
+        # Check if an operator with the same PDDL signature already exists
+        # Operator.__eq__ compares str(operator), which is the PDDL string
+        # This prevents shortcuts from colliding with existing operators
+        for existing_op in self.system.components.operators:
+            if existing_op == shortcut_operator:
+                print(
+                    f"[WARNING] Skipping shortcut '{shortcut_name}' - "
+                    f"operator signature collides with existing operator '{existing_op.name}'"
+                )
+                return
 
         # Create the skill that uses the heuristic
         shortcut_skill = ContrastiveShortcutSkill(

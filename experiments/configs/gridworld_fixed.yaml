@@ -32,6 +32,7 @@ collect_episodes: 100
 # Distance heuristic V4 parameters
 hidden_dims: [64, 64]
 latent_dim: 16
+normalize_embeddings: true
 learning_rate: 1e-3
 batch_size: 256
 buffer_size: 100000
@@ -42,9 +43,13 @@ iters_per_epoch: 100
 learn_frequency: 1
 
 # Training parameters for V4
-num_epochs: 1
+num_epochs: 1  # Epochs per round (used as num_epochs_per_round in multi_train)
 trajectories_per_epoch: 10
 max_episode_steps: 100
+
+# Multi-round training parameters
+num_rounds: 1  # Number of pruning rounds (1 = no pruning, just normal train)
+keep_fraction: 0.5  # Fraction of node-node pairs to keep each round
 
 # Evaluation parameters for V4
 eval_rollouts: 3

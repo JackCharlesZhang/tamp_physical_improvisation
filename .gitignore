@@ -2,6 +2,8 @@
 .python-version
 .vscode
 
+*something*
+
 # Training artifacts
 videos/
 trained_policies/

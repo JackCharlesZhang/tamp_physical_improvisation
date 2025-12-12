@@ -144,7 +144,10 @@ def plot_distance_matrices(results: dict[str, Any], save_dir: Path, show: bool =
 
     true_distances = dist_eval['true_distances']
     graph_distances = dist_eval['graph_distances']
-    estimated_distances = (np.maximum(dist_eval['estimated_distances'], 0)) / 2000 * np.max(true_distances)
+    estimated_distances = np.maximum(dist_eval['estimated_distances'], 0) 
+    # estimated_distances = (np.maximum(dist_eval['estimated_distances'], 0)) / np.max(dist_eval['estimated_distances']) * np.max(true_distances)
+    print(true_distances)
+    print(dist_eval['estimated_distances'])
     node_ids = dist_eval['node_ids']
 
     # Create figure for heatmaps
