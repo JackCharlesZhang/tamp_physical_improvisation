@@ -5,9 +5,11 @@ from prbench.envs.dynamic2d.dyn_obstruction2d import DynObstruction2DEnv
 from prbench_bilevel_planning.env_models import create_bilevel_planning_models
 
 from tamp_improv.benchmarks.prbench_integration import (
+    BasePRBenchSLAPSystem,
     PRBenchPerceiver,
     PRBenchPredicateContainer,
     PRBenchSkill,
+    PRBenchSLAPSystem,
 )
 
 
@@ -260,6 +262,114 @@ class TestPRBenchSkill:
             # Skill should recognize this operator
             assert skill.can_execute(ground_op)
             print(f"✓ Skill can execute {ground_op.name}")
+
+
+class TestPRBenchSLAPSystem:
+    """Tests for PRBenchSLAPSystem."""
+
+    def test_base_system_initialization(self):
+        """Test that base system can be created."""
+        system = BasePRBenchSLAPSystem.create_default(num_obstructions=2)
+
+        assert system is not None
+        assert system.name == "PRBenchSLAPSystem"
+        print(f"System name: {system.name}")
+
+    def test_system_has_prbench_components(self):
+        """Test that system has all PRBench components properly wrapped."""
+        system = BasePRBenchSLAPSystem.create_default(num_obstructions=2)
+
+        # Should have types
+        assert len(system.types) > 0
+        print(f"Types: {[t.name for t in system.types]}")
+
+        # Should have predicates (5 for dynamic2d)
+        assert len(system.predicates) == 5
+        pred_names = {p.name for p in system.predicates}
+        print(f"Predicates: {pred_names}")
+
+        # Should have PRBench's simple predicates
+        assert "HandEmpty" in pred_names
+        assert "HoldingTgt" in pred_names
+        assert "HoldingObstruction" in pred_names
+        assert "OnTgt" in pred_names
+        assert "AboveTgt" in pred_names
+
+        # Should NOT have counting predicates
+        assert "OneObstructionBlocking" not in pred_names
+        assert "TwoObstructionsBlocking" not in pred_names
+        assert "Clear" not in pred_names
+
+    def test_system_has_operators(self):
+        """Test that system has PRBench operators."""
+        system = BasePRBenchSLAPSystem.create_default(num_obstructions=2)
+
+        # Should have operators
+        assert len(system.operators) > 0
+        op_names = {op.name for op in system.operators}
+        print(f"Operators: {op_names}")
+
+        # Check for expected PRBench operators (generic, no counting!)
+        # Exact names may vary, but should be generic
+
+    def test_system_has_skills(self):
+        """Test that system has PRBench skills wrapped as SLAP skills."""
+        system = BasePRBenchSLAPSystem.create_default(num_obstructions=2)
+
+        # Should have skills
+        assert len(system.skills) > 0
+        print(f"Number of skills: {len(system.skills)}")
+
+        # All skills should be PRBenchSkill instances
+        for skill in system.skills:
+            assert isinstance(skill, PRBenchSkill)
+            print(f"Skill operator: {skill._lifted_operator.name}")
+
+    def test_system_has_perceiver(self):
+        """Test that system has PRBench perceiver."""
+        system = BasePRBenchSLAPSystem.create_default(num_obstructions=2)
+
+        # Should have perceiver
+        assert system.perceiver is not None
+        assert isinstance(system.perceiver, PRBenchPerceiver)
+
+    def test_system_environment(self):
+        """Test that system creates correct environment."""
+        system = BasePRBenchSLAPSystem.create_default(num_obstructions=2)
+
+        # Should have environment
+        assert system.env is not None
+        assert isinstance(system.env, DynObstruction2DEnv)
+
+        # Test reset
+        obs, info = system.reset(seed=0)
+        assert obs is not None
+        print(f"Observation shape: {obs.shape}")
+
+    def test_improvisational_system(self):
+        """Test that improvisational system can be created."""
+        system = PRBenchSLAPSystem.create_default(num_obstructions=2, seed=0)
+
+        assert system is not None
+        assert system.name == "PRBenchSLAPSystem"
+
+        # Should have wrapped environment for training
+        assert hasattr(system, "wrapped_env")
+        assert system.wrapped_env is not None
+        print("✓ Improvisational system created with wrapped environment")
+
+    def test_domain_creation(self):
+        """Test that PDDL domain can be created."""
+        system = BasePRBenchSLAPSystem.create_default(num_obstructions=2)
+
+        domain = system.get_domain()
+        assert domain is not None
+        assert domain.name == "prbench-dyn-obstruction2d-domain"
+        assert len(domain.predicates) == 5
+        assert len(domain.operators) > 0
+        print(f"Domain: {domain.name}")
+        print(f"  Predicates: {len(domain.predicates)}")
+        print(f"  Operators: {len(domain.operators)}")
 
 
 if __name__ == "__main__":
