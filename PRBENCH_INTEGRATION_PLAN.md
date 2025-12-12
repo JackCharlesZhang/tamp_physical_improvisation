@@ -332,3 +332,45 @@ python experiments/slap_train.py --config-name dyn_obstruction2d
 **Configuration files:**
 - `experiments/configs/prbench_dyn_obstruction2d.yaml` - PRBench + SLAP config
 - `experiments/configs/dyn_obstruction2d.yaml` - Original SLAP config (for comparison)
+
+## How to Test PRBench Integration with Sesame Planner
+
+**Why use Sesame instead of pure planning?**
+- PRBench operators are designed for bilevel planning (symbolic + motion)
+- Navigation operators have empty `add_effects` (low-level controller handles positioning)
+- Pure task planners (pyperplan) can't handle this - they need symbolic effects
+- Sesame planner (PRBench's bilevel planner) is the correct way to test
+
+**Running Sesame planner test on della-gpu:**
+
+```bash
+ssh jz4267@della-gpu.princeton.edu
+cd ~/tamp_physical_improvisation
+git pull origin jcz/integrate_2d_dyn_obstruction
+
+# Load modules and activate environment
+module load anaconda3/2024.10
+source .venv/bin/activate
+
+# Export PYTHONPATH (CRITICAL - must include bilevel-planning!)
+export PYTHONPATH=/scratch/gpfs/TRIDAO/jz4267/prpl-mono/bilevel-planning/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-bilevel-planning/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-models/src:$PYTHONPATH
+
+# Run Sesame planner test
+python experiments/test_prbench_sesame.py --seed 42 --num-obstructions 2 \
+  --max-abstract-plans 10 --samples-per-step 10 --timeout 30.0
+
+# With video recording (for visualization)
+python experiments/test_prbench_sesame.py --seed 42 --num-obstructions 2 \
+  --max-abstract-plans 10 --samples-per-step 10 --timeout 30.0 \
+  --record-video --video-folder videos/sesame_prbench
+
+# Download video from della-gpu
+rsync -avz jz4267@della-gpu.princeton.edu:~/tamp_physical_improvisation/videos/sesame_prbench/*.mp4 ./
+```
+
+**What this test validates:**
+1. PRBench operators execute correctly
+2. PRBench skills (BiRRT motion planning) work
+3. State abstraction and goal derivation function properly
+4. Multi-abstract plan + backtracking refinement succeeds
+5. Overall PRBench integration is sound
