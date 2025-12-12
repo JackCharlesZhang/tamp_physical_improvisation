@@ -122,8 +122,17 @@ class BasePRBenchSLAPSystem(BaseTAMPSystem[Any, NDArray[np.float32]]):
             for lifted_skill in sesame_models.skills
         }
 
+        # Add all parent types to satisfy PDDL type hierarchy
+        # PRBench's types set doesn't include parents like 'dynamic2d', 'kin_rectangle'
+        all_types = set(sesame_models.types)
+        for t in sesame_models.types:
+            current = t
+            while current.parent is not None:
+                all_types.add(current.parent)
+                current = current.parent
+
         return PlanningComponents(
-            types=sesame_models.types,
+            types=all_types,
             predicate_container=predicate_container,
             operators=sesame_models.operators,
             skills=skills,
