@@ -4,6 +4,9 @@ from typing import Any, Callable, Sequence
 
 import numpy as np
 from bilevel_planning.structs import GroundParameterizedController, LiftedSkill
+from bilevel_planning.trajectory_samplers.trajectory_sampler import (
+    TrajectorySamplingFailure,
+)
 from relational_structs import GroundOperator, LiftedOperator, Object
 from relational_structs.object_centric_state import ObjectCentricState
 from task_then_motion_planning.structs import LiftedOperatorSkill
@@ -57,6 +60,7 @@ class PRBenchSkill(LiftedOperatorSkill[Any, np.ndarray]):
         self._observation_to_state = observation_to_state_fn
         self._ground_controller: GroundParameterizedController | None = None
         self._rng = np.random.default_rng()
+        self._failed = False  # Track if controller failed to generate plan
 
     def _get_lifted_operator(self) -> LiftedOperator:
         """Return the lifted operator for this skill."""
@@ -79,6 +83,10 @@ class PRBenchSkill(LiftedOperatorSkill[Any, np.ndarray]):
         Returns:
             Action array to execute
         """
+        # If controller failed during initialization, return zero action
+        if self._failed:
+            return np.zeros(5, dtype=np.float32)
+
         # Convert observation to state
         state = self._observation_to_state(obs)
 
@@ -93,7 +101,15 @@ class PRBenchSkill(LiftedOperatorSkill[Any, np.ndarray]):
                 return np.zeros(5, dtype=np.float32)
 
             # Get next action from controller's plan
-            return self._ground_controller.step()
+            # This may raise TrajectorySamplingFailure if BiRRT can't find a path
+            try:
+                return self._ground_controller.step()
+            except TrajectorySamplingFailure as e:
+                # BiRRT couldn't find a collision-free path
+                # Mark as failed and return zero action (SLAP will detect failure via effects)
+                print(f"[PRBenchSkill] Trajectory sampling failed: {e}")
+                self._failed = True
+                return np.zeros(5, dtype=np.float32)
 
         # Should not reach here if reset() was called
         raise RuntimeError("Controller not initialized. Call reset() first.")
@@ -114,6 +130,9 @@ class PRBenchSkill(LiftedOperatorSkill[Any, np.ndarray]):
         # Ground the lifted controller with the operator's parameters
         objects = ground_operator.parameters
         self._ground_controller = self._lifted_controller.ground(objects)
+
+        # Reset failure flag for new execution
+        self._failed = False
 
         # Note: We can't reset the controller yet because we don't have
         # the initial state. That will happen in the first get_action() call.
