@@ -156,12 +156,14 @@ def run_sesame_planning(
     print(f"  Goal atoms: {list(goal.atoms)}")
 
     print(f"\n[DEBUG] Testing abstract plan generator directly...")
+    from bilevel_planning.bilevel_planning_graph import BilevelPlanningGraph
+    test_bpg = BilevelPlanningGraph()
     test_gen = abstract_plan_generator(
         initial_state,
         sesame_models.state_abstractor(initial_state),
         goal,
-        timeout=10.0,
-        bilevel_planning_graph=None,
+        10.0,  # timeout
+        test_bpg,  # bpg (required, not optional)
     )
     try:
         s_plan, a_plan = next(test_gen)
