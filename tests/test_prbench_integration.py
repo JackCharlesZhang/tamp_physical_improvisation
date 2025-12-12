@@ -7,6 +7,7 @@ from prbench_bilevel_planning.env_models import create_bilevel_planning_models
 from tamp_improv.benchmarks.prbench_integration import (
     PRBenchPerceiver,
     PRBenchPredicateContainer,
+    PRBenchSkill,
 )
 
 
@@ -197,6 +198,68 @@ class TestPRBenchPerceiver:
 
         print(f"Predicates used: {all_pred_names}")
         print("✓ No counting predicates - using PRBench's clean predicate set!")
+
+
+class TestPRBenchSkill:
+    """Tests for PRBenchSkill."""
+
+    def test_skill_initialization(self):
+        """Test that skills can be created from PRBench's LiftedSkills."""
+        env = DynObstruction2DEnv(num_obstructions=2)
+        sesame_models = create_bilevel_planning_models(
+            "dynobstruction2d", env.observation_space, env.action_space, num_obstructions=2
+        )
+
+        # Create skills from each PRBench LiftedSkill
+        skills = []
+        for lifted_skill in sesame_models.skills:
+            skill = PRBenchSkill(
+                lifted_skill=lifted_skill,
+                observation_to_state_fn=sesame_models.observation_to_state,
+            )
+            skills.append(skill)
+
+        # Should have created skills for all PRBench operators
+        assert len(skills) == len(sesame_models.skills)
+        print(f"Created {len(skills)} skills")
+
+    def test_skill_can_execute(self):
+        """Test that skills correctly identify their operators."""
+        env = DynObstruction2DEnv(num_obstructions=2)
+        sesame_models = create_bilevel_planning_models(
+            "dynobstruction2d", env.observation_space, env.action_space, num_obstructions=2
+        )
+
+        # Get a skill and its operator
+        lifted_skill = list(sesame_models.skills)[0]
+        skill = PRBenchSkill(
+            lifted_skill=lifted_skill,
+            observation_to_state_fn=sesame_models.observation_to_state,
+        )
+
+        # Reset environment to get objects
+        obs, info = env.reset(seed=0)
+        state = sesame_models.observation_to_state(obs)
+        abstract_state = sesame_models.state_abstractor(state)
+
+        # Try to ground the operator
+        operator = lifted_skill.operator
+        print(f"Testing operator: {operator.name}")
+        print(f"Operator parameters: {operator.parameters}")
+
+        # Get matching objects from state
+        objects = list(abstract_state.objects)
+        print(f"Available objects: {[str(o) for o in objects]}")
+
+        # Create a ground operator by selecting appropriate objects
+        # (this would normally be done by a planner)
+        if len(operator.parameters) <= len(objects):
+            ground_params = objects[:len(operator.parameters)]
+            ground_op = operator.ground(ground_params)
+
+            # Skill should recognize this operator
+            assert skill.can_execute(ground_op)
+            print(f"✓ Skill can execute {ground_op.name}")
 
 
 if __name__ == "__main__":

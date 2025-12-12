@@ -5,6 +5,7 @@ perception, motion planning) with SLAP's shortcut learning pipeline.
 """
 
 from tamp_improv.benchmarks.prbench_integration.perceiver import PRBenchPerceiver
+from tamp_improv.benchmarks.prbench_integration.skills import PRBenchSkill
 from tamp_improv.benchmarks.prbench_integration.utils import (
     PRBenchPredicateContainer,
 )
@@ -12,4 +13,5 @@ from tamp_improv.benchmarks.prbench_integration.utils import (
 __all__ = [
     "PRBenchPerceiver",
     "PRBenchPredicateContainer",
+    "PRBenchSkill",
 ]
