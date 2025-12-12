@@ -110,41 +110,41 @@ def collect_states_for_all_nodes(
     return observed_states
 
 
-def collect_node_states_for_shortcuts(
-    system, planning_graph, max_attempts: int = 3
-) -> tuple[dict[int, ObsType], list[tuple[int, int]]]:
-    """Collect node states for valid shortcuts in the planning graph."""
-    node_states: dict[int, ObsType] = collect_states_for_all_nodes(
-        system, planning_graph, max_attempts
-    )
+# def collect_node_states_for_shortcuts(
+#     system, planning_graph, max_attempts: int = 3
+# ) -> tuple[dict[int, ObsType], list[tuple[int, int]]]:
+#     """Collect node states for valid shortcuts in the planning graph."""
+#     node_states: dict[int, ObsType] = collect_states_for_all_nodes(
+#         system, planning_graph, max_attempts
+#     )
 
-    valid_shortcuts = []
-    node_ids = sorted(list(node_states.keys()))
-    for i, source_id in enumerate(node_ids):
-        source_node = next((n for n in planning_graph.nodes if n.id == source_id), None)
-        if not source_node:
-            continue
+#     valid_shortcuts = []
+#     node_ids = sorted(list(node_states.keys()))
+#     for i, source_id in enumerate(node_ids):
+#         source_node = next((n for n in planning_graph.nodes if n.id == source_id), None)
+#         if not source_node:
+#             continue
 
-        for target_id in node_ids[i + 1 :]:
-            target_node = next(
-                (n for n in planning_graph.nodes if n.id == target_id), None
-            )
-            if not target_node:
-                continue
-            has_direct_edge = False
-            for edge in planning_graph.node_to_outgoing_edges.get(source_node, []):
-                if edge.target == target_node and not edge.is_shortcut:
-                    has_direct_edge = True
-                    break
-            if has_direct_edge:
-                continue
-            # Only include shortcuts where states are available
-            if source_id in node_states and target_id in node_states:
-                valid_shortcuts.append((source_id, target_id))
+#         for target_id in node_ids[i + 1 :]:
+#             target_node = next(
+#                 (n for n in planning_graph.nodes if n.id == target_id), None
+#             )
+#             if not target_node:
+#                 continue
+#             has_direct_edge = False
+#             for edge in planning_graph.node_to_outgoing_edges.get(source_node, []):
+#                 if edge.target == target_node and not edge.is_shortcut:
+#                     has_direct_edge = True
+#                     break
+#             if has_direct_edge:
+#                 continue
+#             # Only include shortcuts where states are available
+#             if source_id in node_states and target_id in node_states:
+#                 valid_shortcuts.append((source_id, target_id))
 
-    print(f"Collected states for {len(node_states)} nodes")
-    print(f"Identified {len(valid_shortcuts)} valid shortcuts")
-    return node_states, valid_shortcuts
+#     print(f"Collected states for {len(node_states)} nodes")
+#     print(f"Identified {len(valid_shortcuts)} valid shortcuts")
+#     return node_states, valid_shortcuts
 
 
 def find_path_to_node(
