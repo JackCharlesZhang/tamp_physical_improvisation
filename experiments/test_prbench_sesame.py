@@ -151,11 +151,9 @@ def run_sesame_planning(
     print(f"{'='*80}")
 
     print(f"\n[DEBUG] Problem details:")
-    print(f"  Observation space: {problem.observation_space}")
-    print(f"  Action space: {problem.action_space}")
     print(f"  Initial state type: {type(initial_state)}")
     print(f"  Goal type: {type(goal)}")
-    print(f"  Goal atoms: {goal.atoms}")
+    print(f"  Goal atoms: {list(goal.atoms)}")
 
     print(f"\n[DEBUG] Testing abstract plan generator directly...")
     test_gen = abstract_plan_generator(
