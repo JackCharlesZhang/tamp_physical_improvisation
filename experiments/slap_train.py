@@ -17,6 +17,8 @@ from tamp_improv.approaches.improvisational.training import (
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
 from tamp_improv.benchmarks.dyn_obstruction2d import DynObstruction2DTAMPSystem
 from tamp_improv.benchmarks.obstacle2d_graph import GraphObstacle2DTAMPSystem
+from tamp_improv.benchmarks.prbench_integration import PRBenchSLAPSystem
+
 # from tamp_improv.benchmarks.pybullet_cleanup_table import CleanupTableTAMPSystem
 # from tamp_improv.benchmarks.pybullet_cluttered_drawer import ClutteredDrawerTAMPSystem
 # from tamp_improv.benchmarks.pybullet_obstacle_tower_graph import (
@@ -29,6 +31,7 @@ SYSTEM_CLASSES: dict[str, Type[ImprovisationalTAMPSystem[Any, Any]]] = {
     # "ClutteredDrawerTAMPSystem": ClutteredDrawerTAMPSystem,
     # "CleanupTableTAMPSystem": CleanupTableTAMPSystem,
     "DynObstruction2DTAMPSystem": DynObstruction2DTAMPSystem,
+    "PRBenchSLAPSystem": PRBenchSLAPSystem,
 }
 
 

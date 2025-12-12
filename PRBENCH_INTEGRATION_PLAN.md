@@ -268,7 +268,8 @@ All adapters live in `tamp_physical_improvisation/src/tamp_improv/benchmarks/prb
 - **Phase 1**: ✅ COMPLETED - Core adapters (PRBenchPerceiver, PRBenchPredicateContainer)
 - **Phase 2**: ✅ COMPLETED - Skill adapter (PRBenchSkill)
 - **Phase 3**: ✅ COMPLETED - System integration (BasePRBenchSLAPSystem, PRBenchSLAPSystem)
-- **Next Step**: Phase 4 - Training script
+- **Phase 4**: ✅ COMPLETED - Training script integration
+- **Status**: Ready for training!
 
 ## How to Run Tests on della-gpu
 
@@ -297,3 +298,37 @@ python -m pytest tests/test_prbench_integration.py::TestPRBenchSLAPSystem -v -s
 ```
 
 **Note**: The `/scratch/gpfs/TRIDAO/jz4267/prpl-mono` folder on della-gpu is identical to local `~/Desktop/slapo/prpl-mono`
+
+## How to Run Training on della-gpu
+
+**Training with PRBench components + SLAP shortcut learning:**
+
+```bash
+ssh jz4267@della-gpu.princeton.edu
+cd ~/tamp_physical_improvisation
+git pull origin jcz/integrate_2d_dyn_obstruction
+
+# Load modules and activate environment
+module load anaconda3/2024.10
+source .venv/bin/activate
+
+# Export PYTHONPATH (CRITICAL - must include bilevel-planning!)
+export PYTHONPATH=/scratch/gpfs/TRIDAO/jz4267/prpl-mono/bilevel-planning/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-bilevel-planning/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-models/src:$PYTHONPATH
+
+# Run training with PRBench + SLAP
+python experiments/slap_train.py --config-name prbench_dyn_obstruction2d
+
+# Compare with original SLAP implementation (for ablation)
+python experiments/slap_train.py --config-name dyn_obstruction2d
+```
+
+**What the training does:**
+1. Creates `PRBenchSLAPSystem` with PRBench's 5 predicates, 9 operators, 9 skills
+2. Uses SLAP's existing `train_and_evaluate()` function (NO modifications!)
+3. Discovers shortcuts via rollouts (topology-based or random)
+4. Trains RL policies for each shortcut using MultiRL
+5. Saves trained policies to `trained_policies/prbench_multi_rl/`
+
+**Configuration files:**
+- `experiments/configs/prbench_dyn_obstruction2d.yaml` - PRBench + SLAP config
+- `experiments/configs/dyn_obstruction2d.yaml` - Original SLAP config (for comparison)

@@ -1,0 +1,35 @@
+# PRBench + SLAP Integration Configuration
+# Uses PRBench's clean perception and motion planning with SLAP's shortcut learning
+
+env_name: PRBenchSLAPSystem
+num_obstructions: 2
+render_mode: null
+action_scale: 1.0
+
+seed: 200
+num_episodes: 5
+max_steps: 200
+max_skill_steps: 500
+max_training_steps_per_shortcut: 50
+collect_episodes: 5
+episodes_per_scenario: 200
+force_collect: true
+render: false
+training_record_interval: 10
+batch_size: 32
+
+use_random_rollouts: true
+num_rollouts_per_node: 1000
+max_steps_per_rollout: 500
+shortcut_success_threshold: 1
+
+learning_rate: 3.0e-4
+rl_batch_size: 32
+n_epochs: 10
+gamma: 0.99
+ent_coef: 0.01
+deterministic: false
+
+training_data_dir: training_data/prbench_multi_rl
+save_dir: trained_policies/prbench_multi_rl
+policy_path: trained_policies/prbench_multi_rl/PRBenchSLAPSystem_MultiRL
