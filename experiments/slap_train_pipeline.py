@@ -35,9 +35,11 @@ from tamp_improv.benchmarks.gridworld import (
 from tamp_improv.benchmarks.gridworld_fixed import (
     GridworldFixedTAMPSystem,
 )
+from tamp_improv.benchmarks.clutteredstorage_system import GraphClutteredStorage2DTAMPSystem
 
 SYSTEM_CLASSES: dict[str, Type[ImprovisationalTAMPSystem[Any, Any]]] = {
     "GraphObstacle2DTAMPSystem": GraphObstacle2DTAMPSystem,
+    "GraphClutteredStorage2DTAMPSystem": GraphClutteredStorage2DTAMPSystem,
     "GraphObstacleTowerTAMPSystem": GraphObstacleTowerTAMPSystem,
     "ClutteredDrawerTAMPSystem": ClutteredDrawerTAMPSystem,
     "CleanupTableTAMPSystem": CleanupTableTAMPSystem,

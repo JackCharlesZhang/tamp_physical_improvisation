@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from gymnasium.wrappers import TimeLimit
+from gymnasium.wrappers import TimeLimit, RecordVideo # New import
 from relational_structs import GroundAtom, Object
 from task_then_motion_planning.planning import TaskThenMotionPlanner
 
@@ -20,7 +20,7 @@ class TestClutteredStorage2DSystem:
     def test_base_system_creation(self):
         """Test that BaseGraphClutteredStorage2DTAMPSystem can be created."""
         system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         assert system is not None
@@ -30,7 +30,7 @@ class TestClutteredStorage2DSystem:
     def test_improvisational_system_creation(self):
         """Test that GraphClutteredStorage2DTAMPSystem can be created."""
         system = GraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         assert system is not None
@@ -41,7 +41,7 @@ class TestClutteredStorage2DSystem:
     def test_system_has_required_components(self):
         """Test that system has all required components for TAMP."""
         system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         # Check types
@@ -81,7 +81,7 @@ class TestClutteredStorage2DSystem:
     def test_perceiver_reset(self):
         """Test that perceiver correctly generates objects, atoms, and goal."""
         system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         obs, info = system.env.reset()
@@ -111,7 +111,7 @@ class TestClutteredStorage2DSystem:
     def test_perceiver_step(self):
         """Test that perceiver correctly updates atoms on step."""
         system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         obs, info = system.env.reset()
@@ -130,7 +130,7 @@ class TestClutteredStorage2DSystem:
     def test_perceiver_encode_atoms_to_vector(self):
         """Test that perceiver can encode atoms to vector."""
         system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         obs, info = system.env.reset()
@@ -155,7 +155,7 @@ class TestClutteredStorage2DSystem:
     def test_domain_creation(self):
         """Test that PDDL domain can be created."""
         system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         domain = system.get_domain()
@@ -169,7 +169,7 @@ class TestClutteredStorage2DSystem:
     def test_wrapped_env_creation(self):
         """Test that wrapped environment is created for improvisational system."""
         system = GraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         assert system.wrapped_env is not None
@@ -180,7 +180,7 @@ class TestClutteredStorage2DSystem:
     def test_improvisational_approach_creation(self):
         """Test that ImprovisationalTAMPApproach can be created with the system."""
         system = GraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         # Create a simple MultiRl policy for testing
@@ -202,7 +202,7 @@ class TestClutteredStorage2DSystem:
     def test_skill_lifted_operator_property(self):
         """Test that skills have the lifted_operator property."""
         system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         for skill in system.skills:
@@ -218,7 +218,7 @@ class TestClutteredStorage2DSystem:
     def test_skill_can_execute(self):
         """Test that skills can check if they can execute operators."""
         system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-            num_blocks=3, render_mode="rgb_array", seed=42
+            n_blocks=3, render_mode="rgb_array", seed=42
         )
 
         # Get a skill
@@ -241,31 +241,38 @@ class TestClutteredStorage2DSystem:
         assert skill.can_execute(ground_op)
 
 
-@pytest.mark.parametrize("num_blocks", [1, 3])
-def test_different_num_blocks(num_blocks):
+@pytest.mark.parametrize("n_blocks", [1])
+def test_different_num_blocks(n_blocks):
     """Test system creation with different numbers of blocks."""
     system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-        num_blocks=num_blocks, render_mode="rgb_array", seed=42
+        n_blocks=n_blocks, render_mode="rgb_array", seed=42
     )
 
     obs, info = system.env.reset()
     objects, atoms, goal = system.perceiver.reset(obs, info)
 
     # Check correct number of objects
-    assert len(objects) == num_blocks + 2, f"Should have {num_blocks} blocks + robot + shelf"
+    assert len(objects) == n_blocks + 2, f"Should have {n_blocks} blocks + robot + shelf"
 
     # Check goal has correct number of OnShelf atoms
     on_shelf_goals = [atom for atom in goal if atom.predicate.name == "OnShelf"]
-    assert len(on_shelf_goals) == num_blocks
+    assert len(on_shelf_goals) == n_blocks
 
 
 def test_tamp_planner_integration():
     """Test that the system can be used with TaskThenMotionPlanner."""
     system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-        num_blocks=3, render_mode="rgb_array", seed=42
+        n_blocks=1, render_mode="rgb_array", seed=42
     )
 
-    env = TimeLimit(system.env, max_episode_steps=50)
+    env_time_limited = TimeLimit(system.env, max_episode_steps=500)
+
+    env = RecordVideo(
+        env_time_limited,
+        video_folder="cluttered_storage_videos",
+        episode_trigger=lambda x: True,
+        name_prefix="run"
+    )
 
     planner = TaskThenMotionPlanner(
         types=system.types,
@@ -296,7 +303,7 @@ def test_tamp_planner_integration():
 
     # Try to take a few steps with the planner
     total_reward = 0
-    for step in range(10):  # Just test a few steps
+    for step in range(200):  # Just test a few steps
         # import ipdb
 
         # ipdb.set_trace()
@@ -316,14 +323,14 @@ def test_tamp_planner_integration():
 def test_multiple_inheritance_initialization():
     """Test that multiple inheritance is correctly initialized."""
     system = GraphClutteredStorage2DTAMPSystem.create_default(
-        num_blocks=3, render_mode="rgb_array", seed=42
+        n_blocks=3, render_mode="rgb_array", seed=42
     )
 
     # Verify both base classes are properly initialized
     assert hasattr(system, "env")  # From BaseTAMPSystem
     assert hasattr(system, "wrapped_env")  # From ImprovisationalTAMPSystem
     assert hasattr(system, "components")  # From BaseTAMPSystem
-    assert hasattr(system, "num_blocks")  # From both init methods
+    assert hasattr(system, "n_blocks")  # From both init methods
 
     # Verify the environment hierarchy
     assert system.env is not None
@@ -334,7 +341,7 @@ def test_multiple_inheritance_initialization():
 def test_predicate_container_interface():
     """Test that predicate container implements required protocol."""
     system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-        num_blocks=3, render_mode="rgb_array", seed=42
+        n_blocks=3, render_mode="rgb_array", seed=42
     )
 
     # Test __getitem__

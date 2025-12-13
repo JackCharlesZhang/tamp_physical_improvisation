@@ -122,6 +122,8 @@ def collect_states_for_all_nodes(
 
             for step in range(max_steps_per_skill):
                 action = skill.get_action(obs)
+                if action is None:
+                    break
                 obs, _, _, _, _ = system.env.step(action)
                 atoms = system.perceiver.step(obs)
                 atoms_frozen = frozenset(atoms)

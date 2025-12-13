@@ -426,13 +426,13 @@ class GroundPlaceBlockNotOnShelfController(Geom2dRobotController):
 
 # Base skill class
 class BaseClutteredStorage2DSkill(
-    LiftedOperatorSkill[ObjectCentricState, NDArray[np.float32]]
+    LiftedOperatorSkill[NDArray[np.float32], NDArray[np.float32]]
 ):
     """Base class for cluttered storage 2D environment skills."""
 
     def __init__(
         self,
-        components: PlanningComponents[ObjectCentricState],
+        components: PlanningComponents[NDArray[np.float32]],
         action_space: CRVRobotActionSpace,
         init_constant_state: Optional[ObjectCentricState] = None,
     ) -> None:
@@ -444,11 +444,41 @@ class BaseClutteredStorage2DSkill(
         self._lifted_operator = self._get_lifted_operator()
         self._current_action_plan: list[NDArray[np.float32]] = []
         self._current_ground_operator: Optional[GroundOperator] = None
+        # Store observation objects and type features for conversion
+        self._observation_objects: list[Object] | None = None
+        self._type_features: dict | None = None
+
+    def set_observation_info(
+        self, observation_objects: list[Object], type_features: dict
+    ) -> None:
+        """Set observation objects and type features for vec to state conversion."""
+        self._observation_objects = observation_objects
+        self._type_features = type_features
 
     def reset(self, ground_operator: GroundOperator) -> None:
         """Reset the skill with a ground operator."""
         self._current_ground_operator = ground_operator
         self._current_action_plan = []
+
+    def _vec_to_state(self, vec: NDArray[np.float32]) -> ObjectCentricState:
+        """Convert vector observation to ObjectCentricState."""
+        if self._observation_objects is None or self._type_features is None:
+            raise RuntimeError(
+                "Skill not initialized with observation objects and type features. "
+                "Call set_observation_info() first."
+            )
+        return ObjectCentricState.from_vec(
+            vec, constant_objects=self._observation_objects, type_features=self._type_features
+        )
+
+    def get_action(self, obs: NDArray[np.float32]) -> NDArray[np.float32] | None:
+        """Get action from vectorized observation."""
+        # Convert vector to ObjectCentricState
+        state = self._vec_to_state(obs)
+        # Call parent's get_action with the converted state
+        assert self._current_ground_operator is not None
+        objects = self._current_ground_operator.parameters
+        return self._get_action_given_objects(objects, state)
 
     def _get_lifted_operator(self) -> LiftedOperator:
         """Get the operator this skill implements."""

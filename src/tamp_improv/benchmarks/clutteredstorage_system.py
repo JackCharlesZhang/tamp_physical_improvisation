@@ -86,21 +86,31 @@ class ClutteredStorage2DPredicates:
         }
 
 
-class GraphClutteredStorage2DPerceiver(Perceiver[ObjectCentricState]):
+class GraphClutteredStorage2DPerceiver(Perceiver[NDArray[np.float32]]):
     """Perceiver for cluttered storage 2D environment."""
 
-    def __init__(self, types: ClutteredStorage2DTypes, num_blocks: int = 3) -> None:
+    def __init__(self, types: ClutteredStorage2DTypes, n_blocks: int = 1) -> None:
         """Initialize with required types."""
         self._robot = Object("robot", types.robot)
-        self._blocks = [Object(f"block{i}", types.block) for i in range(num_blocks)]
+        self._blocks = [Object(f"block{i}", types.block) for i in range(n_blocks)]
         self._shelf = Object("shelf", types.shelf)
         self._predicates: ClutteredStorage2DPredicates | None = None
         self._types = types
-        self.num_blocks = num_blocks
+        self.n_blocks = n_blocks
+        # Will be set during initialization with environment info
+        self._observation_objects: list[Object] | None = None
+        self._type_features: dict | None = None
 
-    def initialize(self, predicates: ClutteredStorage2DPredicates) -> None:
+    def initialize(
+        self,
+        predicates: ClutteredStorage2DPredicates,
+        observation_objects: list[Object] | None = None,
+        type_features: dict | None = None,
+    ) -> None:
         """Initialize predicates after environment creation."""
         self._predicates = predicates
+        self._observation_objects = observation_objects
+        self._type_features = type_features
 
     @property
     def predicates(self) -> ClutteredStorage2DPredicates:
@@ -111,16 +121,19 @@ class GraphClutteredStorage2DPerceiver(Perceiver[ObjectCentricState]):
 
     def reset(
         self,
-        obs: ObjectCentricState,
+        obs: NDArray[np.float32],
         _info: dict[str, Any],
     ) -> tuple[set[Object], set[GroundAtom], set[GroundAtom]]:
         """Reset perceiver with observation and info."""
+        # Convert vector observation to ObjectCentricState
+        state = self._vec_to_state(obs)
+
         objects = {
             self._robot,
             self._shelf,
         }
         objects.update(self._blocks)
-        atoms = self._get_atoms(obs)
+        atoms = self._get_atoms(state)
 
         # Goal: all blocks on shelf and hand empty
         goal = set()
@@ -130,9 +143,22 @@ class GraphClutteredStorage2DPerceiver(Perceiver[ObjectCentricState]):
 
         return objects, atoms, goal
 
-    def step(self, obs: ObjectCentricState) -> set[GroundAtom]:
+    def step(self, obs: NDArray[np.float32]) -> set[GroundAtom]:
         """Step perceiver with observation."""
-        return self._get_atoms(obs)
+        # Convert vector observation to ObjectCentricState
+        state = self._vec_to_state(obs)
+        return self._get_atoms(state)
+
+    def _vec_to_state(self, vec: NDArray[np.float32]) -> ObjectCentricState:
+        """Convert vector observation to ObjectCentricState."""
+        if self._observation_objects is None or self._type_features is None:
+            raise RuntimeError("Perceiver not fully initialized with observation objects and type features")
+
+        return ObjectCentricState.from_vec(
+            vec,
+            constant_objects=self._observation_objects,
+            type_features=self._type_features
+        )
 
     def _get_atoms(self, obs: ObjectCentricState) -> set[GroundAtom]:
         """Convert observation to ground atoms."""
@@ -184,7 +210,7 @@ class GraphClutteredStorage2DPerceiver(Perceiver[ObjectCentricState]):
         if len(self._atom_vocabulary) == 0:
             raise RuntimeError(
                 f"Atom vocabulary is empty! Predicates initialized: {self._predicates is not None}, "
-                f"num_blocks: {self.num_blocks}"
+                f"n_blocks: {self.n_blocks}"
             )
 
         # Create binary vector
@@ -225,20 +251,20 @@ class GraphClutteredStorage2DPerceiver(Perceiver[ObjectCentricState]):
 
 
 class BaseGraphClutteredStorage2DTAMPSystem(
-    BaseTAMPSystem[ObjectCentricState, NDArray[np.float32]]
+    BaseTAMPSystem[NDArray[np.float32], NDArray[np.float32]]
 ):
     """Base TAMP system for cluttered storage 2D graph-based environment."""
 
     def __init__(
         self,
-        planning_components: PlanningComponents[ObjectCentricState],
-        num_blocks: int = 3,
+        planning_components: PlanningComponents[NDArray[np.float32]],
+        n_blocks: int = 1,
         seed: int | None = None,
         render_mode: str | None = None,
     ) -> None:
         """Initialize graph-based ClutteredStorage2D TAMP system."""
         self._render_mode = render_mode
-        self.num_blocks = num_blocks
+        self.n_blocks = n_blocks
         super().__init__(
             planning_components, name="GraphClutteredStorage2DTAMPSystem", seed=seed
         )
@@ -246,7 +272,7 @@ class BaseGraphClutteredStorage2DTAMPSystem(
     def _create_env(self) -> gym.Env:
         """Create base environment."""
         base_env = ObjectCentricClutteredStorage2DEnv(
-            num_blocks=self.num_blocks, render_mode=self._render_mode
+            num_blocks=self.n_blocks, render_mode=self._render_mode
         )
         # Wrap with ClutteredStorage2DEnvWrapper to add reset_from_state
         return ClutteredStorage2DEnvWrapper(base_env)
@@ -266,15 +292,15 @@ class BaseGraphClutteredStorage2DTAMPSystem(
 
     @classmethod
     def _create_planning_components(
-        cls, num_blocks: int = 3
-    ) -> PlanningComponents[ObjectCentricState]:
+        cls, n_blocks: int = 1
+    ) -> PlanningComponents[NDArray[np.float32]]:
         """Create planning components for graph-based ClutteredStorage2D system."""
         types_container = ClutteredStorage2DTypes()
         types_set = types_container.as_set()
 
         predicates = ClutteredStorage2DPredicates(types_container)
 
-        perceiver = GraphClutteredStorage2DPerceiver(types_container, num_blocks)
+        perceiver = GraphClutteredStorage2DPerceiver(types_container, n_blocks)
         perceiver.initialize(predicates)
 
         robot = Variable("?robot", types_container.robot)
@@ -355,7 +381,7 @@ class BaseGraphClutteredStorage2DTAMPSystem(
     @classmethod
     def create_default(
         cls,
-        num_blocks: int = 3,
+        n_blocks: int = 1,
         seed: int | None = None,
         render_mode: str | None = None,
     ) -> BaseGraphClutteredStorage2DTAMPSystem:
@@ -367,10 +393,10 @@ class BaseGraphClutteredStorage2DTAMPSystem(
             GraphPlaceBlockOnShelfSkill,
         )
 
-        planning_components = cls._create_planning_components(num_blocks=num_blocks)
+        planning_components = cls._create_planning_components(n_blocks=n_blocks)
         system = cls(
             planning_components,
-            num_blocks=num_blocks,
+            n_blocks=n_blocks,
             seed=seed,
             render_mode=render_mode,
         )
@@ -378,6 +404,13 @@ class BaseGraphClutteredStorage2DTAMPSystem(
         # Create environment to get action space and initial constant state
         env = system.env
         assert isinstance(env, ClutteredStorage2DEnvWrapper)
+
+        # Fully initialize perceiver with observation objects and type features
+        system.perceiver.initialize(
+            predicates=planning_components.predicate_container,
+            observation_objects=env.observation_objects,
+            type_features=env.unwrapped_env.type_features
+        )
 
         skills = {
             GraphPickBlockNotOnShelfSkill(
@@ -393,12 +426,17 @@ class BaseGraphClutteredStorage2DTAMPSystem(
                 system.components, env.unwrapped_env.action_space, env.unwrapped_env.initial_constant_state
             ),
         }
+
+        # Initialize all skills with observation info for vec to state conversion
+        for skill in skills:
+            skill.set_observation_info(env.observation_objects, env.unwrapped_env.type_features)
+
         system.components.skills.update(skills)
         return system
 
 
 class GraphClutteredStorage2DTAMPSystem(
-    ImprovisationalTAMPSystem[ObjectCentricState, NDArray[np.float32]],
+    ImprovisationalTAMPSystem[NDArray[np.float32], NDArray[np.float32]],
     BaseGraphClutteredStorage2DTAMPSystem,
 ):
     """TAMP system for cluttered storage 2D graph-based environment with
@@ -406,13 +444,13 @@ class GraphClutteredStorage2DTAMPSystem(
 
     def __init__(
         self,
-        planning_components: PlanningComponents[ObjectCentricState],
-        num_blocks: int = 3,
+        planning_components: PlanningComponents[NDArray[np.float32]],
+        n_blocks: int = 1,
         seed: int | None = None,
         render_mode: str | None = None,
     ) -> None:
         """Initialize graph-based ClutteredStorage2D TAMP system."""
-        self.num_blocks = num_blocks
+        self.n_blocks = n_blocks
         self._render_mode = render_mode
         ImprovisationalTAMPSystem.__init__(
             self,
@@ -423,13 +461,13 @@ class GraphClutteredStorage2DTAMPSystem(
         BaseGraphClutteredStorage2DTAMPSystem.__init__(
             self,
             planning_components,
-            num_blocks=num_blocks,
+            n_blocks=n_blocks,
             seed=seed,
             render_mode=render_mode,
         )
 
     def _create_wrapped_env(
-        self, components: PlanningComponents[ObjectCentricState]
+        self, components: PlanningComponents[NDArray[np.float32]]
     ) -> gym.Env:
         """Create wrapped environment for training."""
         return ImprovWrapper(
@@ -442,7 +480,7 @@ class GraphClutteredStorage2DTAMPSystem(
     @classmethod
     def create_default(
         cls,
-        num_blocks: int = 3,
+        n_blocks: int = 1,
         seed: int | None = None,
         render_mode: str | None = None,
     ) -> GraphClutteredStorage2DTAMPSystem:
@@ -455,10 +493,10 @@ class GraphClutteredStorage2DTAMPSystem(
             GraphPlaceBlockOnShelfSkill,
         )
 
-        planning_components = cls._create_planning_components(num_blocks=num_blocks)
+        planning_components = cls._create_planning_components(n_blocks=n_blocks)
         system = GraphClutteredStorage2DTAMPSystem(
             planning_components,
-            num_blocks=num_blocks,
+            n_blocks=n_blocks,
             seed=seed,
             render_mode=render_mode,
         )
@@ -466,6 +504,13 @@ class GraphClutteredStorage2DTAMPSystem(
         # Create environment to get action space and initial constant state
         env = system.env
         assert isinstance(env, ClutteredStorage2DEnvWrapper)
+
+        # Fully initialize perceiver with observation objects and type features
+        system.perceiver.initialize(
+            predicates=planning_components.predicate_container,
+            observation_objects=env.observation_objects,
+            type_features=env.unwrapped_env.type_features
+        )
 
         skills = {
             GraphPickBlockNotOnShelfSkill(
@@ -481,5 +526,10 @@ class GraphClutteredStorage2DTAMPSystem(
                 system.components, env.unwrapped_env.action_space, env.unwrapped_env.initial_constant_state
             ),
         }
+
+        # Initialize all skills with observation info for vec to state conversion
+        for skill in skills:
+            skill.set_observation_info(env.observation_objects, env.unwrapped_env.type_features)
+
         system.components.skills.update(skills)
         return system
