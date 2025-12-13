@@ -296,7 +296,7 @@ def run_dyn_obstruction2d_planning(
 
             # Detect operator change
             curr_operator = getattr(planner, '_current_operator', None)
-            if prev_operator != curr_operator and curr_operator is not None:
+            if prev_operator is not curr_operator and curr_operator is not None:
                 # Operator changed! Log robot position at transition
                 from relational_structs.spaces import ObjectCentricBoxSpace
                 if isinstance(system.env.observation_space, ObjectCentricBoxSpace):
