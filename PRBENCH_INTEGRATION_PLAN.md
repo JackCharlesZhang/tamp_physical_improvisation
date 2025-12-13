@@ -285,7 +285,7 @@ module load anaconda3/2024.10
 source .venv/bin/activate
 
 # Export PYTHONPATH (CRITICAL - must include bilevel-planning!)
-export PYTHONPATH=/scratch/gpfs/TRIDAO/jz4267/prpl-mono/bilevel-planning/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-bilevel-planning/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-models/src:$PYTHONPATH
+
 
 # Run all integration tests
 python -m pytest tests/test_prbench_integration.py -v -s
@@ -337,9 +337,17 @@ python experiments/slap_train.py --config-name dyn_obstruction2d
 
 **Why use Sesame instead of pure planning?**
 - PRBench operators are designed for bilevel planning (symbolic + motion)
-- Navigation operators have empty `add_effects` (low-level controller handles positioning)
-- Pure task planners (pyperplan) can't handle this - they need symbolic effects
+- Navigation operators originally had empty `add_effects` → **FIXED** (see below)
+- Pure task planners (pyperplan) can't work with bilevel operators
 - Sesame planner (PRBench's bilevel planner) is the correct way to test
+
+**CRITICAL FIX Applied to prpl-mono:**
+We discovered navigation operators were missing symbolic effects for `AboveTgt`:
+- **File**: `prpl-mono/prbench-bilevel-planning/src/prbench_bilevel_planning/env_models/dynamic2d/dynobstruction2d.py`
+- **Lines 181, 189**: Added `add_effects={LiftedAtom(AboveTgtSurface, [robot])}` to `MoveToTgtHeld` and `MoveToTgtEmpty`
+- **Lines 198, 206**: Added `delete_effects={LiftedAtom(AboveTgtSurface, [robot])}` to `MoveFromTgtHeld` and `MoveFromTgtEmpty`
+- **Without this fix**: Abstract planner generates NO plans (can't reach `PlaceTgtOnSurface` which requires `AboveTgt`)
+- **With this fix**: Abstract planner generates valid plans ✓
 
 **Running Sesame planner test on della-gpu:**
 
@@ -374,3 +382,165 @@ rsync -avz jz4267@della-gpu.princeton.edu:~/tamp_physical_improvisation/videos/s
 3. State abstraction and goal derivation function properly
 4. Multi-abstract plan + backtracking refinement succeeds
 5. Overall PRBench integration is sound
+
+## Controller Bug Fixes for DynObstruction2D
+
+### Issue: Bilevel Planning Failing at 100% Rate
+
+**Context**: During integration testing, discovered that bilevel planning was completely failing despite having correct operators, predicates, and state abstraction. The Sesame planner (PRBench's multi-abstract plan + backtracking refinement planner) was generating valid abstract plans but failing to refine them into executable trajectories.
+
+**Root Cause Analysis Process**:
+1. Initially MoveToTargetEmpty/MoveToTargetHeld succeeded 0% → improved to ~68% after first fix
+2. Despite ~68% success for MoveToTarget, bilevel planning still failed 100%
+3. With 50 parameter samples per step, probability of all failing is negligible
+4. Investigated subsequent actions (PickTgt, PlaceTgt) in abstract plans
+5. Found NO `[TRAJ_SUCCESS]` or `[TRAJ_FAIL]` messages for PickTgt actions
+6. Realized failures happening during trajectory generation (in controller's `_generate_waypoints`), not execution
+7. Traced to collision checking in GroundPickController raising `TrajectorySamplingFailure`
+
+### Bug Fix #1: MoveToTgtSurfaceController Positioning (Commit 3bdb93f)
+
+**File**: `prpl-mono/prbench-models/src/prbench_models/dynamic2d/dynobstruction2d/parameterized_skills.py`
+
+**Problem**: Controller was positioning robot using rotation-dependent calculations instead of direct X-coordinate alignment with target surface.
+
+**Before**:
+```python
+# Position robot using SE2Pose transformations
+target_x = current_state.get(self._target_surface, "x")
+target_y = current_state.get(self._target_surface, "y")
+target_theta = current_state.get(self._target_surface, "theta")
+target_center = SE2Pose(target_x, target_y, target_theta) * SE2Pose(...)
+# Robot positioned at rotation-dependent location
+```
+
+**After**:
+```python
+# Position robot directly at target surface X coordinate
+target_surface_x = current_state.get(self._target_surface, "x")
+target_robot_pose = SE2Pose(target_surface_x, sampled_y, 0.0)
+# Robot positioned at x = target_surface_x (required for AboveTgt predicate)
+```
+
+**Impact**:
+- MoveToTargetEmpty success rate: 0% → ~68%
+- Still not 100% due to collision checking (expected - some configurations genuinely unreachable)
+- Critical for achieving AboveTgt predicate required by PlaceTgtOnSurface operator
+
+**Technical Details**: The AboveTgt predicate checks `abs(robot_x - target_surface_x) < 0.01`, which requires precise X-coordinate alignment. The old rotation-dependent positioning failed this check.
+
+### Bug Fix #2: GroundPickController Side Sampling (Commit eeac7cd)
+
+**File**: `prpl-mono/prbench-models/src/prbench_models/dynamic2d/dynobstruction2d/parameterized_skills.py`
+
+**Problem**: Controller was restricted to sampling grasp poses from top side only. When obstructions or robot positioned above target block, all 50 pick attempts failed collision checking, causing bilevel planning to backtrack and eventually fail.
+
+**Before (Line 48)**:
+```python
+def sample_parameters(self, x: ObjectCentricState, rng: np.random.Generator) -> tuple[float, float, float]:
+    grasp_ratio = rng.uniform(0.0, 0.1)
+    side = rng.uniform(0.5, 0.75)  # TOP SIDE ONLY - blocks all other approaches!
+    arm_length = rng.uniform(min_arm_length, max_arm_length)
+    return (grasp_ratio, side, arm_length)
+```
+
+**After (Line 48)**:
+```python
+def sample_parameters(self, x: ObjectCentricState, rng: np.random.Generator) -> tuple[float, float, float]:
+    grasp_ratio = rng.uniform(0.0, 0.1)
+    side = rng.uniform(0.0, 1.0)  # ALL SIDES - allows any approach direction!
+    # side parameter mapping:
+    #   0.0-0.25: left side
+    #   0.25-0.5: right side
+    #   0.5-0.75: top side
+    #   0.75-1.0: bottom side
+    arm_length = rng.uniform(min_arm_length, max_arm_length)
+    return (grasp_ratio, side, arm_length)
+```
+
+**Why This Was Critical**:
+- GroundPickController performs collision checking before returning parameters
+- When collision detected, it raises `TrajectorySamplingFailure`
+- Backtracking refiner tries 50 parameter samples per step
+- If all 50 samples fail collision checking → refiner backtracks to previous action
+- With top-only sampling + obstructions above target → 100% failure rate
+- With all-sides sampling → can find collision-free grasp from accessible sides
+
+**Collision Checking Code (Lines 150-163)**:
+```python
+# Check if the target pose is collision-free
+full_state.set(self._robot, "x", target_se2_pose.x)
+full_state.set(self._robot, "y", target_se2_pose.y)
+full_state.set(self._robot, "theta", target_se2_pose.theta)
+full_state.set(self._robot, "arm_joint", desired_arm_length)
+
+moving_objects = {self._robot}
+static_objects = set(full_state) - moving_objects
+
+if state_2d_has_collision(full_state, moving_objects, static_objects, {}):
+    raise TrajectorySamplingFailure("Failed to find a collision-free path to target.")
+```
+
+**Impact**:
+- Expected: Bilevel planning success rate improves dramatically (from 0% to >80%)
+- Allows planner to find valid pick approaches from any accessible side
+- Critical for handling scenarios where obstructions block specific approach directions
+
+### Testing Results
+
+**Before Fixes**:
+- MoveToTargetEmpty: 0% success
+- PickTgt: 0% success (no TRAJ messages - all failing in collision checking)
+- Bilevel planning: 0% success
+
+**After Fix #1 Only**:
+- MoveToTargetEmpty: ~68% success
+- PickTgt: 0% success (still failing in collision checking)
+- Bilevel planning: 0% success
+
+**After Both Fixes** (Expected):
+- MoveToTargetEmpty: ~68% success
+- PickTgt: ~XX% success (test running on della-gpu task 045dbd)
+- Bilevel planning: Expected >80% success with proper parameter sampling
+
+**How to Verify Fixes**:
+```bash
+# CORRECT COMMAND - Run bilevel planning test with both fixes
+# IMPORTANT: Must use this EXACT sequence:
+# 1. cd to test directory
+# 2. Load anaconda3/2024.10 module
+# 3. Activate tamp_physical_improvisation venv (contains tomsgeoms2d)
+# 4. Export PYTHONPATH for all prpl-mono packages
+# 5. Run pytest
+
+ssh jz4267@della-gpu.princeton.edu "cd /scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-bilevel-planning && module load anaconda3/2024.10 && source ~/tamp_physical_improvisation/.venv/bin/activate && export PYTHONPATH=/scratch/gpfs/TRIDAO/jz4267/prpl-mono/bilevel-planning/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-bilevel-planning/src:/scratch/gpfs/TRIDAO/jz4267/prpl-mono/prbench-models/src:\$PYTHONPATH && pytest -xvs 'tests/env_models/dynamic2d/test_dynobstruction2d.py::test_dynobstruction2d_bilevel_planning[0-5-50]' --make-videos"
+
+# Monitor trajectory sampling success rates
+# Should see [TRAJ_SUCCESS] messages for both MoveToTargetEmpty AND PickTgt
+# Should see overall test PASS
+```
+
+### Lessons Learned
+
+1. **Parameter Space Restrictions**: Overly restrictive parameter sampling can cause systematic failures that appear as planning bugs
+2. **Collision Checking During Sampling**: When controllers validate parameters before execution, must ensure parameter space is large enough to find valid samples
+3. **Debugging Trajectory Failures**:
+   - Check for TRAJ_SUCCESS/TRAJ_FAIL messages to identify which actions failing
+   - If NO messages for an action → failing during trajectory generation (collision checking)
+   - If TRAJ_FAIL messages → failing during execution (controller termination, wrong abstract state)
+4. **Backtracking Refinement**: Even with good parameter spaces, some configurations genuinely unreachable → ~70% success acceptable for individual actions
+5. **Multi-Step Planning**: Single action failure doesn't doom planning if backtracking + multiple abstract plans available
+
+### Related Files
+
+**Controller Implementation**:
+- `prbench-models/src/prbench_models/dynamic2d/dynobstruction2d/parameterized_skills.py` - All skill controllers
+
+**Trajectory Sampling**:
+- `bilevel-planning/src/bilevel_planning/trajectory_samplers/parameterized_controller_sampler.py` - Trajectory sampling with failure logging
+
+**Refinement**:
+- `bilevel-planning/src/bilevel_planning/refiners/backtracking_refiner.py` - Backtracking with 50 samples per step
+
+**Testing**:
+- `prbench-bilevel-planning/tests/env_models/dynamic2d/test_dynobstruction2d.py::test_dynobstruction2d_bilevel_planning` - End-to-end bilevel planning test

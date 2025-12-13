@@ -319,7 +319,11 @@ def run_dyn_obstruction2d_planning(
             # if print_action:
             #     print(f"[STEP {step}] Action returned: {action}, all_zeros={all(action == 0)}")
         except Exception as e:
-            print(f"\n[SKILL FAILURE] Skill failed with exception: {type(e).__name__}: {e}")
+            curr_operator = getattr(planner, '_current_operator', None)
+            print(f"\n[SKILL FAILURE] Skill failed for operator: {curr_operator.name if curr_operator else 'None'}")
+            print(f"[SKILL FAILURE] Exception: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             print("[PLANNER] Attempting to replan...")
             # Reset planner to trigger replanning
             planner.reset(obs, info)
