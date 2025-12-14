@@ -238,8 +238,10 @@ class GridworldFixedEnv(gym.Env):
         print(f"env step: robot_pos AFTER={self.robot_pos}")
         self.step_count += 1
 
+
         # Check if goal cell reached
         robot_cell = self._get_cell(self.robot_pos)
+        print(f"current robot cell: {robot_cell}, and goal cell: {self.goal_cell}")
         terminated = robot_cell == self.goal_cell
 
         # Check if max steps exceeded

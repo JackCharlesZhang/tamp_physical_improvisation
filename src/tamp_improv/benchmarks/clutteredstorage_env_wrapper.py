@@ -37,10 +37,6 @@ class ClutteredStorage2DEnvWrapper(gym.Wrapper):
         # IMPORTANT: Create a COPY of the list to avoid mutation
         self.observation_objects = [obj for obj in temp_obs]
 
-        print(f"[INIT] observation_objects: {self.observation_objects}")
-        print(f"[INIT] observation_objects id: {id(self.observation_objects)}")
-        print(f"[INIT] observation_objects length: {len(self.observation_objects)}")
-
         self.observation_state_space = ObjectCentricStateSpace(types)
 
         self.observation_space = self.observation_state_space.to_box(
@@ -49,14 +45,7 @@ class ClutteredStorage2DEnvWrapper(gym.Wrapper):
         )
 
     def reset(self, seed: int | None = None, options: dict | None = None):
-        print(f"\n[RESET] Called with seed={seed}")
-        print(f"[RESET] observation_objects BEFORE: {self.observation_objects}")
-        print(f"[RESET] observation_objects length BEFORE: {len(self.observation_objects)}")
         observation, info = super().reset(seed=seed, options=options)
-        print(f"[RESET] observation_objects AFTER: {self.observation_objects}")
-        print(f"[RESET] observation_objects length AFTER: {len(self.observation_objects)}")
-        print(f"[RESET] observation type: {type(observation)}")
-        print(f"[RESET] observation objects in returned state: {list(observation)}")
         # Convert ObjectCentricState to vector using observation objects
         return observation.vec(objects=self.observation_objects), info
 
@@ -81,22 +70,12 @@ class ClutteredStorage2DEnvWrapper(gym.Wrapper):
         Returns:
             Tuple of (observation, info)
         """
-        print(f"\n[RESET_FROM_STATE] Called")
-        print(f"[RESET_FROM_STATE] observation_objects BEFORE: {self.observation_objects}")
-        print(f"[RESET_FROM_STATE] observation_objects id BEFORE: {id(self.observation_objects)}")
-        print(f"[RESET_FROM_STATE] observation_objects length BEFORE: {len(self.observation_objects)}")
-        print(f"[RESET_FROM_STATE] state vector shape: {state.shape}")
 
         # Call parent reset to initialize properly if seed is provided
         if seed is not None:
-            print(f"[RESET_FROM_STATE] Calling super().reset(seed={seed})")
             super().reset(seed=seed)
-            print(f"[RESET_FROM_STATE] observation_objects AFTER super().reset(): {self.observation_objects}")
-            print(f"[RESET_FROM_STATE] observation_objects id AFTER super().reset(): {id(self.observation_objects)}")
-            print(f"[RESET_FROM_STATE] observation_objects length AFTER super().reset(): {len(self.observation_objects)}")
 
         # Convert vectorized state to ObjectCentricState
-        print(f"[RESET_FROM_STATE] Converting vector to ObjectCentricState")
         state_obj = ObjectCentricState.from_vec(
             state,
             constant_objects=self.observation_objects,

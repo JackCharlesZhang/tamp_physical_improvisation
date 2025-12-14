@@ -56,7 +56,7 @@ eval_max_steps: 500
 
 # SLAP Pipeline Configs
 # Pruning method: "none", "rollouts", or "distance_heuristic"
-pruning_method: none
+pruning_method: rollouts
 
 max_training_steps_per_shortcut: 300
 episodes_per_scenario: 3

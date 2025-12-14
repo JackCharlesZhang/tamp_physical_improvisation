@@ -293,7 +293,7 @@ class RLPolicy(Policy[ObsType, ActType]):
             )
             if callback is None:
                 callback = TrainingProgressCallback()
-            total_timesteps = 1_000_000  # Adjust as needed
+            total_timesteps = 25000  # Adjust as needed
             self.model.learn(total_timesteps=total_timesteps, callback=callback)
             return
 

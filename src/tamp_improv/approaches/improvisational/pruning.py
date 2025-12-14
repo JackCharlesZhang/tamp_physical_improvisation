@@ -296,6 +296,9 @@ def prune_with_rollouts(
         if source_node is None:
             continue
 
+        if len(source_states) == 0: 
+            continue
+
         source_atoms = set(source_node.atoms)
         rollouts_per_state = max(1, num_rollouts_per_node // len(source_states))
 
