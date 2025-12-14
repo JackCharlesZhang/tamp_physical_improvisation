@@ -30,9 +30,13 @@ from tamp_improv.approaches.improvisational.analyze import compute_true_node_dis
 from tamp_improv.approaches.improvisational.base import ImprovisationalTAMPApproach
 from tamp_improv.approaches.improvisational.collection import collect_total_shortcuts
 from tamp_improv.approaches.improvisational.graph_training import compute_graph_distances
-from tamp_improv.approaches.improvisational.heuristics.heuristic_rollouts import (
-    RolloutsHeuristic,
-)
+
+from tamp_improv.approaches.improvisational.heuristics.heuristic_none import NoneHeuristic
+from tamp_improv.approaches.improvisational.heuristics.heuristic_rollouts import RolloutsHeuristic
+from tamp_improv.approaches.improvisational.heuristics.heuristic_smart_rollouts import SmartRolloutsHeuristic
+from tamp_improv.approaches.improvisational.heuristics.heuristic_crl import CRLHeuristic, CRLHeuristicConfig
+
+
 from tamp_improv.approaches.improvisational.policies.base import (
     GoalConditionedTrainingData,
     Policy,
@@ -55,6 +59,18 @@ ActType = TypeVar("ActType")
 # Helper Functions: Create Heuristics and Policies
 # =============================================================================
 
+from dataclasses import fields
+
+def dataclass_from_cfg(dataclass_type, cfg_section):
+    field_names = {f.name for f in fields(dataclass_type)}
+
+    kwargs = {
+        k: v
+        for k, v in cfg_section.items()
+        if k in field_names
+    }
+
+    return dataclass_type(**kwargs)
 
 def create_heuristic(
     training_data: GoalConditionedTrainingData,
@@ -74,7 +90,12 @@ def create_heuristic(
     Returns:
         Heuristic instance
     """
-    if cfg.heuristic.type == "rollouts":
+    if cfg.heuristic.type == "none":
+        return NoneHeuristic(
+            training_data=training_data,
+            graph_distances=graph_distances,
+        )
+    elif cfg.heuristic.type == "rollouts":
         return RolloutsHeuristic(
             training_data=training_data,
             graph_distances=graph_distances,
@@ -85,13 +106,31 @@ def create_heuristic(
             action_scale=cfg.heuristic.action_scale,
             seed=cfg.seed,
         )
-    elif cfg.heuristic.type == "v4":
+    elif cfg.heuristic.type == "smart_rollouts":
+        return SmartRolloutsHeuristic(
+            training_data=training_data,
+            graph_distances=graph_distances,
+            system=system,
+            num_rollouts=cfg.heuristic.num_rollouts_per_node,
+            max_steps_per_rollout=cfg.heuristic.max_steps_per_rollout,
+            factor=cfg.heuristic.shortcut_length_factor,
+            action_scale=cfg.heuristic.action_scale,
+            seed=cfg.seed,
+        )
+    elif cfg.heuristic.type == "crl":
         # TODO: Implement V4 heuristic
-        raise NotImplementedError("V4 heuristic not yet implemented in new interface")
-    elif cfg.heuristic.type == "random":
-        # TODO: Implement random heuristic
-        raise NotImplementedError("Random heuristic not yet implemented")
-    else:
+        crl_config = dataclass_from_cfg(CRLHeuristicConfig, cfg.heuristic)
+        print("CRL Config:", crl_config)
+        # print(0 / 0)
+
+        return CRLHeuristic(
+            training_data=training_data,
+            graph_distances=graph_distances,
+            system=system,
+            config=crl_config,
+            seed=cfg.seed,
+        )
+    else:   
         raise ValueError(f"Unknown heuristic type: {cfg.heuristic.type}")
 
 

@@ -21,7 +21,7 @@ collection:
 
 heuristic:
   # Heuristic Parameters
-  type: rollouts
+  type: crl
 
   # Rollout Heuristic Parameters
   use_random_rollouts: true
@@ -44,7 +44,7 @@ heuristic:
   iters_per_epoch: 1
   learn_frequency: 1
 
-  n_epochs: 1  # Epochs per round (used as num_epochs_per_round in multi_train)
+  num_epochs_per_round: 1  # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
   max_episode_steps: 100
 
@@ -65,10 +65,11 @@ policy:
   gamma: 0.99
   ent_coef: 0.01
   deterministic: false
-  early_stopping: true
+  early_stopping: false
+  early_stopping_patience: 10
   max_episode_steps: 100
   episodes_per_scenario: 1
-  training_record_interval: 10
+  training_record_interval: 100
 
   eval_rollouts: 10
 

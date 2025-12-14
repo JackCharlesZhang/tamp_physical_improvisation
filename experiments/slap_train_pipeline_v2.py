@@ -165,6 +165,18 @@ def main(cfg: DictConfig) -> float:
 
     OmegaConf.save(cfg, output_dir / "config.yaml")
 
+    heuristic = results.heuristic
+    try:
+        heuristic.save(output_dir / "heuristic")
+    except:
+        print("Heuristic has no save() method, skipping heuristic save.")
+    
+    policy = results.policy
+    try:
+        policy.save(output_dir / "policy")
+    except:
+        print("Policy has no save() method, skipping policy save.")
+
     # Save results
     results_file = output_dir / "results.txt"
     with open(results_file, "w", encoding="utf-8") as f:
