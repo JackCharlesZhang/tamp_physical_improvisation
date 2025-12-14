@@ -241,7 +241,7 @@ class TestClutteredStorage2DSystem:
         assert skill.can_execute(ground_op)
 
 
-@pytest.mark.parametrize("n_blocks", [1])
+@pytest.mark.parametrize("n_blocks", [1, 3, 5])
 def test_different_num_blocks(n_blocks):
     """Test system creation with different numbers of blocks."""
     system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
@@ -262,7 +262,7 @@ def test_different_num_blocks(n_blocks):
 def test_tamp_planner_integration():
     """Test that the system can be used with TaskThenMotionPlanner."""
     system = BaseGraphClutteredStorage2DTAMPSystem.create_default(
-        n_blocks=1, render_mode="rgb_array", seed=42
+        n_blocks=3, render_mode="rgb_array", seed=10
     )
 
     env_time_limited = TimeLimit(system.env, max_episode_steps=500)
@@ -303,10 +303,7 @@ def test_tamp_planner_integration():
 
     # Try to take a few steps with the planner
     total_reward = 0
-    for step in range(200):  # Just test a few steps
-        # import ipdb
-
-        # ipdb.set_trace()
+    for step in range(500):  # Just test a few steps
         action = planner.step(obs)
         obs, reward, terminated, truncated, _ = env.step(action)
         total_reward += reward

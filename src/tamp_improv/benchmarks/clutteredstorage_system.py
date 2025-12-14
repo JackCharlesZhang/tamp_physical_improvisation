@@ -184,6 +184,7 @@ class GraphClutteredStorage2DPerceiver(Perceiver[NDArray[np.float32]]):
         # Add on_shelf / not_on_shelf atoms
         for i, block in enumerate(self._blocks):
             target_block = next((b for b in target_blocks if b.name == block.name), None)
+
             if target_block:
                 if is_inside_shelf(obs, target_block, shelf_obj, {}):
                     atoms.add(GroundAtom(self.predicates.on_shelf, [block, self._shelf]))
@@ -261,12 +262,19 @@ class BaseGraphClutteredStorage2DTAMPSystem(
         n_blocks: int = 1,
         seed: int | None = None,
         render_mode: str | None = None,
+        **kwargs,
     ) -> None:
         """Initialize graph-based ClutteredStorage2D TAMP system."""
         self._render_mode = render_mode
-        self.n_blocks = n_blocks
+        # Only set n_blocks if not already set (to support cooperative inheritance)
+        if not hasattr(self, 'n_blocks'):
+            self.n_blocks = n_blocks
         super().__init__(
-            planning_components, name="GraphClutteredStorage2DTAMPSystem", seed=seed
+            planning_components,
+            name="GraphClutteredStorage2DTAMPSystem",
+            seed=seed,
+            render_mode=render_mode,
+            **kwargs,
         )
 
     def _create_env(self) -> gym.Env:
@@ -274,6 +282,9 @@ class BaseGraphClutteredStorage2DTAMPSystem(
         base_env = ObjectCentricClutteredStorage2DEnv(
             num_blocks=self.n_blocks, render_mode=self._render_mode
         )
+
+        base_env._num_init_shelf_blocks = 0
+        base_env._num_init_outside_blocks = self.n_blocks
         # Wrap with ClutteredStorage2DEnvWrapper to add reset_from_state
         return ClutteredStorage2DEnvWrapper(base_env)
 
@@ -450,18 +461,18 @@ class GraphClutteredStorage2DTAMPSystem(
         render_mode: str | None = None,
     ) -> None:
         """Initialize graph-based ClutteredStorage2D TAMP system."""
+        # Set attributes BEFORE calling super().__init__()
+        # so they're available when _create_env() is called
         self.n_blocks = n_blocks
         self._render_mode = render_mode
-        ImprovisationalTAMPSystem.__init__(
-            self,
+
+        # Use cooperative multiple inheritance - let Python's MRO handle it
+        # ImprovisationalTAMPSystem.__init__ will be called first (per MRO),
+        # which will call its super().__init__() leading to
+        # BaseGraphClutteredStorage2DTAMPSystem.__init__, then BaseTAMPSystem.__init__
+        # This ensures _create_env() is only called ONCE
+        super().__init__(
             planning_components,
-            seed=seed,
-            render_mode=render_mode,
-        )
-        BaseGraphClutteredStorage2DTAMPSystem.__init__(
-            self,
-            planning_components,
-            n_blocks=n_blocks,
             seed=seed,
             render_mode=render_mode,
         )
@@ -470,6 +481,8 @@ class GraphClutteredStorage2DTAMPSystem(
         self, components: PlanningComponents[NDArray[np.float32]]
     ) -> gym.Env:
         """Create wrapped environment for training."""
+        import ipdb
+        
         return ImprovWrapper(
             base_env=self.env,
             perceiver=components.perceiver,

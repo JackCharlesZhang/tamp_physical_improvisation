@@ -61,6 +61,13 @@ class ImprovWrapper(gym.Env):
         training_data: TrainingData,
     ) -> None:
         """Configure environment for training phase."""
+        print(f"\n[IMPROV_WRAPPER.configure_training] Called with {len(training_data.states)} states")
+
+        # Check base_env observation_objects before configuration
+        if hasattr(self.env, 'observation_objects'):
+            print(f"[IMPROV_WRAPPER.configure_training] base_env.observation_objects BEFORE: {self.env.observation_objects}")
+            print(f"[IMPROV_WRAPPER.configure_training] base_env.observation_objects length BEFORE: {len(self.env.observation_objects)}")
+
         self.training_states = training_data.states
 
         self.current_atoms_list = training_data.current_atoms
@@ -74,6 +81,11 @@ class ImprovWrapper(gym.Env):
         self.max_episode_steps = training_data.config.get(
             "max_training_steps_per_shortcut", self.max_episode_steps
         )
+
+        # Check base_env observation_objects after configuration
+        if hasattr(self.env, 'observation_objects'):
+            print(f"[IMPROV_WRAPPER.configure_training] base_env.observation_objects AFTER: {self.env.observation_objects}")
+            print(f"[IMPROV_WRAPPER.configure_training] base_env.observation_objects length AFTER: {len(self.env.observation_objects)}")
 
     def set_relevant_objects(self, objects):
         """Set relevant objects for observation extraction."""
@@ -98,6 +110,7 @@ class ImprovWrapper(gym.Env):
             self.goal_atom_set = self.goal_atoms_list[self.current_training_idx]
 
             if hasattr(self.env, "reset_from_state"):
+                print("RESETTING FROM STATE")
                 obs, info = self.env.reset_from_state(current_state, seed=seed)
             else:
                 raise AttributeError(

@@ -13,7 +13,7 @@ from tamp_improv.approaches.improvisational.base import ImprovisationalTAMPAppro
 from tamp_improv.approaches.improvisational.policies.multi_rl import MultiRLPolicy
 from tamp_improv.benchmarks.obstacle2d_graph import GraphObstacle2DTAMPSystem
 from tamp_improv.benchmarks.gridworld import GridworldTAMPSystem
-
+from tamp_improv.benchmarks.clutteredstorage_system import GraphClutteredStorage2DTAMPSystem
 
 def test_collection_imports():
     """Test that collection functions can be imported."""
@@ -249,15 +249,23 @@ def test_collect_total_shortcuts():
         "seed": 42,
         "collect_episodes": 5,
         "planner_id": "pyperplan",
+        "max_episode_steps": 200,
     }
 
     # system = GraphObstacle2DTAMPSystem.create_default()
 
-    system = GridworldTAMPSystem.create_default(
-        num_cells=10,
-        num_states_per_cell=10,
-        num_teleporters=1,
-        seed=config["seed"],
+    # system = GridworldTAMPSystem.create_default(
+    #     num_cells=10,
+    #     num_states_per_cell=10,
+    #     num_teleporters=1,
+    #     seed=config["seed"],
+    # )
+
+    # Enable rendering with "human" mode for visualization
+    system = GraphClutteredStorage2DTAMPSystem.create_default(
+        n_blocks=3,
+        seed=42,
+        render_mode="human"  # Enable visualization
     )
 
     # Create approach

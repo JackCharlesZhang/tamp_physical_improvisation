@@ -443,7 +443,7 @@ def identify_shortcut_candidates(
     shortcut_candidates = []
 
     for source_node in nodes:
-        if source_node.id not in observed_states:
+        if source_node.id not in observed_states or len(observed_states[source_node.id]) == 0:
             continue
 
         # Use the first state for the candidate (we'll expand later)

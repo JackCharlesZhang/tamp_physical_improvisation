@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 import gymnasium as gym
-from prbench.envs.geom2d.clutteredstorage2d import ObjectCentricClutteredStorage2DEnv
+import numpy as np
+from numpy.typing import NDArray
+from prbench.envs.geom2d.clutteredstorage2d import (
+    ObjectCentricClutteredStorage2DEnv,
+    ShelfType,
+    TargetBlockType,
+)
+from prbench.envs.geom2d.object_types import CRVRobotType
+from prbench.envs.geom2d.structs import SE2Pose
 from relational_structs import ObjectCentricState, ObjectCentricStateSpace
 
 
@@ -26,7 +34,12 @@ class ClutteredStorage2DEnvWrapper(gym.Wrapper):
         # Reset to get the actual observation structure
         temp_obs, _ = env.reset()
         # The observation objects are the ones actually in the observation state
-        self.observation_objects = list(temp_obs)
+        # IMPORTANT: Create a COPY of the list to avoid mutation
+        self.observation_objects = [obj for obj in temp_obs]
+
+        print(f"[INIT] observation_objects: {self.observation_objects}")
+        print(f"[INIT] observation_objects id: {id(self.observation_objects)}")
+        print(f"[INIT] observation_objects length: {len(self.observation_objects)}")
 
         self.observation_state_space = ObjectCentricStateSpace(types)
 
@@ -36,7 +49,14 @@ class ClutteredStorage2DEnvWrapper(gym.Wrapper):
         )
 
     def reset(self, seed: int | None = None, options: dict | None = None):
+        print(f"\n[RESET] Called with seed={seed}")
+        print(f"[RESET] observation_objects BEFORE: {self.observation_objects}")
+        print(f"[RESET] observation_objects length BEFORE: {len(self.observation_objects)}")
         observation, info = super().reset(seed=seed, options=options)
+        print(f"[RESET] observation_objects AFTER: {self.observation_objects}")
+        print(f"[RESET] observation_objects length AFTER: {len(self.observation_objects)}")
+        print(f"[RESET] observation type: {type(observation)}")
+        print(f"[RESET] observation objects in returned state: {list(observation)}")
         # Convert ObjectCentricState to vector using observation objects
         return observation.vec(objects=self.observation_objects), info
 
@@ -55,24 +75,44 @@ class ClutteredStorage2DEnvWrapper(gym.Wrapper):
         """Reset environment to specific state.
 
         Args:
-            state: The ObjectCentricState to reset to
+            state: Vectorized observation to reset to
             seed: Optional random seed
 
         Returns:
             Tuple of (observation, info)
         """
-        # Call parent reset to initialize properly
-        if seed is not None:
-            super().reset(seed=seed)
+        print(f"\n[RESET_FROM_STATE] Called")
+        print(f"[RESET_FROM_STATE] observation_objects BEFORE: {self.observation_objects}")
+        print(f"[RESET_FROM_STATE] observation_objects id BEFORE: {id(self.observation_objects)}")
+        print(f"[RESET_FROM_STATE] observation_objects length BEFORE: {len(self.observation_objects)}")
+        print(f"[RESET_FROM_STATE] state vector shape: {state.shape}")
 
-        # Set the state directly
-        self.unwrapped_env._state = state  # pylint: disable=protected-access
+        # Call parent reset to initialize properly if seed is provided
+        if seed is not None:
+            print(f"[RESET_FROM_STATE] Calling super().reset(seed={seed})")
+            super().reset(seed=seed)
+            print(f"[RESET_FROM_STATE] observation_objects AFTER super().reset(): {self.observation_objects}")
+            print(f"[RESET_FROM_STATE] observation_objects id AFTER super().reset(): {id(self.observation_objects)}")
+            print(f"[RESET_FROM_STATE] observation_objects length AFTER super().reset(): {len(self.observation_objects)}")
+
+        # Convert vectorized state to ObjectCentricState
+        print(f"[RESET_FROM_STATE] Converting vector to ObjectCentricState")
+        state_obj = ObjectCentricState.from_vec(
+            state,
+            constant_objects=self.observation_objects,
+            type_features=self.unwrapped_env.type_features
+        )
+
+        # Set the state directly - this preserves all properties exactly
+        # Using _create_initial_state would reset dimensions and colors to defaults
+        self.unwrapped_env._current_state = state_obj  # pylint: disable=protected-access
 
         return self._get_obs(), self._get_info()
 
     def _get_obs(self):
         """Get current observation."""
-        return self.unwrapped_env._state  # pylint: disable=protected-access
+        state = self.unwrapped_env._current_state  # pylint: disable=protected-access
+        return state.vec(objects=self.observation_objects)
 
     def _get_info(self) -> dict[str, Any]:
         """Get info dict."""

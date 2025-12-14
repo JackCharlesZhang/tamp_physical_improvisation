@@ -110,9 +110,24 @@ def collect_states_for_all_nodes(
                 continue
 
             print(f"  Trying edge {current_node.id} → {target_node.id} (operator: {edge.operator.name})")
+            # print(f"  Current node atoms: {current_atoms_frozen}")
+            # print(f"  Target node atoms: {target_atoms_frozen}")
+            # print(f"  Selected skill: {skill.__class__.__name__}")
 
             # Reset environment to current state
+
+            # print(f"  Current state before reset: {current_state}")
             obs, _ = system.env.reset_from_state(current_state)
+
+            # print(f"  Observatino after reset: {obs}")
+
+            # print(f" difference {current_state - obs}")
+            # Resetted environment atoms
+            init_atoms = system.perceiver.step(obs)
+
+            # print(f"  Resetted system atoms: {init_atoms}")
+            # print(f"  Ground operator: {edge.operator}")
+            # print(f"  Operator parameters: {edge.operator.parameters}")
 
             # Reset skill with the edge's ground operator
             skill.reset(edge.operator)
@@ -122,11 +137,16 @@ def collect_states_for_all_nodes(
 
             for step in range(max_steps_per_skill):
                 action = skill.get_action(obs)
+                # print("action: ", action)
                 if action is None:
+                    print("No valid action!")
                     break
                 obs, _, _, _, _ = system.env.step(action)
+                # print("low-level states: ", obs)
                 atoms = system.perceiver.step(obs)
                 atoms_frozen = frozenset(atoms)
+
+                
 
                 # Check if we reached target node
                 if atoms_frozen == target_atoms_frozen:
@@ -134,7 +154,7 @@ def collect_states_for_all_nodes(
                     print(f"    → Reached target node {target_node.id} in {step + 1} steps")
                     break
 
-
+            # print("last frozen atom: ", atoms_frozen)
             if success:
                 # Mark node as visited
                 visited_nodes.add(target_node.id)
