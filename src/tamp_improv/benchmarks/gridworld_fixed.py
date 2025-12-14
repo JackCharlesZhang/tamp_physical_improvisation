@@ -117,16 +117,53 @@ class GridworldFixedEnv(gym.Env):
         all_cells = [(i, j) for i in range(num_cells) for j in range(num_cells)]
 
         # Randomly select cell pairs for portals (without replacement)
-        # Each pair connects two random cells
+        # obeying constraint: no two portal cells can be adjacent (Manhattan dist <= 1)
         available_cells = all_cells.copy()
         init_rng.shuffle(available_cells)
+        
+        occupied_cells = set()
+        portals_found = 0
 
-        for i in range(num_teleporters):
-            if len(available_cells) >= 2:
-                # Take two cells for this portal pair
-                cell1 = available_cells.pop()
-                cell2 = available_cells.pop()
-
+        while portals_found < num_teleporters and len(available_cells) >= 2:
+            # Find first valid cell1
+            c1_idx = -1
+            cell1 = None
+            for idx, c in enumerate(available_cells):
+                # Check if c is adjacent to any occupied cell
+                if any(abs(c[0] - oc[0]) + abs(c[1] - oc[1]) <= 1 for oc in occupied_cells):
+                    continue
+                c1_idx = idx
+                cell1 = c
+                break
+            
+            if cell1 is None:
+                # No valid cell1 found remaining in available_cells
+                break
+                
+            # Find first valid cell2
+            c2_idx = -1
+            cell2 = None
+            for idx, c in enumerate(available_cells):
+                if idx == c1_idx:
+                    continue
+                    
+                # Check if c is adjacent to occupied cells
+                if any(abs(c[0] - oc[0]) + abs(c[1] - oc[1]) <= 1 for oc in occupied_cells):
+                    continue
+                    
+                # Check if c is adjacent to cell1
+                if abs(c[0] - cell1[0]) + abs(c[1] - cell1[1]) <= 1:
+                    continue
+                    
+                c2_idx = idx
+                cell2 = c
+                break
+            
+            if cell2 is not None:
+                # Found a pair
+                occupied_cells.add(cell1)
+                occupied_cells.add(cell2)
+                
                 # Place portals at center of each cell
                 portal1_pos = np.array([
                     cell1[0] * cell_size + cell_size // 2,
@@ -139,6 +176,20 @@ class GridworldFixedEnv(gym.Env):
                 ], dtype=np.int32)
 
                 self.portal_positions.append((portal1_pos, portal2_pos))
+                
+                # Remove used cells from available_cells
+                # Remove larger index first to avoid index shifting issues
+                if c1_idx > c2_idx:
+                    available_cells.pop(c1_idx)
+                    available_cells.pop(c2_idx)
+                else:
+                    available_cells.pop(c2_idx)
+                    available_cells.pop(c1_idx)
+                
+                portals_found += 1
+            else:
+                # Found cell1 but no cell2. cell1 cannot be a start point with current remaining cells.
+                available_cells.pop(c1_idx)
 
         # State variables (randomized each reset)
         self.robot_pos: NDArray[np.int32] | None = None
