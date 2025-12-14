@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any, Callable, TypeVar
 import numpy as np
 
 if TYPE_CHECKING:
-    from tamp_improv.approaches.improvisational.distance_heuristic import (
-        GoalConditionedDistanceHeuristic,
+    from tamp_improv.approaches.improvisational.distance_heuristic_v4 import (
+        DistanceHeuristicV4,
     )
 
 from tamp_improv.approaches.improvisational.base import (
@@ -180,14 +180,14 @@ def _test_shortcut_quality(
 
 
 def _test_heuristic_quality(
-    heuristic: "GoalConditionedDistanceHeuristic",
+    heuristic,  # DistanceHeuristicV4
     training_data: GoalConditionedTrainingData,
     planning_graph: PlanningGraph,
 ) -> None:
     """Test quality of trained heuristic by comparing with graph distances.
 
     Args:
-        heuristic: Trained distance heuristic
+        heuristic: Trained distance heuristic (V4)
         training_data: Training data with node states and atoms
         planning_graph: Planning graph for computing true graph distances
     """
@@ -204,11 +204,9 @@ def _test_heuristic_quality(
     graph_distances = compute_graph_distances(planning_graph, exclude_shortcuts=True)
     print(f"  Computed {len(graph_distances)} pairwise distances")
 
-    # Collect all state pairs for evaluation
-    print("Collecting state pairs for evaluation...")
-    all_pairs = []
-    node_pair_to_state_pairs: dict[tuple[int, int], list[int]] = {}
-
+    # Use V4's estimate_node_distance for node-node pairs
+    print("Estimating node-node distances with learned heuristic...")
+    results = []
     for source_node in planning_graph.nodes:
         for target_node in planning_graph.nodes:
             if source_node.id == target_node.id:
@@ -232,57 +230,19 @@ def _test_heuristic_quality(
                 (source_node.id, target_node.id), float("inf")
             )
 
-            # Create all combinations of source and target states
-            state_pair_indices = []
-            for source_state in source_states:
-                for target_state in target_states:
-                    state_pair_idx = len(all_pairs)
-                    all_pairs.append(
-                        {
-                            "source_id": source_node.id,
-                            "target_id": target_node.id,
-                            "source_state": source_state,
-                            "target_state": target_state,
-                            "graph_distance": graph_dist,
-                        }
-                    )
-                    state_pair_indices.append(state_pair_idx)
+            # Use V4's estimate_node_distance for node-node estimation
+            learned_dist = heuristic.estimate_node_distance(source_node.id, target_node.id)
 
-            node_pair_to_state_pairs[(source_node.id, target_node.id)] = (
-                state_pair_indices
+            results.append(
+                {
+                    "source_id": source_node.id,
+                    "target_id": target_node.id,
+                    "graph_distance": graph_dist,
+                    "learned_distance": learned_dist,
+                }
             )
 
-    print(f"  Collected {len(all_pairs)} state pairs from {len(node_pair_to_state_pairs)} node pairs")
-
-    # Estimate distances using heuristic
-    print("Estimating distances with learned heuristic...")
-    all_learned_distances = []
-    for pair in all_pairs:
-        learned_dist = heuristic.estimate_distance(
-            pair["source_state"], pair["target_state"]
-        )
-        all_learned_distances.append(learned_dist)
-
-    # Compute average learned distance for each node pair
-    node_pair_distances = {}
-    for node_pair, state_pair_indices in node_pair_to_state_pairs.items():
-        learned_distances = [all_learned_distances[idx] for idx in state_pair_indices]
-        avg_learned_dist = sum(learned_distances) / len(learned_distances)
-        node_pair_distances[node_pair] = avg_learned_dist
-
-    # Create results
-    results = []
-    for node_pair, avg_dist in node_pair_distances.items():
-        source_id, target_id = node_pair
-        graph_dist = graph_distances.get(node_pair, float("inf"))
-        results.append(
-            {
-                "source_id": source_id,
-                "target_id": target_id,
-                "graph_distance": graph_dist,
-                "learned_distance": avg_dist,
-            }
-        )
+    print(f"  Evaluated {len(results)} node-node pairs")
 
     # Separate finite and infinite distance pairs
     finite_results = [r for r in results if r["graph_distance"] != float("inf")]
@@ -426,9 +386,9 @@ def get_or_train_heuristic(
     save_dir: Path,
     rng: np.random.Generator,
     force_train: bool = False,
-) -> "GoalConditionedDistanceHeuristic":
+):
     """
-    Stage 2: Get or train distance heuristic.
+    Stage 2: Get or train distance heuristic using V4 with multi-train.
 
     Args:
         system: The TAMP system
@@ -439,24 +399,33 @@ def get_or_train_heuristic(
         force_train: Force re-training even if cached heuristic exists
 
     Returns:
-        Trained GoalConditionedDistanceHeuristic
+        Trained DistanceHeuristicV4
     """
-    from tamp_improv.approaches.improvisational.distance_heuristic import (
-        GoalConditionedDistanceHeuristic,
+    from tamp_improv.approaches.improvisational.distance_heuristic_v4 import (
+        DistanceHeuristicV4,
+        DistanceHeuristicV4Config,
+    )
+    from tamp_improv.approaches.improvisational.graph_training import (
+        compute_graph_distances,
     )
 
-    heuristic_dir = save_dir / "distance_heuristic"
+    heuristic_dir = save_dir / "distance_heuristic_v4"
     config_path = heuristic_dir / "config.json"
 
     # Config keys that affect heuristic training
     heuristic_config_keys = [
         "seed",
-        "heuristic_training_pairs",
-        "heuristic_training_steps",
-        "heuristic_learning_rate",
-        "heuristic_batch_size",
-        "heuristic_buffer_size",
-        "heuristic_max_steps",
+        "latent_dim",
+        "hidden_dims",
+        "learning_rate",
+        "batch_size",
+        "buffer_size",
+        "gamma",
+        "num_rounds",
+        "keep_fraction",
+        "num_epochs",
+        "trajectories_per_epoch",
+        "max_episode_steps",
     ]
 
     # Collection fingerprint (to detect if upstream data changed)
@@ -483,8 +452,24 @@ def get_or_train_heuristic(
 
             if config_matches and fingerprint_matches:
                 print("  Config and upstream data match! Loading cached heuristic...")
-                heuristic = GoalConditionedDistanceHeuristic(seed=config.get("seed", 42))
-                heuristic.load(str(heuristic_dir), system.perceiver)
+                heuristic_config = DistanceHeuristicV4Config(
+                    latent_dim=config.get("latent_dim", 32),
+                    hidden_dims=config.get("hidden_dims"),
+                    learning_rate=config.get("learning_rate", 0.001),
+                    batch_size=config.get("batch_size", 256),
+                    buffer_size=config.get("buffer_size", 10000),
+                    gamma=config.get("gamma", 0.99),
+                    num_rounds=config.get("num_rounds", 1),
+                    keep_fraction=config.get("keep_fraction", 0.5),
+                    device=config.get("device", "cuda"),
+                )
+                heuristic = DistanceHeuristicV4(
+                    config=heuristic_config,
+                    env=system.env,
+                    get_node=system.perceiver.step,
+                    node_atoms=training_data.node_atoms,
+                )
+                heuristic.load(str(heuristic_dir))
                 print("  Heuristic loaded successfully")
                 return heuristic
             else:
@@ -498,13 +483,85 @@ def get_or_train_heuristic(
             print(f"  Error loading cached heuristic: {e}")
             print("  Will retrain")
 
-    # Train new heuristic using the function from pruning.py
-    heuristic = train_distance_heuristic(training_data, system, config, rng)
+    # Train new heuristic using V4 with multi_train
+    print("Training distance heuristic V4 with multi-round training...")
+
+    # Prepare state-node pairs from training data
+    state_node_pairs = []
+    for source_id, target_id in training_data.valid_shortcuts:
+        if source_id not in training_data.node_states:
+            continue
+
+        source_states = training_data.node_states[source_id]
+        if not source_states:
+            continue
+
+        # Use all source states with target node
+        for source_state in source_states:
+            state_node_pairs.append((source_state, target_id))
+
+    print(f"  Total state-node pairs: {len(state_node_pairs)}")
+
+    # Compute graph distances for multi-round training
+    planning_graph = training_data.graph
+    if planning_graph is None:
+        raise ValueError("Planning graph required for heuristic training")
+
+    graph_distances = {}
+    if config.get("num_rounds", 1) > 1:
+        print("  Computing graph distances for pruning...")
+        graph_distances = compute_graph_distances(planning_graph, exclude_shortcuts=True)
+        print(f"  Computed {len(graph_distances)} pairwise graph distances")
+
+    # Create heuristic config
+    heuristic_config = DistanceHeuristicV4Config(
+        latent_dim=config.get("latent_dim", 32),
+        hidden_dims=config.get("hidden_dims"),
+        learning_rate=config.get("learning_rate", 0.001),
+        batch_size=config.get("batch_size", 256),
+        buffer_size=config.get("buffer_size", 10000),
+        gamma=config.get("gamma", 0.99),
+        num_rounds=config.get("num_rounds", 1),
+        keep_fraction=config.get("keep_fraction", 0.5),
+        device=config.get("device", "cuda"),
+    )
+
+    # Initialize heuristic
+    heuristic = DistanceHeuristicV4(
+        config=heuristic_config,
+        env=system.env,
+        get_node=system.perceiver.step,
+        node_atoms=training_data.node_atoms,
+    )
+
+    # Train using multi_train
+    training_history = heuristic.multi_train(
+        state_node_pairs=state_node_pairs,
+        graph_distances=graph_distances,
+        num_rounds=heuristic_config.num_rounds,
+        num_epochs_per_round=config.get("num_epochs", 200),
+        trajectories_per_epoch=config.get("trajectories_per_epoch", 10),
+        max_episode_steps=config.get("max_episode_steps", 100),
+        keep_fraction=heuristic_config.keep_fraction,
+    )
+
+    print("  Heuristic training complete")
 
     # Save heuristic and config
     heuristic_dir.mkdir(parents=True, exist_ok=True)
     print(f"\nSaving heuristic to {heuristic_dir}")
     heuristic.save(str(heuristic_dir))
+
+    # Save distance matrices from multi-round training (if any)
+    if 'distance_matrices' in training_history and len(training_history['distance_matrices']) > 0:
+        import pickle
+        distance_matrices_path = heuristic_dir / "distance_matrices.pkl"
+        with open(distance_matrices_path, 'wb') as f:
+            pickle.dump({
+                'distance_matrices': training_history['distance_matrices'],
+                'graph_distances': training_history.get('graph_distances', {}),
+            }, f)
+        print(f"  Saved {len(training_history['distance_matrices'])} distance matrices")
 
     # Save config with collection fingerprint
     saved_config = {k: config.get(k) for k in heuristic_config_keys}
@@ -523,7 +580,7 @@ def prune_full_data(
     config: dict[str, Any],
     save_dir: Path,
     rng: np.random.Generator,
-    heuristic: "GoalConditionedDistanceHeuristic | None" = None,
+    heuristic: "DistanceHeuristicV4 | None" = None,
     force_prune: bool = False,
 ) -> GoalConditionedTrainingData:
     """
@@ -536,7 +593,7 @@ def prune_full_data(
         config: Full config dictionary
         save_dir: Directory to save/load pruned data
         rng: Random number generator
-        heuristic: Trained distance heuristic (required if using distance_heuristic pruning)
+        heuristic: Trained distance heuristic V4 (required if using distance_heuristic pruning)
         force_prune: Force re-pruning even if cached data exists
 
     Returns:

@@ -1,0 +1,802 @@
+"""Simplified pipeline for SLAP training - V2 with unified heuristic interface.
+
+This pipeline treats all heuristic methods uniformly through a common interface,
+eliminating special cases and complexity. No caching - just clean execution.
+
+Pipeline stages:
+1. Collect data - collect_total_shortcuts → training_data + planning_graph + graph_distances
+2. Train heuristic - heuristic.multi_train() → trained heuristic + training_history
+3. Test heuristic quality (if debug) → heuristic quality results
+4. Prune with heuristic - heuristic.prune() → pruned_training_data
+5. Random selection - randomly select max_shortcuts_per_graph shortcuts
+6. Train policy - policy.train() → trained policy
+7. Test shortcut quality (if debug) → shortcut quality results
+8. Evaluate - run_evaluation_episode() → evaluation results
+
+The pipeline returns all results; the experiment handles saving.
+"""
+import time
+import random
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypeVar
+from omegaconf import DictConfig
+import numpy as np
+import torch
+
+if TYPE_CHECKING:
+    from tamp_improv.approaches.improvisational.heuristics.base import BaseHeuristic
+
+from tamp_improv.approaches.improvisational.analyze import compute_true_node_distance
+from tamp_improv.approaches.improvisational.base import ImprovisationalTAMPApproach
+from tamp_improv.approaches.improvisational.collection import collect_total_shortcuts
+from tamp_improv.approaches.improvisational.graph_training import compute_graph_distances
+from tamp_improv.approaches.improvisational.heuristics.heuristic_rollouts import (
+    RolloutsHeuristic,
+)
+from tamp_improv.approaches.improvisational.policies.base import (
+    GoalConditionedTrainingData,
+    Policy,
+)
+from tamp_improv.approaches.improvisational.policies.multi_rl import MultiRLPolicy
+from tamp_improv.approaches.improvisational.policies.rl import RLConfig
+from tamp_improv.approaches.improvisational.training import (
+    Metrics,
+    TrainingConfig,
+    run_evaluation_episode,
+)
+from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
+from tamp_improv.utils.gpu_utils import set_torch_seed
+
+ObsType = TypeVar("ObsType")
+ActType = TypeVar("ActType")
+
+
+# =============================================================================
+# Helper Functions: Create Heuristics and Policies
+# =============================================================================
+
+
+def create_heuristic(
+    training_data: GoalConditionedTrainingData,
+    graph_distances: dict[tuple[int, int], float],
+    system: ImprovisationalTAMPSystem,
+    cfg: DictConfig,
+) -> "BaseHeuristic":
+    """Create a heuristic instance based on type.
+
+    Args:
+        heuristic_type: Type of heuristic ("rollouts", "v4", etc.)
+        training_data: Training data from collection
+        graph_distances: Graph distances
+        system: TAMP system
+        config: Configuration dictionary
+
+    Returns:
+        Heuristic instance
+    """
+    if cfg.heuristic.type == "rollouts":
+        return RolloutsHeuristic(
+            training_data=training_data,
+            graph_distances=graph_distances,
+            system=system,
+            num_rollouts=cfg.heuristic.num_rollouts_per_node,
+            max_steps_per_rollout=cfg.heuristic.max_steps_per_rollout,
+            threshold=cfg.heuristic.shortcut_success_threshold,
+            action_scale=cfg.heuristic.action_scale,
+            seed=cfg.seed,
+        )
+    elif cfg.heuristic.type == "v4":
+        # TODO: Implement V4 heuristic
+        raise NotImplementedError("V4 heuristic not yet implemented in new interface")
+    elif cfg.heuristic.type == "random":
+        # TODO: Implement random heuristic
+        raise NotImplementedError("Random heuristic not yet implemented")
+    else:
+        raise ValueError(f"Unknown heuristic type: {cfg.heuristic.type}")
+
+
+def create_policy(
+    cfg: DictConfig,
+) -> Policy:
+    """Create a policy instance based on type.
+
+    Args:
+        policy_type: Type of policy ("multiRL")
+        system: TAMP system
+        config: Configuration dictionary with rl_* parameters
+
+    Returns:
+        Policy instance
+    """
+    if cfg.policy.type == "multiRL":
+        # Extract RL config from parameters prefixed with rl_
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        rl_config = RLConfig(
+            learning_rate=cfg.policy.learning_rate,
+            batch_size=cfg.policy.batch_size,
+            n_epochs=cfg.policy.n_epochs,
+            gamma=cfg.policy.gamma,
+            ent_coef=cfg.policy.ent_coef,
+            deterministic=cfg.policy.deterministic,
+            device=device,
+        )
+        return MultiRLPolicy(seed=cfg.seed, config=rl_config)
+    else:
+        raise ValueError(f"Unknown policy type: {cfg.policy.type}")
+
+
+# =============================================================================
+# Pipeline Results
+# =============================================================================
+
+
+class PipelineResults:
+    """Container for all pipeline outputs."""
+
+    def __init__(self):
+        # Core components
+        self.approach: ImprovisationalTAMPApproach | None = None
+        self.policy: Policy | None = None
+
+        # Stage outputs
+        self.training_data: GoalConditionedTrainingData | None = None
+        self.graph_distances: dict[tuple[int, int], float] | None = None
+        self.heuristic: "BaseHeuristic | None" = None
+        self.heuristic_training_history: dict[str, Any] | None = None
+        self.heuristic_quality_results: dict[str, Any] | None = None
+        self.pruned_training_data: GoalConditionedTrainingData | None = None
+        self.final_training_data: GoalConditionedTrainingData | None = None  # After random selection
+        self.shortcut_quality_results: dict[str, Any] | None = None
+        self.evaluation_results: Metrics | None = None
+        self.times: dict[str, float] | None = None
+
+
+# =============================================================================
+# Stage 1: Collection
+# =============================================================================
+
+
+def collect_training_data(
+    system: ImprovisationalTAMPSystem[ObsType, ActType],
+    approach: ImprovisationalTAMPApproach,
+    cfg: DictConfig,
+    rng: np.random.Generator,
+) -> tuple[GoalConditionedTrainingData, dict[tuple[int, int], float]]:
+    """Stage 1: Collect all shortcuts and compute graph distances.
+
+    Args:
+        system: TAMP system
+        approach: Improvisational TAMP approach
+        config: Configuration dictionary
+        rng: Random number generator
+
+    Returns:
+        Tuple of (training_data, graph_distances)
+    """
+    print("\n" + "=" * 80)
+    print("STAGE 1: COLLECT TRAINING DATA")
+    print("=" * 80)
+
+    # Collect shortcuts
+    training_data = collect_total_shortcuts(
+        system=system,
+        approach=approach,
+        cfg=cfg,
+        rng=rng,
+    )
+
+    print(f"\nCollected {len(training_data.unique_shortcuts)} unique shortcuts")
+    print(f"  ({len(training_data.valid_shortcuts)} state-node pairs total)")
+    print(f"Planning graph has {len(training_data.graph.nodes) if training_data.graph else 0} nodes")
+
+    # Compute graph distances
+    print("\nComputing graph distances...")
+    graph_distances = compute_graph_distances(training_data.graph, exclude_shortcuts=True)
+    print(f"Computed {len(graph_distances)} pairwise distances")
+
+    return training_data, graph_distances
+
+
+# =============================================================================
+# Stage 2: Train Heuristic
+# =============================================================================
+
+
+def train_heuristic(
+    heuristic: "BaseHeuristic",
+) -> dict[str, Any]:
+    """Stage 2: Train the heuristic.
+
+    Args:
+        heuristic: Initialized heuristic instance
+        config: Configuration dictionary
+
+    Returns:
+        Training history dictionary
+    """
+    print("\n" + "=" * 80)
+    print("STAGE 2: TRAIN HEURISTIC")
+    print("=" * 80)
+
+    # Call multi_train - interface is the same for all heuristics
+    training_history = heuristic.multi_train()
+
+    print("\nHeuristic training complete")
+
+    return training_history
+
+
+# =============================================================================
+# Stage 2.5: Test Heuristic Quality (Optional)
+# =============================================================================
+
+
+def test_heuristic_quality(
+    system: ImprovisationalTAMPSystem[ObsType, ActType],
+    heuristic: "BaseHeuristic",
+    training_data: GoalConditionedTrainingData,
+    graph_distances: dict[tuple[int, int], float],
+) -> dict[str, Any]:
+    """Stage 2.5: Test heuristic quality on sample node pairs.
+
+    Args:
+        heuristic: Trained heuristic
+        training_data: Full training data
+        graph_distances: Graph distances
+        config: Configuration dictionary
+
+    Returns:
+        Dictionary with heuristic quality results
+    """
+    print("\n" + "=" * 80)
+    print("STAGE 2.5: TEST HEURISTIC QUALITY")
+    print("=" * 80)
+
+    # Sample some node pairs to evaluate (use unique_shortcuts for node-node pairs)
+    shortcuts = training_data.unique_shortcuts
+    sample_indices = [i for i in range(len(shortcuts))]
+
+    results = {
+        "samples": [],
+        "avg_estimated_distance": 0.0,
+        "avg_graph_distance": 0.0,
+        "avg_absolute_error": 0.0,
+    }
+
+    total_est = 0.0
+    total_graph = 0.0
+    total_abs_error = 0.0
+
+    print(f"\nEvaluating heuristic on {len(sample_indices)} sample shortcuts:")
+    print(f"{'Source':>8} {'Target':>8} {'Estimated':>12} {'Graph':>12} {'Error':>12}")
+    print("-" * 60)
+
+    for idx in sample_indices:
+        source_id, target_id = shortcuts[idx]
+        estimated_dist = heuristic.estimate_node_distance(source_id, target_id)
+        graph_dist = graph_distances.get((source_id, target_id), float("inf"))
+        true_dist = compute_true_node_distance(system,
+                                               training_data.node_states[source_id], 
+                                               training_data.node_atoms[target_id])
+        abs_error = abs(estimated_dist - graph_dist) if graph_dist != float("inf") else float("inf")
+
+        results["samples"].append({
+            "source_id": source_id,
+            "target_id": target_id,
+            "estimated_distance": estimated_dist,
+            "graph_distance": graph_dist,
+            "true_distance": true_dist,
+            "absolute_error": abs_error,
+        })
+
+        print(f"{source_id:8d} {target_id:8d} {estimated_dist:12.2f} {graph_dist:12.2f} {abs_error:12.2f}")
+
+        if graph_dist != float("inf"):
+            total_est += estimated_dist
+            total_graph += graph_dist
+            total_abs_error += abs_error
+
+    # Compute averages
+    num_finite = sum(1 for s in results["samples"] if s["graph_distance"] != float("inf"))
+    if num_finite > 0:
+        results["avg_estimated_distance"] = total_est / num_finite
+        results["avg_graph_distance"] = total_graph / num_finite
+        results["avg_absolute_error"] = total_abs_error / num_finite
+
+        print("-" * 60)
+        print(f"{'Average':>8} {'':<8} {results['avg_estimated_distance']:12.2f} {results['avg_graph_distance']:12.2f} {results['avg_absolute_error']:12.2f}")
+
+    return results
+
+
+# =============================================================================
+# Stage 3: Prune with Heuristic
+# =============================================================================
+
+
+def prune_with_heuristic(
+    heuristic: "BaseHeuristic",
+) -> GoalConditionedTrainingData:
+    """Stage 3: Prune shortcuts using the heuristic.
+
+    Args:
+        heuristic: Trained heuristic
+        config: Configuration dictionary
+
+    Returns:
+        Pruned training data
+    """
+    print("\n" + "=" * 80)
+    print("STAGE 3: PRUNE WITH HEURISTIC")
+    print("=" * 80)
+
+    # Call prune - interface is the same for all heuristics
+    pruned_data = heuristic.prune()
+
+    print(f"\nPruning complete: {len(pruned_data.unique_shortcuts)} unique shortcuts remaining")
+    print(f"  ({len(pruned_data.valid_shortcuts)} state-node pairs)")
+
+    return pruned_data
+
+
+# =============================================================================
+# Stage 3.5: Random Selection
+# =============================================================================
+
+
+def random_selection(
+    training_data: GoalConditionedTrainingData,
+    max_shortcuts: int,
+    rng: np.random.Generator,
+) -> GoalConditionedTrainingData:
+    """Stage 3.5: Randomly select up to max_shortcuts from pruned data.
+
+    If max_shortcuts is 0, returns empty training data (pure planning mode).
+    If max_shortcuts >= num shortcuts, returns all shortcuts unchanged.
+
+    Note: We select from unique_shortcuts (node-node pairs) but keep all
+    corresponding state-node pairs in valid_shortcuts for MultiRL training.
+
+    Args:
+        training_data: Pruned training data
+        max_shortcuts: Maximum number of shortcuts to keep (0 = pure planning)
+        rng: Random number generator
+
+    Returns:
+        Training data with randomly selected shortcuts
+    """
+    print("\n" + "=" * 80)
+    print("STAGE 3.5: RANDOM SELECTION")
+    print("=" * 80)
+
+    num_shortcuts = len(training_data.unique_shortcuts)
+
+    # Handle edge cases
+    if max_shortcuts == 0:
+        print("max_shortcuts_per_graph = 0: Using pure planning (no shortcuts)")
+        # Return empty training data
+        return GoalConditionedTrainingData(
+            states=[],
+            current_atoms=[],
+            goal_atoms=[],
+            valid_shortcuts=[],
+            unique_shortcuts=[],
+            node_states=training_data.node_states,
+            node_atoms=training_data.node_atoms,
+            graph=training_data.graph,
+            config={
+                **training_data.config,
+                "random_selection": True,
+                "max_shortcuts_per_graph": max_shortcuts,
+            },
+        )
+
+    if max_shortcuts >= num_shortcuts:
+        print(f"max_shortcuts_per_graph ({max_shortcuts}) >= num shortcuts ({num_shortcuts}): Keeping all shortcuts")
+        return training_data
+
+    # Random selection
+    print(f"Randomly selecting {max_shortcuts} from {num_shortcuts} unique shortcuts")
+
+    # Randomly select unique shortcuts (node-node pairs)
+    print(training_data.unique_shortcuts)
+    sample = (rng.choice(training_data.unique_shortcuts, size=max_shortcuts, replace=False).tolist())
+
+    selected_unique_shortcuts = set(
+        (x, y) for x, y in sample
+    )
+
+    # Filter valid_shortcuts to keep only those matching selected unique shortcuts
+    # valid_shortcuts has one entry per state-node pair, so we filter by node pairs
+    selected_indices = []
+    for i, (source_id, target_id) in enumerate(training_data.valid_shortcuts):
+        if (source_id, target_id) in selected_unique_shortcuts:
+            selected_indices.append(i)
+
+    # Filter training data
+    original_shortcut_info = training_data.config.get("shortcut_info", [])
+    selected_shortcut_info = (
+        [original_shortcut_info[i] for i in selected_indices]
+        if original_shortcut_info
+        else []
+    )
+
+    selected_data = GoalConditionedTrainingData(
+        states=[training_data.states[i] for i in selected_indices],
+        current_atoms=[training_data.current_atoms[i] for i in selected_indices],
+        goal_atoms=[training_data.goal_atoms[i] for i in selected_indices],
+        valid_shortcuts=[training_data.valid_shortcuts[i] for i in selected_indices],
+        unique_shortcuts=list(selected_unique_shortcuts),
+        node_states=training_data.node_states,
+        node_atoms=training_data.node_atoms,
+        graph=training_data.graph,
+        config={
+            **training_data.config,
+            "shortcut_info": selected_shortcut_info,
+            "random_selection": True,
+            "max_shortcuts_per_graph": max_shortcuts,
+        },
+    )
+
+    print(f"Selected {len(selected_data.unique_shortcuts)} unique shortcuts")
+    print(f"  ({len(selected_data.valid_shortcuts)} state-node pairs)")
+
+    return selected_data
+
+
+# =============================================================================
+# Stage 4: Train Policy
+# =============================================================================
+
+
+def train_policy(
+    system: ImprovisationalTAMPSystem[ObsType, ActType],
+    policy: Policy[ObsType, ActType],
+    training_data: GoalConditionedTrainingData,
+    cfg: DictConfig,
+) -> None:
+    """Stage 4: Train policy on final training data.
+
+    Args:
+        policy: Policy instance to train
+        training_data: Final training data (after pruning and selection)
+        system: TAMP system
+        config: Configuration dictionary
+        rng: Random number generator
+    """
+    print("\n" + "=" * 80)
+    print("STAGE 4: TRAIN POLICY")
+    print("=" * 80)
+
+    # Skip training if no shortcuts
+    if len(training_data.valid_shortcuts) == 0:
+        print("No shortcuts to train on - skipping policy training")
+        return
+
+    # Extract policy training parameters
+    num_epochs = cfg.policy.n_epochs
+    train_steps_per_shortcut = cfg.policy.max_episode_steps
+
+    print(f"Training policy for {num_epochs} epochs")
+    print(f"Max steps per shortcut: {train_steps_per_shortcut}")
+    if hasattr(system.wrapped_env, "configure_training"):
+            system.wrapped_env.configure_training(training_data)
+
+    # Train policy
+    policy.train(
+        env=system.wrapped_env,
+        train_data=training_data,
+    )
+
+    print("\nPolicy training complete")
+
+
+# =============================================================================
+# Stage 4.5: Test Shortcut Quality (Optional)
+# =============================================================================
+
+def test_shortcut_quality(
+    system: ImprovisationalTAMPSystem[ObsType, ActType],
+    policy: Policy,
+    training_data: GoalConditionedTrainingData,
+    cfg: DictConfig,
+) -> None:
+    """Test quality of trained shortcuts by running rollouts.
+
+    Args:
+        system: The TAMP system
+        policy: Trained policy
+        training_data: Training data with shortcuts
+        config: Config with max_steps
+    """
+    from tamp_improv.approaches.improvisational.analyze import execute_shortcut_once
+
+    print(f"\nTesting {len(training_data.unique_shortcuts)} shortcuts...")
+    print("=" * 80)
+    results = []
+
+    max_steps = cfg.policy.max_episode_steps
+    num_test_rollouts = cfg.policy.eval_rollouts  # Test each shortcut multiple times
+
+    success_counts = {}
+    length_stats = {}
+
+    for idx, (source_node, target_node) in enumerate(training_data.unique_shortcuts):
+        source_states = training_data.node_states[source_node]
+        target_atoms = training_data.node_atoms[target_node]
+
+        if source_states is None or target_atoms is None:
+            continue
+
+        # Ensure source_states is a list
+        if not isinstance(source_states, list):
+            source_states = [source_states]
+
+        successes = 0
+        lengths = []
+
+        for _ in range(num_test_rollouts):
+            # Randomly sample a source state from the available states
+            source_state = random.choice(source_states)
+
+            # Execute shortcut once using helper function
+            success, num_steps = execute_shortcut_once(
+                policy=policy,
+                system=system,
+                start_state=source_state,
+                goal_atoms=target_atoms,
+                max_steps=max_steps,
+                source_node_id=source_node,
+                target_node_id=target_node,
+            )
+
+            if success:
+                successes += 1
+                lengths.append(num_steps)
+
+        success_rate = successes / num_test_rollouts
+        avg_length = np.mean(lengths) if lengths else max_steps
+
+        results.append({'source_node': source_node,
+                        'target_node': target_node,
+                        'success_rate': success_rate,
+                        'avg_length': avg_length})
+
+        success_counts[(source_node, target_node)] = success_rate
+        length_stats[(source_node, target_node)] = avg_length
+
+        # Print progress every 5 shortcuts
+        if (idx + 1) % 5 == 0 or (idx + 1) == len(training_data.valid_shortcuts):
+            print(f"  Tested {idx + 1}/{len(training_data.valid_shortcuts)} shortcuts...")
+
+    # Print detailed results
+    print("Mapping:", training_data.node_atoms)
+    print("\nDetailed Results:")
+    print("=" * 80)
+    for (source_node, target_node), success_rate in success_counts.items():
+        avg_length = length_stats[(source_node, target_node)]
+        print(f"  Shortcut {source_node}->{target_node}: "
+              f"success={success_rate:.1%}, avg_length={avg_length:.1f}")
+
+    # Summary statistics
+    if success_counts:
+        overall_success = np.mean(list(success_counts.values()))
+        overall_length = np.mean(list(length_stats.values()))
+        num_successful = sum(1 for sr in success_counts.values() if sr > 0.5)
+        print("\n" + "=" * 80)
+        print(f"Overall Statistics:")
+        print(f"  Average success rate: {overall_success:.1%}")
+        print(f"  Average length (when successful): {overall_length:.1f} steps")
+        print(f"  Shortcuts with >50% success: {num_successful}/{len(success_counts)}")
+        print("=" * 80)
+
+    full_results = {'pairs': results, 'avg_success_rate': overall_success, 'avg_steps': overall_length}
+    
+    return full_results
+
+
+
+
+# =============================================================================
+# Stage 5: Evaluate
+# =============================================================================
+
+
+def evaluate_approach(
+    system: ImprovisationalTAMPSystem[ObsType, ActType],
+    approach: ImprovisationalTAMPApproach,
+    cfg: DictConfig,
+) -> Metrics:
+    """Stage 5: Evaluate the trained approach.
+
+    Args:
+        system: TAMP system
+        approach: Trained approach
+        config: Configuration dictionary
+        num_eval_episodes: Number of evaluation episodes
+
+    Returns:
+        Evaluation metrics
+    """
+    print("\n" + "=" * 80)
+    print("STAGE 5: EVALUATE")
+    print("=" * 80)
+
+    num_eval_episodes = cfg.evaluation.num_episodes
+
+    print(f"Running {num_eval_episodes} evaluation episodes...")
+
+    # Create TrainingConfig for evaluation
+    eval_config = TrainingConfig(
+        render=cfg.evaluation.render,
+        eval_max_steps=cfg.evaluation.max_episode_steps,
+    )
+
+    # Run evaluations
+    rewards = []
+    lengths = []
+    successes = []
+
+    for ep in range(num_eval_episodes):
+        if (ep + 1) % 10 == 0:
+            print(f"  Completed {ep + 1}/{num_eval_episodes} episodes")
+
+        reward, length, success = run_evaluation_episode(
+            system=system,
+            approach=approach,
+            policy_name="MultiRL",
+            config=eval_config,
+            episode_num=ep,
+        )
+        rewards.append(reward)
+        lengths.append(length)
+        successes.append(success)
+
+    # Create Metrics object
+    avg_metrics = Metrics(
+        success_rate=sum(successes) / len(successes) if successes else 0.0,
+        avg_episode_length=sum(lengths) / len(lengths) if lengths else 0.0,
+        avg_reward=sum(rewards) / len(rewards) if rewards else 0.0,
+    )
+
+    print("\nEvaluation complete:")
+    print(f"  Success rate: {avg_metrics.success_rate:.2%}")
+    print(f"  Avg steps: {avg_metrics.avg_episode_length:.1f}")
+    print(f"  Avg reward: {avg_metrics.avg_reward:.3f}s")
+
+    return avg_metrics
+
+
+# =============================================================================
+# Main Pipeline
+# =============================================================================
+
+
+def run_pipeline(
+    system: ImprovisationalTAMPSystem[ObsType, ActType],
+    cfg: DictConfig,
+) -> PipelineResults:
+    """Run the complete SLAP pipeline.
+
+    Args:
+        system: TAMP system
+        config: Configuration dictionary with all parameters including:
+            - heuristic_type: Type of heuristic to use ("rollouts", "v4", etc.)
+            - policy_type: Type of policy to use ("multiRL")
+            - heuristic: Nested config for heuristic-specific parameters
+            - rl_*: Parameters for RL policy
+        num_eval_episodes: Number of evaluation episodes
+
+    Returns:
+        PipelineResults with all outputs from the pipeline
+    """
+    results = PipelineResults()
+
+    # Setup RNG
+    seed = cfg.seed
+    rng = np.random.Generator(np.random.PCG64(seed))
+    set_torch_seed(seed)
+    random.seed(seed)
+
+    # Create policy instance based on config
+    policy = create_policy(
+        cfg=cfg
+    )
+
+    # Create approach (wraps system + policy)
+    approach = ImprovisationalTAMPApproach(system, policy, seed=seed,
+                                           planner_id=cfg.collection.planner_id,
+                                           max_skill_steps=cfg.collection.max_steps_per_edge)
+
+    times = {}
+    # Stage 1: Collect training data
+    start = time.time()
+    results.training_data, results.graph_distances = collect_training_data(
+        system=system,
+        approach=approach,
+        cfg=cfg,
+        rng=rng,
+    )
+    times['collection_time'] = time.time() - start
+
+    # Create heuristic instance based on config
+    start = time.time()
+    heuristic = create_heuristic(
+        training_data=results.training_data,
+        graph_distances=results.graph_distances,
+        system=system,
+        cfg=cfg,
+    )
+
+    # Stage 2: Train heuristic
+    results.heuristic_training_history = train_heuristic(
+        heuristic=heuristic,
+    )
+
+    results.heuristic = heuristic
+
+    times['heuristic_training_time'] = time.time() - start
+
+    # Stage 2.5: Test heuristic quality (optional)
+    if cfg.debug:
+        results.heuristic_quality_results = test_heuristic_quality(
+            system=system,
+            heuristic=heuristic,
+            training_data=results.training_data,
+            graph_distances=results.graph_distances,
+        )
+
+
+    # Stage 3: Prune with heuristic
+    start = time.time()
+    results.pruned_training_data = prune_with_heuristic(
+        heuristic=heuristic,
+    )
+    times['heuristic_pruning_time'] = time.time() - start
+
+    # Stage 3.5: Random selection
+    max_shortcuts = cfg.heuristic.max_shortcuts_per_graph
+    if max_shortcuts != float("inf"):
+        results.final_training_data = random_selection(
+            training_data=results.pruned_training_data,
+            max_shortcuts=int(max_shortcuts),
+            rng=rng,
+        )
+    else:
+        results.final_training_data = results.pruned_training_data
+
+
+    # Stage 4: Train policy
+    start = time.time()
+    train_policy(
+        system=system,
+        policy=policy,
+        training_data=results.final_training_data,
+        cfg=cfg,
+    )
+
+    results.policy = policy
+    times["policy_training_time"] = time.time() - start
+
+    # Stage 4.5: Test shortcut quality (optional)
+    if cfg.debug and len(results.final_training_data.valid_shortcuts) > 0:
+        results.shortcut_quality_results = test_shortcut_quality(
+            system=system,
+            policy=policy,
+            training_data=results.final_training_data,
+            cfg=cfg,
+        )
+
+    # Stage 5: Evaluate
+    start = time.time()
+    results.evaluation_results = evaluate_approach(
+        system=system,
+        approach=approach,
+        cfg=cfg,
+    )
+    times["evaluation_time"] = time.time() - start
+
+    results.approach = approach
+    results.times = times
+
+    return results

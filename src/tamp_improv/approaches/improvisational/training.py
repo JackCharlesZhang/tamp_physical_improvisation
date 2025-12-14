@@ -218,6 +218,8 @@ def run_evaluation_episode(
         cast(Any, system.env).close()
         system.env = recording_env
 
+    print("Success:", success, "Steps:", step_count, "Reward:", total_reward)
+
     return total_reward, step_count, success
 
 

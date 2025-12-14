@@ -505,52 +505,23 @@ def prune_with_distance_heuristic(
     print(f"\nEvaluating heuristic on all {len(all_state_pairs)} state pairs...")
     print(f"Pruning criterion: f(s,s') < min(D(s,s'), {practical_horizon})")
 
-    # Compute average learned distance for each node pair
-    node_pair_distances = {}  # (source_id, target_id) -> average learned distance
+    # Use V4's prune() method to select promising node pairs
+    # This returns the union of:
+    # 1. Shortcuts where estimated < graph distance
+    # 2. Top keep_fraction of pairs by (estimated - graph) score
+    # Also filters out pairs with estimated distance > practical_horizon
+    keep_fraction = config.get("heuristic_keep_fraction", 0.5)
+    selected_node_pairs = heuristic.prune(
+        graph_distances,
+        keep_fraction=keep_fraction,
+        max_episode_steps=practical_horizon,
+    )
 
-    for node_pair, state_pair_indices in node_pair_to_state_pairs.items():
-        # Evaluate all state pairs for this node pair
-        learned_distances = []
-        for idx in state_pair_indices:
-            pair = all_state_pairs[idx]
-            learned_dist = heuristic.estimate_distance(
-                pair["source_state"], pair["target_state"]
-            )
-            learned_distances.append(learned_dist)
+    print(f"Pruned {len(training_data.valid_shortcuts) - len(selected_node_pairs)} shortcuts")
+    print(f"Kept {len(selected_node_pairs)} shortcuts")
 
-        # Use average distance as the robust estimate
-        avg_learned_dist = sum(learned_distances) / len(learned_distances)
-        node_pair_distances[node_pair] = avg_learned_dist
-
-    print(f"Computed average distances for {len(node_pair_distances)} node pairs")
-
-    # Apply pruning criterion to each node pair
-    selected_shortcuts = []
-    pruned_count = 0
-
-    for source_id, target_id in training_data.valid_shortcuts:
-        if (source_id, target_id) not in node_pair_distances:
-            # No state pairs available, skip
-            pruned_count += 1
-            continue
-
-        avg_learned_dist = node_pair_distances[(source_id, target_id)]
-        graph_dist = graph_distances.get((source_id, target_id), float("inf"))
-
-        # Compute the threshold: min(D, K)
-        if graph_dist == float("inf"):
-            threshold = practical_horizon
-        else:
-            threshold = min(graph_dist, practical_horizon)
-
-        # Keep shortcut if average f(s,s') < min(D(s,s'), K)
-        if avg_learned_dist < threshold:
-            selected_shortcuts.append((source_id, target_id))
-        else:
-            pruned_count += 1
-
-    print(f"Pruned {pruned_count} shortcuts")
-    print(f"Kept {len(selected_shortcuts)} shortcuts")
+    # Convert to list for consistency with training data structure
+    selected_shortcuts = list(selected_node_pairs)
 
     # Step 5: Create pruned training data
     # Filter training data to match selected shortcuts

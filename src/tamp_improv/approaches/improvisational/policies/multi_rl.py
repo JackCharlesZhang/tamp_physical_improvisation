@@ -199,8 +199,8 @@ class MultiRLPolicy(Policy[ObsType, ActType]):
         target_hash = hashlib.md5("|".join(target_atoms_str).encode()).hexdigest()[:8]
         source_id = context.info.get("source_node_id", "")
         target_id = context.info.get("target_node_id", "")
-        if source_id != "" and target_id != "":
-            return f"n{source_id}-to-n{target_id}_{source_hash}_{target_hash}"
+        # if source_id != "" and target_id != "":
+        #     return f"n{source_id}-to-n{target_id}_{source_hash}_{target_hash}"
         return f"{source_hash}_{target_hash}"
 
     def _find_matching_policy(self, context: PolicyContext) -> str | None:

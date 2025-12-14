@@ -443,9 +443,8 @@ def compute_true_distance(
     elif isinstance(system, GridworldFixedTAMPSystem):
         return compute_true_distance_gridworld_fixed(system, start_state, goal_node_atoms)
     else:
-        raise NotImplementedError(
-            f"True distance computation not implemented for {type(system).__name__}"
-        )
+        print(f"True distance computation not implemented for {type(system).__name__}")
+        return -42
 
 def compute_true_node_distance(
     system: ImprovisationalTAMPSystem,

@@ -734,46 +734,22 @@ class DistanceHeuristicV4:
                 print(f"PRUNING after round {round_idx + 1}")
                 print(f"{'='*80}\n")
 
-                # Score ALL node-node pairs using the distance matrix we just computed
-                node_pair_scores = []
-                for source_node, target_node in all_node_pairs:
-                    # Get graph distance
-                    if (source_node, target_node) not in graph_distances:
-                        continue
-
-                    graph_dist = graph_distances[(source_node, target_node)]
-                    if graph_dist == float('inf'):
-                        # Unreachable pairs not interesting
-                        continue
-
-                    # Get estimated distance from the distance matrix (already computed!)
-                    est_dist = distance_matrix[(source_node, target_node)]
-
-                    # Score: graph_dist - est_dist
-                    # Positive score means estimated is shorter (potential shortcut!)
-                    # Higher score = more promising
-                    score = graph_dist - est_dist
-
-                    node_pair_scores.append((score, source_node, target_node))
-
-                # Sort by score (descending) and keep top fraction
-                # This applies to ALL pairs, so previously pruned pairs can come back!
-                node_pair_scores.sort(key=lambda x: x[0], reverse=True)
-                num_to_keep = max(1, int(len(node_pair_scores) * keep_fraction))
-
-                # Extract the node-node pairs
-                current_node_pairs = [(src, tgt) for _, src, tgt in node_pair_scores[:num_to_keep]]
+                # Call prune() to get selected node pairs
+                selected_node_pairs_set = self.prune(
+                    graph_distances,
+                    keep_fraction=keep_fraction,
+                    max_episode_steps=max_episode_steps,
+                )
+                current_node_pairs = list(selected_node_pairs_set)
 
                 # Count resulting state-node pairs
-                resulting_state_pairs = sum(len(node_pair_to_state_pairs[(src, tgt)])
-                                           for src, tgt in current_node_pairs)
+                resulting_state_pairs = sum(
+                    len(node_pair_to_state_pairs.get((src, tgt), []))
+                    for src, tgt in current_node_pairs
+                )
 
-                print(f"Pruned node-node pairs: {len(node_pair_scores)} -> {len(current_node_pairs)}")
+                print(f"Pruned node-node pairs: {len(all_node_pairs)} -> {len(current_node_pairs)}")
                 print(f"Resulting state-node pairs: {resulting_state_pairs}")
-                print(f"Score range: [{node_pair_scores[-1][0]:.2f}, {node_pair_scores[0][0]:.2f}]")
-                print(f"Top 5 node-pair scores: {[f'{s[0]:.2f}' for s in node_pair_scores[:5]]}")
-                if len(node_pair_scores) > 5:
-                    print(f"Bottom 5 node-pair scores: {[f'{s[0]:.2f}' for s in node_pair_scores[-5:]]}")
 
         # Final state-node pairs
         final_state_pairs = []
@@ -1063,6 +1039,85 @@ class DistanceHeuristicV4:
             avg += self.estimate_distance(source_state, target_node)
             n += 1
         return avg / n
+
+    def prune(
+        self,
+        graph_distances: dict[tuple[int, int], float],
+        keep_fraction: float = 0.5,
+        max_episode_steps: int | None = None,
+    ) -> set[tuple[int, int]]:
+        """Prune node pairs based on estimated vs graph distances.
+
+        Returns the union of:
+        1. Node pairs where estimated_distance < graph_distance (promising shortcuts)
+        2. Bottom keep_fraction of node pairs by (estimated - graph) distance
+
+        This ensures we keep both:
+        - Shortcuts that look learnable (estimated < graph)
+        - The most promising shortcuts overall (lowest estimated - graph)
+
+        Additionally filters out pairs where estimated distance exceeds max_episode_steps,
+        since those are unreachable within the episode limit.
+
+        Args:
+            graph_distances: Dictionary mapping (source_node, target_node) -> graph distance
+            keep_fraction: Fraction of total node pairs to keep (0.0 to 1.0)
+            max_episode_steps: Maximum episode steps (filters out pairs with est_dist > this)
+
+        Returns:
+            Set of (source_node, target_node) tuples to keep
+        """
+        print(f"\n[DEBUG] Pruning with keep_fraction={keep_fraction}, max_episode_steps={max_episode_steps}")
+
+        # Score all node pairs: score = estimated_distance - graph_distance
+        # Negative scores = shortcuts (estimated < graph)
+        # Lower scores = more promising
+        node_pair_scores = []
+        filtered_by_max_steps = 0
+
+        for (source_node, target_node), graph_dist in graph_distances.items():
+            # Estimate distance using the heuristic
+            est_dist = self.estimate_node_distance(source_node, target_node)
+
+            # Filter out pairs that exceed max_episode_steps
+            if max_episode_steps is not None and est_dist > max_episode_steps:
+                filtered_by_max_steps += 1
+                continue
+
+            # Score: lower is better
+            # Negative = shortcut (estimated < graph)
+            score = est_dist - graph_dist
+
+            node_pair_scores.append((score, source_node, target_node, est_dist))
+
+        print(f"[DEBUG] Scored {len(node_pair_scores)} node pairs")
+        if max_episode_steps is not None:
+            print(f"[DEBUG] Filtered out {filtered_by_max_steps} pairs with est_dist > {max_episode_steps}")
+
+        # Sort by score (ascending = most promising first)
+        node_pair_scores.sort(key=lambda x: x[0])
+
+        # Strategy 1: Keep all negative scores (shortcuts)
+        shortcuts = set()
+        for score, source_node, target_node, est_dist in node_pair_scores:
+            if score < 0:
+                shortcuts.add((source_node, target_node))
+
+        print(f"[DEBUG] Found {len(shortcuts)} shortcuts (negative scores)")
+
+        # Strategy 2: Keep top keep_fraction by score
+        num_to_keep = max(1, int(len(node_pair_scores) * keep_fraction))
+        top_pairs = set()
+        for score, source_node, target_node, est_dist in node_pair_scores[:num_to_keep]:
+            top_pairs.add((source_node, target_node))
+
+        print(f"[DEBUG] Keeping top {num_to_keep} pairs ({keep_fraction:.1%})")
+
+        # Return union
+        result = shortcuts | top_pairs
+        print(f"[DEBUG] Total pairs to keep: {len(result)} (union of shortcuts and top)")
+
+        return result
 
     def _flatten_state(self, state: ObsType) -> np.ndarray:
         """Flatten state to array."""

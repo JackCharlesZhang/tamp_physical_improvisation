@@ -98,10 +98,15 @@ class TrainingData:
 
 @dataclass
 class GoalConditionedTrainingData(TrainingData, Generic[ObsType]):
-    """Training data for goal-conditioned learning."""
+    """Training data for goal-conditioned learning.
+
+    Note: valid_shortcuts contains one entry per (state, node) pair, with duplicates for
+    each source state. Use unique_shortcuts to get one entry per (node, node) pair.
+    """
 
     node_states: dict[int, ObsType] = field(default_factory=dict)
     valid_shortcuts: list[tuple[int, int]] = field(default_factory=list)
+    unique_shortcuts: list[tuple[int, int]] = field(default_factory=list)  # One per node-node pair
     node_atoms: dict[int, set[GroundAtom]] = field(default_factory=dict)
     graph: PlanningGraph | None = None
 
@@ -114,6 +119,9 @@ class GoalConditionedTrainingData(TrainingData, Generic[ObsType]):
         if self.valid_shortcuts:
             with open(path / "valid_shortcuts.pkl", "wb") as f:
                 pickle.dump(self.valid_shortcuts, f)
+        if self.unique_shortcuts:
+            with open(path / "unique_shortcuts.pkl", "wb") as f:
+                pickle.dump(self.unique_shortcuts, f)
         if self.node_atoms:
             with open(path / "node_atoms.pkl", "wb") as f:
                 pickle.dump(self.node_atoms, f)
@@ -133,6 +141,10 @@ class GoalConditionedTrainingData(TrainingData, Generic[ObsType]):
         if (path / "valid_shortcuts.pkl").exists():
             with open(path / "valid_shortcuts.pkl", "rb") as f:
                 valid_shortcuts = pickle.load(f)
+        unique_shortcuts: list[tuple[int, int]] = []
+        if (path / "unique_shortcuts.pkl").exists():
+            with open(path / "unique_shortcuts.pkl", "rb") as f:
+                unique_shortcuts = pickle.load(f)
         node_atoms: dict[int, set[GroundAtom]] = {}
         if (path / "node_atoms.pkl").exists():
             with open(path / "node_atoms.pkl", "rb") as f:
@@ -148,6 +160,7 @@ class GoalConditionedTrainingData(TrainingData, Generic[ObsType]):
             config=train_data.config,
             node_states=node_states,
             valid_shortcuts=valid_shortcuts,
+            unique_shortcuts=unique_shortcuts,
             node_atoms=node_atoms,
             graph=graph,
         )

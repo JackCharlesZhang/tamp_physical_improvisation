@@ -238,7 +238,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         info: dict[str, Any],
     ) -> ApproachStepResult[ActType]:
         """Step approach with new observation."""
-        print("Step")
+        # print("Step")
         atoms = self.system.perceiver.step(obs)
         using_goal_env, goal_env = self._using_goal_env(self.system.wrapped_env)
         using_context_env, context_env = self._using_context_env(
@@ -340,10 +340,10 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             raise TaskThenMotionPlanningFailure("No current skill")
 
         try:
-            print("I am in state:", obs)
-            print("I am getting my current skill's action:", self._current_skill, "from edge:", self._current_edge)
+            # print("I am in state:", obs)
+            # print("I am getting my current skill's action:", self._current_skill, "from edge:", self._current_edge)
             action = self._current_skill.get_action(obs)
-            print("I am executing action:", action)
+            # print("I am executing action:", action)
             if action is None:
                 print(f"No action returned by skill {self._current_skill}")
         except AssertionError as e:
@@ -486,11 +486,12 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                     for edge in graph.node_to_outgoing_edges.get(source_node, [])
                 ):
                     continue
-                if target_node.id <= source_node.id:
-                    continue
+                # if target_node.id <= source_node.id:
+                #     continue
 
                 source_atoms = set(source_node.atoms)
                 target_atoms = set(target_node.atoms)
+                print(source_atoms, target_atoms)
                 if not target_atoms:
                     continue
 
@@ -498,6 +499,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                     current_sig = ShortcutSignature.from_context(
                         source_atoms, target_atoms
                     )
+                    # print(current_sig)
                     can_handle = False
                     best_similarity = 0.0
 
@@ -506,6 +508,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                         if similarity > 0.99:
                             can_handle = True
                             best_similarity = max(best_similarity, similarity)
+                    # print("Best sim:", best_similarity)
 
                     if not can_handle:
                         # if self.training_mode:
@@ -523,8 +526,8 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                     )
                 )
                 if self.policy.can_initiate():
-                    # if not self.training_mode:
-                    #     print(f"  DEBUG: Adding shortcut {source_node.id}→{target_node.id} (sim: {best_similarity:.2f})")
+                    if not self.training_mode:
+                        print(f"  DEBUG: Adding shortcut {source_node.id}→{target_node.id} (sim: {best_similarity:.2f})")
                     graph.add_edge(source_node, target_node, None, is_shortcut=True)
                     shortcuts_added += 1
                 elif not self.training_mode:

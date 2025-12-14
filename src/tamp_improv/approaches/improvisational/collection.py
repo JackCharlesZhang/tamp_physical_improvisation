@@ -6,6 +6,8 @@ Pruning is handled separately in pruning.py.
 
 from typing import Any
 
+from omegaconf import DictConfig
+
 import numpy as np
 
 from tamp_improv.approaches.improvisational.base import (
@@ -53,6 +55,7 @@ def collect_states_for_all_nodes(
     initial_atoms_frozen = frozenset(initial_atoms)
 
     # Find initial node in planning graph
+    print(planning_graph.nodes)
     initial_node = None
     for node in planning_graph.nodes:
         if frozenset(node.atoms) == initial_atoms_frozen:
@@ -320,7 +323,7 @@ def collect_all_shortcuts(
 def collect_total_shortcuts(
     system: ImprovisationalTAMPSystem,
     approach: ImprovisationalTAMPApproach,
-    config: dict[str, Any],
+    cfg: DictConfig,
     rng: np.random.Generator | None = None,
 ) -> GoalConditionedTrainingData:
     """Collect all shortcuts from a unified total planning graph.
@@ -340,11 +343,11 @@ def collect_total_shortcuts(
         GoalConditionedTrainingData with all shortcuts from the total graph
     """
     if rng is None:
-        seed = config['seed']
+        seed = cfg.seed
         rng = np.random.default_rng(seed)
 
     approach.training_mode = True
-    collect_episodes = config['collect_episodes']
+    collect_episodes = cfg.collection.num_episodes
 
     print(f"\n{'=' * 80}")
     print(f"Collecting total planning graph from {collect_episodes} episodes")
@@ -354,9 +357,9 @@ def collect_total_shortcuts(
     total_graph, node_states = collect_total_planning_graph(
         system=system,
         collect_episodes=collect_episodes,
-        seed=config['seed'],
-        planner_id=config.get("planner_id", "pyperplan"),
-        max_steps_per_edge=config['max_episode_steps']
+        seed=cfg.seed,
+        planner_id=cfg.collection.planner_id,
+        max_steps_per_edge=cfg.collection.max_steps_per_edge
     )
 
     # Store the total graph in the approach
@@ -390,6 +393,7 @@ def collect_total_shortcuts(
     all_current_atoms = []
     all_goal_atoms = []
     all_valid_shortcuts = []
+    all_unique_shortcuts = []  # One per node-node pair
     all_node_atoms = {}
     all_shortcut_info = []
 
@@ -398,6 +402,9 @@ def collect_total_shortcuts(
         target_id = candidate.target_node.id
 
         if source_id in observed_states and observed_states[source_id] is not None:
+            # Add to unique shortcuts (once per node-node pair)
+            all_unique_shortcuts.append((source_id, target_id))
+
             for source_state in observed_states[source_id]:
                 all_states.append(source_state)
                 all_current_atoms.append(candidate.source_atoms)
@@ -425,7 +432,7 @@ def collect_total_shortcuts(
     print(
         f"\n{'=' * 80}\n"
         f"Collection complete: {len(all_states)} training examples, "
-        f"{len(all_valid_shortcuts)} shortcuts\n"
+        f"{len(all_unique_shortcuts)} unique shortcuts ({len(all_valid_shortcuts)} state-node pairs)\n"
         f"{'=' * 80}"
     )
 
@@ -436,14 +443,17 @@ def collect_total_shortcuts(
         current_atoms=all_current_atoms,
         goal_atoms=all_goal_atoms,
         config={
-            **config,
             "collection_method": "total_shortcuts",
             "collect_episodes": collect_episodes,
             "num_shortcuts_collected": len(all_valid_shortcuts),
+            "num_unique_shortcuts": len(all_unique_shortcuts),
             "shortcut_info": all_shortcut_info,
+            "max_training_steps_per_shortcut": cfg.policy.max_episode_steps,
+            "episodes_per_scenario": cfg.policy.episodes_per_scenario,
         },
         node_states=observed_states,
         valid_shortcuts=all_valid_shortcuts,
+        unique_shortcuts=all_unique_shortcuts,
         node_atoms=all_node_atoms,
         graph=total_graph,
     )
