@@ -79,8 +79,25 @@ class SerializableResults:
     training_data: Optional[GoalConditionedTrainingData] = None
     pruned_training_data: Optional[GoalConditionedTrainingData] = None
     final_training_data: Optional[GoalConditionedTrainingData] = None
+    teleporter_locations: Optional[list] = None
 
 def extract_serializable_results(results: PipelineResults) -> SerializableResults:
+    teleporter_locations = None
+    if results.approach and results.approach.system:
+        # Try to find portal_positions in the environment
+        env = results.approach.system.env
+        # Unwrap just in case
+        if hasattr(env, "unwrapped"):
+            env = env.unwrapped
+        if hasattr(env, "portal_positions") and hasattr(env, "num_states_per_cell"):
+            teleporter_locations = []
+            for p1, p2 in env.portal_positions:
+                c1 = (int(p1[0] // env.num_states_per_cell), int(p1[1] // env.num_states_per_cell))
+                c2 = (int(p2[0] // env.num_states_per_cell), int(p2[1] // env.num_states_per_cell))
+                teleporter_locations.append((c1, c2))
+        elif hasattr(env, "portal_positions"):
+            teleporter_locations = env.portal_positions
+
     return SerializableResults(
         graph_distances=results.graph_distances,
         heuristic_training_history=results.heuristic_training_history,
@@ -91,6 +108,7 @@ def extract_serializable_results(results: PipelineResults) -> SerializableResult
         training_data=results.training_data,
         pruned_training_data=results.pruned_training_data,
         final_training_data=results.pruned_training_data,
+        teleporter_locations=teleporter_locations,
     )
 
 

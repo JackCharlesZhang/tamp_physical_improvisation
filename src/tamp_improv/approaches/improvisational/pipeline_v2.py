@@ -678,12 +678,13 @@ def evaluate_approach(
     rewards = []
     lengths = []
     successes = []
+    all_episode_data = []
 
     for ep in range(num_eval_episodes):
         if (ep + 1) % 10 == 0:
             print(f"  Completed {ep + 1}/{num_eval_episodes} episodes")
 
-        reward, length, success = run_evaluation_episode(
+        reward, length, success, episode_data = run_evaluation_episode(
             system=system,
             approach=approach,
             policy_name="MultiRL",
@@ -693,12 +694,14 @@ def evaluate_approach(
         rewards.append(reward)
         lengths.append(length)
         successes.append(success)
+        all_episode_data.append(episode_data)
 
     # Create Metrics object
     avg_metrics = Metrics(
         success_rate=sum(successes) / len(successes) if successes else 0.0,
         avg_episode_length=sum(lengths) / len(lengths) if lengths else 0.0,
         avg_reward=sum(rewards) / len(rewards) if rewards else 0.0,
+        episode_data=all_episode_data,
     )
 
     print("\nEvaluation complete:")
