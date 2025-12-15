@@ -51,6 +51,7 @@ heuristic:
   keep_fraction: 0.2  # Fraction of node-node pairs to keep each round
   exploration_factor: 0.1
   eval_temperature: 0
+  wandb_enabled: false
 
   # Evaluate Heuristic
   eval_rollouts: 100

@@ -46,6 +46,8 @@ ActType = TypeVar("ActType")
 @dataclass
 class CRLHeuristicConfig:
     """Configuration for contrastive state-node distance heuristic."""
+    wandb_enabled: bool = False  # Whether to enable Weights & Biases logging
+
     # Pruning
     threshold: float = 0.05
     beta: float = 1 # Complex distance scaling parameter
@@ -1037,18 +1039,19 @@ class CRLHeuristic(BaseHeuristic):
                 print(f"  Accuracy: {metrics['accuracy']:.2%}")
 
                 # Log to wandb
-                wandb.log({
-                    "train/total_loss": metrics['loss'],
-                    "train/alignment_loss": metrics['l_align'],
-                    "train/uniformity_loss": metrics['l_unif'],
-                    "train/accuracy": metrics['accuracy'],
-                    "train/success_rate": traj_stats['success_rate'],
-                    "train/avg_trajectory_length": traj_stats['avg_length'],
-                    "train/avg_success_length": traj_stats['avg_success_length'],
-                    "train/learning_rate": current_lr,
-                    "train/policy_temperature": self.policy_temperature,
-                    "train/epoch": epoch
-                })
+                if self.config.wandb_enabled:
+                    wandb.log({
+                        "train/total_loss": metrics['loss'],
+                        "train/alignment_loss": metrics['l_align'],
+                        "train/uniformity_loss": metrics['l_unif'],
+                        "train/accuracy": metrics['accuracy'],
+                        "train/success_rate": traj_stats['success_rate'],
+                        "train/avg_trajectory_length": traj_stats['avg_length'],
+                        "train/avg_success_length": traj_stats['avg_success_length'],
+                        "train/learning_rate": current_lr,
+                        "train/policy_temperature": self.policy_temperature,
+                        "train/epoch": epoch
+                    })
 
             # Step the learning rate scheduler every epoch
             self.scheduler.step()
