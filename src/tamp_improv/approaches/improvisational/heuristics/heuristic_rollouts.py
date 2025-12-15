@@ -122,7 +122,8 @@ class RolloutsHeuristic(BaseHeuristic):
                     )
 
                 # Randomly sample a source state
-                source_state = self.rng.choice(source_states)
+                state_idx = self.rng.integers(0, len(source_states))
+                source_state = source_states[state_idx]
 
                 # Reset to source state
                 raw_env.reset_from_state(source_state)
