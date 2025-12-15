@@ -777,6 +777,8 @@ def run_pipeline(
         rng=rng
     )
 
+    wandb.init(project="slap_crl_heuristic", config=cfg.heuristic.__dict__)
+
     # Stage 2: Train heuristic
     results.heuristic_training_history = train_heuristic(
         heuristic=heuristic,
@@ -795,6 +797,7 @@ def run_pipeline(
             graph_distances=results.graph_distances,
         )
 
+    wandb.finish()
 
     # Stage 3: Prune with heuristic
     start = time.time()
