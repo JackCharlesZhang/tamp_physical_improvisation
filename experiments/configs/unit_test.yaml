@@ -21,7 +21,7 @@ collection:
 
 heuristic:
   # Heuristic Parameters
-  type: crl
+  type: cmd
 
   # Pruning Parameters
   max_shortcuts_per_graph: 1
@@ -49,17 +49,30 @@ heuristic:
   learn_frequency: 1
   num_action_samples: 4
 
-  num_epochs_per_round: 10  # Epochs per round (used as num_epochs_per_round in multi_train)
+  num_epochs_per_round: 100  # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
   max_episode_steps: 100
 
-  num_rounds: 5  # Number of pruning rounds (1 = no pruning, just normal train)
+  num_rounds: 1  # Number of pruning rounds (1 = no pruning, just normal train)
   keep_fraction: 0.2  # Fraction of node-node pairs to keep each round
   exploration_factor: 0.05
 
   eval_rollouts: 1
   eval_temperature: 0.3
   eval_max_steps: 10
+
+  dqn:
+    learning_rate: 3e-4
+    batch_size: 256
+    buffer_size: 100000
+    max_episode_steps: 100
+    num_steps_per_round: 100
+    num_rounds: 1
+    threshold: 0.05
+    beta: 1.0
+    gamma: 0.99
+    exploration_factor: 0.05
+    keep_fraction: 0.2
 
 
 policy:

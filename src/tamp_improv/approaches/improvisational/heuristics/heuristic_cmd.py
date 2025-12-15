@@ -1,18 +1,3 @@
-"""Goal-conditioned distance heuristic V4 using contrastive state-node learning.
-
-This module implements a learned distance function f(s, g) that estimates
-the number of steps required to reach goal node g from source state s.
-
-V4 improves on V3 by conditioning the policy on goal NODES rather than goal STATES.
-This solves the problem where invalid state pairs (e.g., different robot/goal combinations)
-could be sampled as shortcuts during training.
-
-Key components:
-- s_encoder: Neural network that maps states to k-dimensional embeddings
-- g_encoder: Learnable matrix (S x k) where row i is the embedding of node i
-- Contrastive loss: Aligns (current_state, future_node) pairs and separates negative pairs
-- Normalized embeddings: All embeddings are L2-normalized to unit length
-"""
 import time
 import os
 import pickle
@@ -44,7 +29,7 @@ ActType = TypeVar("ActType")
 
 
 @dataclass
-class CRLHeuristicConfig:
+class CMDHeuristicConfig:
     """Configuration for contrastive state-node distance heuristic."""
     # Pruning
     threshold: float = 0.05
@@ -134,14 +119,154 @@ class StateEncoder(nn.Module):
         """
         return self.network(states)
 
+class GoalEncoder(nn.Module):
+    """Embedding matrix for discrete goal nodes.
 
+    Maps node ID (integer) -> embedding (k-dimensional vector).
+    Since nodes are discrete, we use a simple embedding matrix rather than a neural network.
+    """
+
+    def __init__(self, num_nodes: int, latent_dim: int):
+        """Initialize goal encoder.
+
+        Args:
+            num_nodes: Number of discrete goal nodes
+            latent_dim: Dimension of output embedding (k)
+        """
+        super(GoalEncoder, self).__init__()
+        self.num_nodes = num_nodes
+        self.latent_dim = latent_dim
+        self.out_dim = latent_dim
+
+        # Learnable embedding matrix (num_nodes x latent_dim)
+        self.embedding = nn.Embedding(num_nodes, latent_dim)
+
+        # Initialize with small random values
+        nn.init.normal_(self.embedding.weight, mean=0.0, std=0.01)
+
+    def forward(self, node_ids: torch.Tensor) -> torch.Tensor:
+        """Encode node IDs to embeddings.
+
+        Args:
+            node_ids: Tensor of node IDs (batch_size,) or scalar
+
+        Returns:
+            Embeddings (batch_size, latent_dim) or (latent_dim,)
+        """
+        return self.embedding(node_ids)
+
+
+class CostNet(nn.Module):
+    """Scalar network that outputs c(g) for each goal node.
+
+    This is a simple embedding that maps each goal node to a scalar cost value.
+    In CMD-1, the energy function is f(s,g) = c(g) - d(s,g), where c(g) is
+    an upper bound on the cost-to-go from any state to goal g.
+    """
+
+    def __init__(self, g_encoder: GoalEncoder):
+        """Initialize cost network.
+
+        Args:
+            num_nodes: Number of discrete goal nodes
+        """
+        super(CostNet, self).__init__()
+
+        self.g_encoder = g_encoder
+
+        # Get output dimensions from encoders
+        goal_enc_dim = g_encoder.latent_dim
+
+        self.scalar_net = nn.Sequential(nn.Linear(goal_enc_dim, goal_enc_dim // 2),
+                                        nn.ReLU(),
+                                        nn.Linear(goal_enc_dim // 2, 1))
+
+
+    def forward(self, g: torch.Tensor) -> torch.Tensor:
+        """Get cost value c(g) for goal nodes.
+
+        Args:
+            g: Tensor of node ids (batch_size,) or scalar
+
+        Returns:
+            Cost values (batch_size, 1) or (1,)
+        """
+
+        goal_encodings = self.g_encoder(g)
+
+        return self.scalar_net(goal_encodings)
+    
+
+class MRN(nn.Module):
+    """Metric Residual Network for learning quasi-metric distances.
+
+    Combines symmetric and asymmetric components to learn d(s,g) that
+    respects triangle inequality. Returns NEGATIVE distance (for energy function).
+    """
+
+    def __init__(self, s_encoder: StateEncoder, g_encoder: GoalEncoder, sym_dim: int = 64, asym_dim: int = 16):
+        """Initialize MRN.
+
+        Args:
+            s_encoder: State encoder network
+            g_encoder: Goal encoder network
+            sym_dim: Dimension of symmetric component
+            asym_dim: Dimension of asymmetric component
+        """
+        super().__init__()
+        self.s_encoder = s_encoder
+        self.g_encoder = g_encoder
+
+        # Get output dimensions from encoders
+        state_enc_dim = s_encoder.latent_dim
+        goal_enc_dim = g_encoder.latent_dim
+
+        # Symmetrical head
+        self.s_sym = nn.Linear(state_enc_dim, sym_dim)
+        self.g_sym = nn.Linear(goal_enc_dim, sym_dim)
+
+        # Asymmetrical head
+        self.s_asym = nn.Linear(state_enc_dim, asym_dim)
+        self.g_asym = nn.Linear(goal_enc_dim, asym_dim)
+
+    def forward(self, s: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
+        """Compute negative distance -d(s,g).
+
+        Args:
+            s: State tensor (batch_size, state_dim) or (state_dim,)
+            g: Goal node IDs (batch_size,) or scalar
+
+        Returns:
+            Negative distances (batch_size, 1) or (1,)
+        """
+        # Encode state and goal
+        s_enc = self.s_encoder(s)
+        g_enc = self.g_encoder(g)
+
+        # Symmetric component
+        sym_s = self.s_sym(s_enc)
+        sym_g = self.g_sym(g_enc)
+        dist_sym = (sym_s - sym_g).pow(2).mean(-1, keepdim=True)
+
+        # Asymmetric component
+        asym_s = self.s_asym(s_enc)
+        asym_g = self.g_asym(g_enc)
+        res = F.relu(asym_s - asym_g)
+        dist_asym = (F.softmax(res, -1) * res).sum(-1, keepdim=True)
+
+        # Total distance (both components are non-negative)
+        dist = dist_sym + dist_asym
+
+        # Return NEGATIVE distance for energy function
+        return -dist
+    
 class ContrastiveReplayBuffer:
     """Replay buffer for storing complete trajectories.
 
     Implements CRTR (Contrastive Representations for Temporal Reasoning) sampling
     to encourage learning temporal dynamics rather than static context.
 
-    For V4: Stores trajectories as sequences of node IDs rather than states.
+    For V5: Stores trajectories as sequences of node IDs rather than states.
     """
 
     def __init__(
@@ -280,78 +405,75 @@ class ContrastiveReplayBuffer:
         }
 
 
-def contrastive_loss(
-    encode_state_fn: Callable[[torch.Tensor], torch.Tensor],
-    encode_node_fn: Callable[[torch.Tensor], torch.Tensor],
+def cmd_contrastive_loss(
+    energy_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
     current_states: torch.Tensor,
     future_nodes: torch.Tensor,
+    temperature: float = 1.0,
 ) -> tuple[torch.Tensor, dict]:
-    """Compute contrastive loss with embeddings.
+    """Compute CMD-1 contrastive loss using energy-based formulation.
 
-    This implements a simplified version of the contrastive loss:
-    - phi = encode_state_fn(current_state)
-    - psi = encode_node_fn(future_node)
-    - l_align: ||phi - psi||^2 (align positive pairs)
-    - l_unif: logsumexp over negative pair distances (uniformity)
+    Implements the InfoNCE loss using energy function f(s,g) = c(g) - d(s,g):
+    - For each state s_i with positive goal g_pos_i, compute energies for all goals
+    - The positive pair (s_i, g_pos_i) should have higher energy than negatives
+    - Loss = cross_entropy(energies / temperature, labels)
 
     Args:
-        encode_state_fn: Function to encode states to embeddings
-        encode_node_fn: Function to encode node IDs to embeddings
+        energy_fn: Function that computes f(s,g) = c(g) - d(s,g)
         current_states: Batch of current states (batch_size, state_dim)
-        future_nodes: Batch of future node IDs (batch_size,)
+        future_nodes: Batch of positive goal nodes (batch_size,)
+        temperature: Temperature for softmax
 
     Returns:
         Tuple of (total_loss, metrics_dict)
     """
-    # Get embeddings using provided encoding functions
-    phi = encode_state_fn(current_states)  # (batch_size, k)
-    psi = encode_node_fn(future_nodes)  # (batch_size, k)
+    batch_size = current_states.shape[0]
 
-    batch_size = phi.shape[0]
+    # Build energy matrix: energy[i, j] = f(s_i, g_j)
+    # We compute energies for all (state, goal) pairs in the batch
+    # Positive pairs are on the diagonal (i.e., f(s_i, g_i))
 
-    # Alignment loss: ||phi - psi||^2 for positive pairs
-    l_align = torch.mean((phi - psi) ** 2, dim=1)  # (batch_size,)
+    # Create expanded tensors for pairwise computation
+    states_expanded = current_states.unsqueeze(1).repeat(1, batch_size, 1)  # (B, B, state_dim)
+    goals_expanded = future_nodes.unsqueeze(0).repeat(batch_size, 1)  # (B, B)
 
-    # Pairwise distances: ||phi[i] - psi[j]||^2 for all i, j
-    pdist = torch.sum((phi[:, None] - psi[None]) ** 2, dim=-1)  # (batch_size, batch_size)
+    # Flatten for batch computation
+    states_flat = states_expanded.reshape(-1, current_states.shape[-1])  # (B*B, state_dim)
+    goals_flat = goals_expanded.reshape(-1)  # (B*B,)
 
-    # Uniformity loss: logsumexp over negative pairs
-    # Mask out diagonal (positive pairs) with identity matrix
-    I = torch.eye(batch_size, device=phi.device)
+    # Compute all energies
+    all_energies = energy_fn(states_flat, goals_flat)  # (B*B,)
+    energy_matrix = all_energies.reshape(batch_size, batch_size)  # (B, B)
 
-    l_unif = (
-        torch.logsumexp(-(pdist * (1 - I)), dim=1) +
-        torch.logsumexp(-(pdist.T * (1 - I)), dim=1)
-    ) / 2.0
+    # Logits for cross-entropy: positive is at index i for row i
+    logits = energy_matrix / temperature  # (B, B)
 
-    # Combined contrastive loss
-    loss = l_align + l_unif
+    # Labels: positive pair is on diagonal
+    labels = torch.arange(batch_size, dtype=torch.long, device=current_states.device)
 
-    # Accuracy: how often is the closest future node the correct one?
-    # We need to check if future_nodes[argmin_idx] == future_nodes[i] (the true node)
-    # Note: pdist[i, j] = distance from phi[i] to psi[j], where psi[j] = embedding of future_nodes[j]
-    # So argmin(pdist[i]) gives index j where phi[i] is closest to psi[j]
-    # And future_nodes[j] is the node that phi[i] is closest to
-    closest_node_indices = torch.argmin(pdist, dim=1)  # (batch_size,) - which psi is each phi closest to?
-    predicted_nodes = future_nodes[closest_node_indices]  # (batch_size,) - which node is each state closest to?
-    true_nodes = future_nodes  # (batch_size,) - which node should each state be close to?
-    accuracy = torch.mean((predicted_nodes == true_nodes).float())
+    # Cross-entropy loss
+    loss = F.cross_entropy(logits, labels)
 
-    # Total loss
-    total_loss = loss.mean()
+    # Accuracy: how often is the highest energy the correct goal?
+    predicted_goals = torch.argmax(logits, dim=1)
+    accuracy = torch.mean((predicted_goals == labels).float())
 
-    # Metrics
+    # Additional metrics
+    pos_energies = torch.diagonal(energy_matrix)  # (batch_size,)
+    neg_energies = energy_matrix[~torch.eye(batch_size, dtype=bool, device=energy_matrix.device)]
+
     metrics = {
-        'loss': total_loss.item(),
-        'l_unif': l_unif.mean().item(),
-        'l_align': l_align.mean().item(),
+        'loss': loss.item(),
         'accuracy': accuracy.item(),
+        'pos_energy_mean': pos_energies.mean().item(),
+        'neg_energy_mean': neg_energies.mean().item(),
+        'energy_gap': (pos_energies.mean() - neg_energies.mean()).item(),
     }
 
-    return total_loss, metrics
+    return loss, metrics
 
 
-class CRLHeuristic(BaseHeuristic):
+class CMDHeuristic(BaseHeuristic):
     """Contrastive state-node distance heuristic.
 
     Learns an embedding space where L2 distance correlates with trajectory distance.
@@ -363,7 +485,7 @@ class CRLHeuristic(BaseHeuristic):
         training_data: "GoalConditionedTrainingData",
         graph_distances: dict[tuple[int, int], float],
         system: "ImprovisationalTAMPSystem",
-        config: CRLHeuristicConfig | None = None,
+        config: CMDHeuristicConfig,
         seed: int | None = None,
     ):
         """Initialize distance heuristic V4.
@@ -433,23 +555,38 @@ class CRLHeuristic(BaseHeuristic):
         print(f"State dimension: {state_dim}")
         print(f"Latent dimension: {self.config.latent_dim}")
 
-        # Create state encoder network
+        # Recreate networks
         self.s_encoder = StateEncoder(
             state_dim=state_dim,
             latent_dim=self.config.latent_dim,
             hidden_dims=self.config.hidden_dims or [64, 64],
         ).to(self.device)
 
-        # Initialize goal node embedding matrix (S x k)
-        self.g_encoder = nn.Parameter(
-            torch.randn(self.num_nodes, self.config.latent_dim, device=self.device) * 0.01
-        )
+        self.g_encoder = GoalEncoder(
+            num_nodes=self.num_nodes,
+            latent_dim=self.config.latent_dim,
+        ).to(self.device)
+
+
+        # Create cost network c(g)
+        self.c_net = CostNet(g_encoder=self.g_encoder).to(self.device)
+
+        # Create distance network d(s,g) using MRN
+        self.d_net = MRN(
+            s_encoder=self.s_encoder,
+            g_encoder=self.g_encoder,
+            sym_dim=64,
+            asym_dim=16,
+        ).to(self.device)
 
         # Create optimizer for all parameters
-        self.optimizer = torch.optim.Adam(
-            list(self.s_encoder.parameters()) + [self.g_encoder],
-            lr=self.config.learning_rate
+        all_params = (
+            list(self.s_encoder.parameters()) +
+            list(self.g_encoder.parameters()) +
+            list(self.c_net.parameters()) +
+            list(self.d_net.parameters())
         )
+        self.optimizer = torch.optim.Adam(all_params, lr=self.config.learning_rate)
 
         # Create cosine annealing learning rate scheduler
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -465,165 +602,147 @@ class CRLHeuristic(BaseHeuristic):
             repetition_factor=self.config.repetition_factor,
         )
 
-    def _encode_state(self, state_tensor: torch.Tensor) -> torch.Tensor:
-        """Encode state tensor to embedding.
+
+    def energy(self, states: torch.Tensor, goal_nodes: torch.Tensor) -> torch.Tensor:
+        """Compute energy function f(s,g) = c(g) - d(s,g).
 
         Args:
-            state_tensor: State tensor (batch_size, state_dim) or (state_dim,)
+            states: State tensor (batch_size, state_dim)
+            goal_nodes: Goal node IDs (batch_size,)
 
         Returns:
-            Embedding tensor with same batch dimensions
+            Energy values (batch_size,)
         """
-        emb = self.s_encoder(state_tensor)
-        if self.config.normalize_embeddings:
-            # Normalize to unit L2 norm
-            return F.normalize(emb, p=2, dim=-1)
-        return emb
+        # c(g): cost upper bound for each goal
+        c_g = self.c_net(goal_nodes).squeeze(-1)  # (batch_size,)
 
-    def _encode_node(self, node_id: int | torch.Tensor) -> torch.Tensor:
-        """Encode node ID(s) to embedding.
+        # -d(s,g): negative distance (MRN returns negative distance)
+        neg_d_sg = self.d_net(states, goal_nodes).squeeze(-1)  # (batch_size,)
 
-        Args:
-            node_id: Node ID (int) or tensor of node IDs (batch_size,)
+        print("C:", c_g.mean().item(), " -D:", neg_d_sg.mean().item())
 
-        Returns:
-            Embedding tensor (latent_dim,) or (batch_size, latent_dim)
-        """
-        emb = self.g_encoder[node_id]
-        if self.config.normalize_embeddings:
-            # Normalize to unit L2 norm
-            return F.normalize(emb, p=2, dim=-1)
-        return emb
+        # f(s,g) = c(g) - d(s,g) = c(g) + (-d(s,g))
+        energy = c_g + neg_d_sg
+
+        return energy
+
 
     def _select_action_greedy(
-        self,
-        env: Any,
-        current_state,
-        goal_node: int,
-    ) -> Any | None:
+            self,
+            env: Any,
+            current_state,
+            goal_node: int,
+        ) -> Any | None:
 
-            """
-            Soft greedy action selection over embedding distances.
+                """
+                Soft greedy action selection over embedding distances.
 
-            policy_temperature == 0:
-                - Discrete action space  -> argmin distance
-                - Continuous action space -> weighted mean of sampled actions
+                policy_temperature == 0:
+                    - Discrete action space  -> argmin distance
+                    - Continuous action space -> weighted mean of sampled actions
 
-            policy_temperature > 0:
-                - Sample from softmax distribution (both discrete and continuous)
-            """
-            num_action_samples = self.config.num_action_samples
-            action_space = env.action_space
-            tau = self.policy_temperature
+                policy_temperature > 0:
+                    - Sample from softmax distribution (both discrete and continuous)
+                """
+                num_action_samples = self.config.num_action_samples
+                action_space = env.action_space
+                tau = self.policy_temperature
 
-            # ------------------------------------------------------------
-            # 1. Collect candidate actions
-            # ------------------------------------------------------------
+                # ------------------------------------------------------------
+                # 1. Collect candidate actions
+                # ------------------------------------------------------------
 
-            if isinstance(action_space, gym.spaces.Discrete):
-                candidate_actions = list(range(action_space.n))
-                is_discrete = True
+                if isinstance(action_space, gym.spaces.Discrete):
+                    candidate_actions = list(range(action_space.n))
+                    is_discrete = True
 
-            elif isinstance(action_space, gym.spaces.Box):
-                candidate_actions = [
-                    action_space.sample() for _ in range(num_action_samples)
-                ]
-                is_discrete = False
-
-            else:
-                raise NotImplementedError(
-                    f"Unsupported action space type: {type(action_space)}"
-                )
-
-            if len(candidate_actions) == 0:
-                return None
-
-            # ------------------------------------------------------------
-            # 2. Fallback: random policy if encoders are uninitialized
-            # ------------------------------------------------------------
-
-            if self.s_encoder is None or self.g_encoder is None:
-                return random.choice(candidate_actions)
-
-            # ------------------------------------------------------------
-            # 3. Encode goal
-            # ------------------------------------------------------------
-
-            with torch.no_grad():
-                goal_emb = (
-                    self._encode_node(goal_node)
-                    .squeeze(0)
-                    .cpu()
-                    .numpy()
-                )  # (k,)
-
-            # ------------------------------------------------------------
-            # 4. Score candidate actions
-            # ------------------------------------------------------------
-
-            distances = []
-
-            for action in candidate_actions:
-                env.reset_from_state(current_state)
-                next_state, _, _, _, _ = env.step(action)
-
-                next_flat = self._flatten_state(next_state)
-                next_tensor = (
-                    torch.FloatTensor(next_flat)
-                    .unsqueeze(0)
-                    .to(self.device)
-                )
-
-                with torch.no_grad():
-                    next_emb = (
-                        self._encode_state(next_tensor)
-                        .squeeze(0)
-                        .cpu()
-                        .numpy()
-                    )
-
-                dist = 0.5 * np.linalg.norm(next_emb - goal_emb) ** 2
-                distances.append(dist)
-
-            distances = np.asarray(distances)  # (N,)
-
-            # ------------------------------------------------------------
-            # 5. Zero-temperature limit
-            # ------------------------------------------------------------
-
-            if tau == 0:
-                if is_discrete:
-                    # Hard greedy
-                    idx = int(np.argmin(distances))
-                    return candidate_actions[idx]
+                elif isinstance(action_space, gym.spaces.Box):
+                    candidate_actions = [
+                        action_space.sample() for _ in range(num_action_samples)
+                    ]
+                    is_discrete = False
 
                 else:
-                    # Continuous: weighted mean (MPPI-style)
-                    # Use exp(-d) *without* dividing by tau
-                    weights = np.exp(-distances)
-                    weights /= np.sum(weights)
-
-                    actions = np.stack(candidate_actions)  # (N, action_dim)
-                    action = np.sum(actions * weights[:, None], axis=0)
-
-                    return np.clip(
-                        action,
-                        action_space.low,
-                        action_space.high,
+                    raise NotImplementedError(
+                        f"Unsupported action space type: {type(action_space)}"
                     )
 
-            # ------------------------------------------------------------
-            # 6. Soft (stochastic) policy
-            # ------------------------------------------------------------
+                if len(candidate_actions) == 0:
+                    return None
 
-            logits = -distances / tau
-            logits -= np.max(logits)  # numerical stability
-            probs = np.exp(logits)
-            probs /= np.sum(probs)
+                # ------------------------------------------------------------
+                # 2. Fallback: random policy if encoders are uninitialized
+                # ------------------------------------------------------------
 
-            idx = np.random.choice(len(candidate_actions), p=probs)
-            return candidate_actions[idx]
-    
+                if self.s_encoder is None or self.g_encoder is None:
+                    return random.choice(candidate_actions)
+
+                # Create goal node tensor
+                goal_tensor = torch.tensor([goal_node], dtype=torch.long, device=self.device)
+
+                # ------------------------------------------------------------
+                # 4. Score candidate actions
+                # ------------------------------------------------------------
+
+                 # Compute distances for each action
+                distances = []
+                for action in candidate_actions:
+                    # Save current state
+                    env.reset_from_state(current_state)
+
+                    # Take action to get next state
+                    next_state, _, _, _, _ = env.step(action)
+
+                    # Flatten and tensorize next state
+                    next_flat = self._flatten_state(next_state)
+                    next_tensor = torch.FloatTensor(next_flat).unsqueeze(0).to(self.device)
+
+                    # Compute distance: d(s',g) = -MRN(s',g)
+                    with torch.no_grad():
+                        neg_dist = self.d_net(next_tensor, goal_tensor).squeeze()  # MRN returns -d
+                        dist = -neg_dist.item()  # Get positive distance
+
+                    distances.append(dist)
+
+                distances = np.asarray(distances)  # (N,)
+
+                # ------------------------------------------------------------
+                # 5. Zero-temperature limit
+                # ------------------------------------------------------------
+
+                if tau == 0:
+                    if is_discrete:
+                        # Hard greedy
+                        idx = int(np.argmin(distances))
+                        return candidate_actions[idx]
+
+                    else:
+                        # Continuous: weighted mean (MPPI-style)
+                        # Use exp(-d) *without* dividing by tau
+                        weights = np.exp(-distances)
+                        weights /= np.sum(weights)
+
+                        actions = np.stack(candidate_actions)  # (N, action_dim)
+                        action = np.sum(actions * weights[:, None], axis=0)
+
+                        return np.clip(
+                            action,
+                            action_space.low,
+                            action_space.high,
+                        )
+
+                # ------------------------------------------------------------
+                # 6. Soft (stochastic) policy
+                # ------------------------------------------------------------
+
+                logits = -distances / tau
+                logits -= np.max(logits)  # numerical stability
+                probs = np.exp(logits)
+                probs /= np.sum(probs)
+
+                idx = np.random.choice(len(candidate_actions), p=probs)
+                return candidate_actions[idx]
+
     def rollout(
         self,
         env: Any,
@@ -713,9 +832,6 @@ class CRLHeuristic(BaseHeuristic):
         lengths = []
 
         for _ in range(num_trajectories):
-            if len(state_node_pairs) == 0:
-                break
-
             # Sample random state-node pair
             source_state, target_node = random.choice(state_node_pairs)
 
@@ -750,185 +866,6 @@ class CRLHeuristic(BaseHeuristic):
         }
 
         return trajectories, trajectory_metadata, stats
-
-    def multi_train(
-        self,
-    ) -> dict:
-        """Multi-round training that iteratively prunes to promising shortcuts.
-
-        For each round:
-        1. Train on current subset of state-node pairs
-        2. Compute estimated vs graph distances at NODE-NODE level
-        3. Keep top keep_fraction of NODE-NODE pairs with best differences
-        4. Keep ALL state-node pairs for the selected node-node pairs
-        5. Continue training on this pruned subset
-
-        This focuses learning on node-node pairs that show promise for shortcuts.
-
-        Args:
-            state_node_pairs: List of (source_state, target_node) pairs
-            graph_distances: Dict mapping (source_node, target_node) -> graph distance
-            num_rounds: Number of pruning rounds
-            num_epochs_per_round: Training epochs per round
-            trajectories_per_epoch: Trajectories collected per epoch
-            max_episode_steps: Max steps per trajectory
-            keep_fraction: Fraction of NODE-NODE pairs to keep each round (0.5 = keep top 50%)
-
-        Returns:
-            Dictionary with combined training history across all rounds
-        """
-        state_node_pairs = self.state_node_pairs
-        graph_distances = self.graph_distances
-
-
-        num_rounds = self.config.num_rounds
-        num_epochs_per_round = self.config.num_epochs_per_round
-        trajectories_per_epoch = self.config.trajectories_per_epoch
-        max_episode_steps = self.config.max_episode_steps
-        keep_fraction = self.config.keep_fraction
-
-        # wandb.init(project="slap_crl_heuristic", config=self.config.__dict__)
-
-        print(f"\n{'='*80}")
-        print(f"MULTI-ROUND TRAINING: {num_rounds} rounds, {num_epochs_per_round} epochs/round")
-        print(f"Starting with {len(state_node_pairs)} state-node pairs")
-        print(f"Keep fraction: {keep_fraction} (pruning {1-keep_fraction:.1%} each round)")
-        print(f"{'='*80}\n")
-
-        # Build mapping: (source_node, target_node) -> list of (source_state, target_node) pairs
-        print("Building node-node to state-node mapping...")
-        node_pair_to_state_pairs: dict[tuple[int, int], list[tuple[ObsType, int]]] = {}
-        for state, target_node in state_node_pairs:
-            source_node = self.get_node(state)
-            key = (source_node, target_node)
-            if key not in node_pair_to_state_pairs:
-                node_pair_to_state_pairs[key] = []
-            node_pair_to_state_pairs[key].append((state, target_node))
-
-        print(f"Found {len(node_pair_to_state_pairs)} unique node-node pairs")
-        print(f"Average {len(state_node_pairs) / len(node_pair_to_state_pairs):.1f} state-node pairs per node-node pair")
-
-        # Combined history across all rounds
-        combined_history = {
-            'total_loss': [],
-            'alignment_loss': [],
-            'uniformity_loss': [],
-            'accuracy': [],
-            'success_rate': [],
-            'avg_success_length': [],
-            'learning_rate': [],
-            'policy_temperature': [],
-            'round_boundaries': [],  # Track where each round starts
-            'num_state_pairs_per_round': [],  # Track state-node dataset size per round
-            'num_node_pairs_per_round': [],  # Track node-node dataset size per round
-            'distance_matrices': [],  # Distance matrix after each round (for debugging)
-            'graph_distances': graph_distances,  # Store graph distances for reference
-        }
-
-        # Start with all node-node pairs
-        current_node_pairs = list(node_pair_to_state_pairs.keys())
-
-        initial_temp = self.config.policy_temperature
-        min_temp = self.config.eval_temperature
-
-
-        for round_idx in range(num_rounds):
-            # Update policy temperature using cosine annealing
-            progress = (round_idx+1) / num_rounds
-            cosine_factor = 0.5 * (1 + np.cos(np.pi * progress))
-            self.policy_temperature = min_temp + (initial_temp - min_temp) * cosine_factor
-
-            # Get all state-node pairs for current node-node pairs
-            current_state_pairs = []
-            for node_pair in current_node_pairs:
-                current_state_pairs.extend(node_pair_to_state_pairs[node_pair])
-
-            print(f"\n{'='*80}")
-            print(f"ROUND {round_idx + 1}/{num_rounds}")
-            print(f"Training on {len(current_node_pairs)} node-node pairs")
-            print(f"  -> {len(current_state_pairs)} state-node pairs")
-            print(f"{'='*80}\n")
-
-            # Mark start of this round in history
-            combined_history['round_boundaries'].append(len(combined_history['total_loss']))
-            combined_history['num_state_pairs_per_round'].append(len(current_state_pairs))
-            combined_history['num_node_pairs_per_round'].append(len(current_node_pairs))
-
-            # Train on current subset
-            round_history = self.train(
-                state_node_pairs=current_state_pairs,
-                num_epochs=num_epochs_per_round,
-                trajectories_per_epoch=trajectories_per_epoch,
-                max_episode_steps=self.config.max_episode_steps,
-            )
-
-            # Append this round's history
-            for key in ['total_loss', 'alignment_loss', 'uniformity_loss', 'accuracy',
-                       'success_rate', 'avg_success_length', 'learning_rate', 'policy_temperature']:
-                combined_history[key].extend(round_history[key])
-
-            # Compute distance matrix for ALL node-node pairs (not just current ones)
-            # This allows us to "bring back" previously pruned pairs if they become promising
-            print(f"\n[DEBUG] Computing distance matrix for ALL {len(node_pair_to_state_pairs)} node pairs after round {round_idx + 1}...")
-            all_node_pairs = list(node_pair_to_state_pairs.keys())
-            distance_matrix = self._compute_distance_matrix(all_node_pairs)
-            combined_history['distance_matrices'].append({
-                'round': round_idx + 1,
-                'distances': distance_matrix,
-                'active_node_pairs': current_node_pairs.copy(),  # Which pairs we trained on
-            })
-            print(f"[DEBUG] Distance matrix computed with {len(distance_matrix)} entries")
-
-            # If not the last round, prune to most promising NODE-NODE pairs
-            # IMPORTANT: Evaluate ALL node pairs, not just current ones!
-            if round_idx < num_rounds - 1:
-                print(f"\n{'='*80}")
-                print(f"PRUNING after round {round_idx + 1}")
-                print(f"{'='*80}\n")
-
-                # Call prune() to get selected node pairs
-                new_data = self.prune_explore()
-                selected_node_pairs_set = new_data.unique_shortcuts
-                current_node_pairs = list(selected_node_pairs_set)
-
-                # Count resulting state-node pairs
-                resulting_state_pairs = sum(
-                    len(node_pair_to_state_pairs.get((src, tgt), []))
-                    for src, tgt in current_node_pairs
-                )
-
-                print(f"Pruned node-node pairs: {len(all_node_pairs)} -> {len(current_node_pairs)}")
-                print(f"Resulting state-node pairs: {resulting_state_pairs}")
-
-        # Final state-node pairs
-        final_state_pairs = []
-        for node_pair in current_node_pairs:
-            final_state_pairs.extend(node_pair_to_state_pairs[node_pair])
-
-        print(f"\n{'='*80}")
-        print(f"MULTI-ROUND TRAINING COMPLETE")
-        print(f"Final node-node pairs: {len(current_node_pairs)}")
-        print(f"Final state-node pairs: {len(final_state_pairs)}")
-        print(f"{'='*80}\n")
-
-        # wandb.finish()
-
-        return combined_history
-
-    def _compute_distance_matrix(self, node_pairs: list[tuple[int, int]]) -> dict[tuple[int, int], float]:
-        """Compute estimated distances for all node pairs.
-
-        Args:
-            node_pairs: List of (source_node, target_node) pairs to compute distances for
-
-        Returns:
-            Dictionary mapping (source_node, target_node) -> estimated distance
-        """
-        distance_matrix = {}
-        for source_node, target_node in node_pairs:
-            est_dist = self.estimate_node_distance(source_node, target_node)
-            distance_matrix[(source_node, target_node)] = est_dist
-        return distance_matrix
 
     def train(
         self,
@@ -971,13 +908,14 @@ class CRLHeuristic(BaseHeuristic):
         # Initialize training history tracking
         training_history = {
             'total_loss': [],
-            'alignment_loss': [],
-            'uniformity_loss': [],
             'accuracy': [],
+            'pos_energy_mean': [],
+            'neg_energy_mean': [],
+            'energy_gap': [],
             'success_rate': [],
             'avg_success_length': [],
             'learning_rate': [],
-            'policy_temperature': [],
+            'policy_temperature': []
         }
 
         # Training loop
@@ -1013,9 +951,10 @@ class CRLHeuristic(BaseHeuristic):
                 # Track metrics in history
                 current_lr = self.optimizer.param_groups[0]['lr']
                 training_history['total_loss'].append(metrics['loss'])
-                training_history['alignment_loss'].append(metrics['l_align'])
-                training_history['uniformity_loss'].append(metrics['l_unif'])
                 training_history['accuracy'].append(metrics['accuracy'])
+                training_history['pos_energy_mean'].append(metrics['pos_energy_mean'])
+                training_history['neg_energy_mean'].append(metrics['neg_energy_mean'])
+                training_history['energy_gap'].append(metrics['energy_gap'])
                 training_history['success_rate'].append(traj_stats['success_rate'])
                 training_history['avg_success_length'].append(traj_stats['avg_success_length'])
                 training_history['learning_rate'].append(current_lr)
@@ -1033,29 +972,17 @@ class CRLHeuristic(BaseHeuristic):
                     print(f"  Avg successful length: {traj_stats['avg_success_length']:.1f}")
                 print(f"  --- Training Metrics ---")
                 print(f"  Total loss: {metrics['loss']:.4f}")
-                print(f"  Alignment loss: {metrics['l_align']:.4f}")
-                print(f"  Uniformity loss: {metrics['l_unif']:.4f}")
                 print(f"  Accuracy: {metrics['accuracy']:.2%}")
-
-                # Log to wandb
-                # wandb.log({
-                #     "total_loss": metrics['loss'],
-                #     "alignment_loss": metrics['l_align'],
-                #     "uniformity_loss": metrics['l_unif'],
-                #     "accuracy": metrics['accuracy'],
-                #     "success_rate": traj_stats['success_rate'],
-                #     "avg_trajectory_length": traj_stats['avg_length'],
-                #     "avg_success_length": traj_stats['avg_success_length'],
-                #     "learning_rate": current_lr,
-                #     "policy_temperature": self.policy_temperature,
-                #     "epoch": epoch
-                # })
+                print(f"  Positive energy: {metrics['pos_energy_mean']:.4f}")
+                print(f"  Negative energy: {metrics['neg_energy_mean']:.4f}")
+                print(f"  Energy gap: {metrics['energy_gap']:.4f}")
 
             # Step the learning rate scheduler every epoch
             self.scheduler.step()
 
         print(f"\nTraining complete!")
         return training_history
+
 
     def _train_step(self) -> dict:
         """Perform one training step (batch update).
@@ -1073,115 +1000,71 @@ class CRLHeuristic(BaseHeuristic):
         for _ in range(self.config.iters_per_epoch):
             self.optimizer.zero_grad()
 
-            # Compute loss using encoding functions
-            loss, metrics = contrastive_loss(
-                self._encode_state,
-                self._encode_node,
+            # Compute loss using CMD-1 contrastive loss
+            loss, metrics = cmd_contrastive_loss(
+                self.energy,
                 current_states,
                 future_nodes,
+                temperature=0.01,
             )
 
             # Backward pass
             loss.backward()
 
             # Gradient clipping for stability
-            torch.nn.utils.clip_grad_norm_(
-                list(self.s_encoder.parameters()) + [self.g_encoder],
-                max_norm=self.config.grad_clip
+            all_params = (
+                list(self.s_encoder.parameters()) +
+                list(self.g_encoder.parameters()) +
+                list(self.c_net.parameters()) +
+                list(self.d_net.parameters())
             )
+            torch.nn.utils.clip_grad_norm_(all_params, max_norm=self.config.grad_clip)
 
             # Update parameters
             self.optimizer.step()
 
         return metrics
+    
 
-    def latent_dist(self, source_state: ObsType, target_node: int) -> float:
-        """Compute distance in latent space between state and node.
+    def estimate_distance(self, source_state: ObsType, target_node: int) -> float:
+        """Estimate trajectory distance from state to node using learned distance function.
+
+        In CMD-1/V5, we directly use the learned distance network d(s,g).
 
         Args:
             source_state: Source state
             target_node: Target node ID
 
         Returns:
-            L2 distance in embedding space
+            Estimated distance (number of steps) to reach target from source
         """
-        if self.s_encoder is None or self.g_encoder is None:
+        if self.d_net is None:
             return 0.0
 
         source_flat = self._flatten_state(source_state)
 
-        # Encode using encoding functions
+        # Compute d(s,g) using the MRN
         with torch.no_grad():
             source_tensor = torch.FloatTensor(source_flat).unsqueeze(0).to(self.device)
-            source_emb = self._encode_state(source_tensor).squeeze(0)
-            target_emb = self._encode_node(target_node)
+            target_tensor = torch.tensor([target_node], dtype=torch.long, device=self.device)
 
-            # Compute L2 distance in embedding space
-            distance = torch.norm(source_emb - target_emb).item()
-
-        return float(distance)
-
-    def estimate_distance(self, source_state: ObsType, target_node: int) -> float:
-        """Estimate trajectory distance from state to node.
-
-        For V4, we use a simple transformation of the latent distance.
-        This can be refined based on empirical results.
-
-        Args:
-            source_state: Source state
-            target_node: Target node ID
-
-        Returns:
-            Estimated number of steps to reach target from source
-        """
-
-        d_sg_sq = (self.latent_dist(source_state, target_node))**2
-        d_gg_sq = 0
-        target_states = self.node_to_states[target_node]
-
-        # print(target_states)
-
-        n = 0
-        for target_state in random.sample(target_states, min(100, len(target_states))):
-            d_gg_sq += (self.latent_dist(target_state, target_node))**2 
-            n += 1
-        d_gg_sq /= n
-
-        # print("D_gg:", d_gg_sq, "D_sg:", d_sg_sq)
-
-
-        return min(0, (1 / (2 * np.log(self.config.gamma))) * (d_gg_sq - d_sg_sq))
+            # MRN returns -d(s,g), so negate to get positive distance
+            neg_distance = self.d_net(source_tensor, target_tensor).squeeze()
+            distance = -neg_distance.item()
+        
+        return -(1/np.log(self.config.gamma)) * float(distance)
 
     def estimate_node_distance(self, source_node: int, target_node: int) -> float:
-        # source_states = self.node_to_states[source_node]
-        # avg = 0
-        # n = 0
-        # for source_state in random.sample(source_states, min(100, len(source_states))):
-        #     avg += self.estimate_distance(source_state, target_node)
-        #     n += 1
-        # return avg / n
-
-        source_emb = self._encode_node(source_node)
-
-        target_emb = self._encode_node(target_node)
-
-        # Compute L2 distance in embedding space
-        latent_dist = torch.norm(source_emb - target_emb).item()
-        return  -(1 / (2 * np.log(self.config.gamma))) * latent_dist
-
-
-
+        source_states = self.node_to_states[source_node]
+        avg = 0
+        n = 0
+        for source_state in random.sample(source_states, min(100, len(source_states))):
+            avg += self.estimate_distance(source_state, target_node)
+            n += 1
+        return avg / n
+    
     def estimate_probability(self, source_node: int, target_node: int) -> float:
         est_dist = self.estimate_node_distance(source_node, target_node)
-        # compute the state dimension
-        # goal_states = self.training_data.node_states[target_node]
-        # flat_states = np.array([self._flatten_state(s) for s in goal_states])
-        # # centroid = np.mean(flat_states, axis=0)
-        # # radius = max(np.mean(np.linalg.norm(flat_states - centroid, axis=1)), 1)
-        # # n = flat_states.shape[1]
-
-        # # print("Radius:", radius)
-        # # print("n:", n)
 
         if est_dist <= 0:
             p_rr = 1.0
@@ -1193,8 +1076,7 @@ class CRLHeuristic(BaseHeuristic):
 
         k = np.log(0.5) / np.log(1 - self.config.threshold)
         return 1 - (1 - p_rr)**k
-
-            
+    
     def estimate_gain(self, source_node: int, target_node: int) -> float:
         """Estimate gain of training on a shortcut, relative to distance in the
         initial graph. Higher gain means more useful shortcut."""
@@ -1210,7 +1092,7 @@ class CRLHeuristic(BaseHeuristic):
         gain = np.clip(graph_distance - estimated_distance, 0, self.config.max_episode_steps)
         return gain
 
-    
+
     def prune_explore(self) -> GoalConditionedTrainingData:
         print(f"\n[DEBUG] Pruning with keep_fraction={self.config.keep_fraction}, max_episode_steps={self.config.max_episode_steps}")
 
@@ -1368,6 +1250,186 @@ class CRLHeuristic(BaseHeuristic):
 
         return pruned_data
 
+    def multi_train(
+        self,
+    ) -> dict:
+        """Multi-round training that iteratively prunes to promising shortcuts.
+
+        For each round:
+        1. Train on current subset of state-node pairs
+        2. Compute estimated vs graph distances at NODE-NODE level
+        3. Keep top keep_fraction of NODE-NODE pairs with best differences
+        4. Keep ALL state-node pairs for the selected node-node pairs
+        5. Continue training on this pruned subset
+
+        This focuses learning on node-node pairs that show promise for shortcuts.
+
+        Args:
+            state_node_pairs: List of (source_state, target_node) pairs
+            graph_distances: Dict mapping (source_node, target_node) -> graph distance
+            num_rounds: Number of pruning rounds
+            num_epochs_per_round: Training epochs per round
+            trajectories_per_epoch: Trajectories collected per epoch
+            max_episode_steps: Max steps per trajectory
+            keep_fraction: Fraction of NODE-NODE pairs to keep each round (0.5 = keep top 50%)
+
+        Returns:
+            Dictionary with combined training history across all rounds
+        """
+        state_node_pairs = self.state_node_pairs
+        graph_distances = self.graph_distances
+
+
+        num_rounds = self.config.num_rounds
+        num_epochs_per_round = self.config.num_epochs_per_round
+        trajectories_per_epoch = self.config.trajectories_per_epoch
+        max_episode_steps = self.config.max_episode_steps
+        keep_fraction = self.config.keep_fraction
+
+        # wandb.init(project="slap_crl_heuristic", config=self.config.__dict__)
+
+        print(f"\n{'='*80}")
+        print(f"MULTI-ROUND TRAINING: {num_rounds} rounds, {num_epochs_per_round} epochs/round")
+        print(f"Starting with {len(state_node_pairs)} state-node pairs")
+        print(f"Keep fraction: {keep_fraction} (pruning {1-keep_fraction:.1%} each round)")
+        print(f"{'='*80}\n")
+
+        # Build mapping: (source_node, target_node) -> list of (source_state, target_node) pairs
+        print("Building node-node to state-node mapping...")
+        node_pair_to_state_pairs: dict[tuple[int, int], list[tuple[ObsType, int]]] = {}
+        for state, target_node in state_node_pairs:
+            source_node = self.get_node(state)
+            key = (source_node, target_node)
+            if key not in node_pair_to_state_pairs:
+                node_pair_to_state_pairs[key] = []
+            node_pair_to_state_pairs[key].append((state, target_node))
+
+        print(f"Found {len(node_pair_to_state_pairs)} unique node-node pairs")
+        print(f"Average {len(state_node_pairs) / len(node_pair_to_state_pairs):.1f} state-node pairs per node-node pair")
+
+        # Combined history across all rounds
+        combined_history = {
+            'total_loss': [],
+            'accuracy': [],
+            'pos_energy_mean': [],
+            'neg_energy_mean': [],
+            'energy_gap': [],
+            'success_rate': [],
+            'avg_success_length': [],
+            'learning_rate': [],
+            'policy_temperature': [],
+            'round_boundaries': [],  # Track where each round starts
+            'num_state_pairs_per_round': [],  # Track state-node dataset size per round
+            'num_node_pairs_per_round': [],  # Track node-node dataset size per round
+            'distance_matrices': [],  # Distance matrix after each round (for debugging)
+            'graph_distances': graph_distances,  # Store graph distances for reference
+        }
+
+        # Start with all node-node pairs
+        current_node_pairs = list(node_pair_to_state_pairs.keys())
+
+        initial_temp = self.config.policy_temperature
+        min_temp = self.config.eval_temperature
+
+
+        for round_idx in range(num_rounds):
+            # Update policy temperature using cosine annealing
+            progress = (round_idx+0.5) / num_rounds
+            cosine_factor = 0.5 * (1 + np.cos(np.pi * progress))
+            self.policy_temperature = min_temp + (initial_temp - min_temp) * cosine_factor
+
+            # Get all state-node pairs for current node-node pairs
+            current_state_pairs = []
+            for node_pair in current_node_pairs:
+                current_state_pairs.extend(node_pair_to_state_pairs[node_pair])
+
+            print(f"\n{'='*80}")
+            print(f"ROUND {round_idx + 1}/{num_rounds}")
+            print(f"Training on {len(current_node_pairs)} node-node pairs")
+            print(f"  -> {len(current_state_pairs)} state-node pairs")
+            print(f"{'='*80}\n")
+
+            # Mark start of this round in history
+            combined_history['round_boundaries'].append(len(combined_history['total_loss']))
+            combined_history['num_state_pairs_per_round'].append(len(current_state_pairs))
+            combined_history['num_node_pairs_per_round'].append(len(current_node_pairs))
+
+            # Train on current subset
+            round_history = self.train(
+                state_node_pairs=current_state_pairs,
+                num_epochs=num_epochs_per_round,
+                trajectories_per_epoch=trajectories_per_epoch,
+                max_episode_steps=self.config.max_episode_steps,
+            )
+
+            # Append this round's history
+            for key in round_history.keys():
+                combined_history[key].extend(round_history[key])
+
+            # Compute distance matrix for ALL node-node pairs (not just current ones)
+            # This allows us to "bring back" previously pruned pairs if they become promising
+            print(f"\n[DEBUG] Computing distance matrix for ALL {len(node_pair_to_state_pairs)} node pairs after round {round_idx + 1}...")
+            all_node_pairs = list(node_pair_to_state_pairs.keys())
+            distance_matrix = self._compute_distance_matrix(all_node_pairs)
+            combined_history['distance_matrices'].append({
+                'round': round_idx + 1,
+                'distances': distance_matrix,
+                'active_node_pairs': current_node_pairs.copy(),  # Which pairs we trained on
+            })
+            print(f"[DEBUG] Distance matrix computed with {len(distance_matrix)} entries")
+
+            # If not the last round, prune to most promising NODE-NODE pairs
+            # IMPORTANT: Evaluate ALL node pairs, not just current ones!
+            if round_idx < num_rounds - 1:
+                print(f"\n{'='*80}")
+                print(f"PRUNING after round {round_idx + 1}")
+                print(f"{'='*80}\n")
+
+                # Call prune() to get selected node pairs
+                new_data = self.prune_explore()
+                selected_node_pairs_set = new_data.unique_shortcuts
+                current_node_pairs = list(selected_node_pairs_set)
+
+                # Count resulting state-node pairs
+                resulting_state_pairs = sum(
+                    len(node_pair_to_state_pairs.get((src, tgt), []))
+                    for src, tgt in current_node_pairs
+                )
+
+                print(f"Pruned node-node pairs: {len(all_node_pairs)} -> {len(current_node_pairs)}")
+                print(f"Resulting state-node pairs: {resulting_state_pairs}")
+
+        # Final state-node pairs
+        final_state_pairs = []
+        for node_pair in current_node_pairs:
+            final_state_pairs.extend(node_pair_to_state_pairs[node_pair])
+
+        print(f"\n{'='*80}")
+        print(f"MULTI-ROUND TRAINING COMPLETE")
+        print(f"Final node-node pairs: {len(current_node_pairs)}")
+        print(f"Final state-node pairs: {len(final_state_pairs)}")
+        print(f"{'='*80}\n")
+
+        # wandb.finish()
+
+        return combined_history
+    
+    def _compute_distance_matrix(self, node_pairs: list[tuple[int, int]]) -> dict[tuple[int, int], float]:
+        """Compute estimated distances for all node pairs.
+
+        Args:
+            node_pairs: List of (source_node, target_node) pairs to compute distances for
+
+        Returns:
+            Dictionary mapping (source_node, target_node) -> estimated distance
+        """
+        distance_matrix = {}
+        for source_node, target_node in node_pairs:
+            est_dist = self.estimate_node_distance(source_node, target_node)
+            distance_matrix[(source_node, target_node)] = est_dist
+        return distance_matrix
+
+
     def _flatten_state(self, state: ObsType) -> np.ndarray:
         """Flatten state to array."""
         if hasattr(state, "nodes"):
@@ -1380,13 +1442,15 @@ class CRLHeuristic(BaseHeuristic):
 
         # Save networks
         torch.save(self.s_encoder.state_dict(), f"{path}/s_encoder.pt")
-        torch.save(self.g_encoder, f"{path}/g_encoder.pt")
+        torch.save(self.g_encoder.state_dict(), f"{path}/g_encoder.pt")
+        torch.save(self.c_net.state_dict(), f"{path}/c_net.pt")
+        torch.save(self.d_net.state_dict(), f"{path}/d_net.pt")
 
         # Save config
         with open(f"{path}/config.pkl", "wb") as f:
             pickle.dump(self.config, f)
 
-        print(f"Distance heuristic V4 saved to {path}")
+        print(f"Distance heuristic V5 saved to {path}")
 
     def load(self, path: str, state_dim: int, num_nodes: int) -> None:
         """Load distance heuristic from disk."""
@@ -1403,11 +1467,31 @@ class CRLHeuristic(BaseHeuristic):
             hidden_dims=self.config.hidden_dims or [64, 64],
         ).to(self.device)
 
+        self.g_encoder = GoalEncoder(
+            num_nodes=self.num_nodes,
+            latent_dim=self.config.latent_dim,
+        ).to(self.device)
+
+        self.c_net = CostNet(num_nodes=self.num_nodes).to(self.device)
+
+        self.d_net = MRN(
+            s_encoder=self.s_encoder,
+            g_encoder=self.g_encoder,
+            sym_dim=64,
+            asym_dim=16,
+        ).to(self.device)
+
         # Load weights
         self.s_encoder.load_state_dict(torch.load(f"{path}/s_encoder.pt", map_location=self.device))
         self.s_encoder.eval()
 
-        # Load g_encoder
-        self.g_encoder = torch.load(f"{path}/g_encoder.pt", map_location=self.device)
+        self.g_encoder.load_state_dict(torch.load(f"{path}/g_encoder.pt", map_location=self.device))
+        self.g_encoder.eval()
 
-        print(f"Distance heuristic V4 loaded from {path}")
+        self.c_net.load_state_dict(torch.load(f"{path}/c_net.pt", map_location=self.device))
+        self.c_net.eval()
+
+        self.d_net.load_state_dict(torch.load(f"{path}/d_net.pt", map_location=self.device))
+        self.d_net.eval()
+
+        print(f"Distance heuristic V5 loaded from {path}")

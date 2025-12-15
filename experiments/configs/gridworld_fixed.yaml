@@ -56,6 +56,19 @@ heuristic:
   eval_rollouts: 100
   eval_max_steps: 200
 
+  dqn:
+    learning_rate: 3e-4
+    batch_size: 256
+    buffer_size: 100000
+    max_episode_steps: 100
+    num_steps_per_round: 10000
+    num_rounds: 1
+    threshold: 0.05
+    beta: 1.0
+    gamma: 0.9
+    exploration_factor: 0.05
+    keep_fraction: 0.2
+
   
 
 policy:

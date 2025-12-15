@@ -39,6 +39,8 @@ from tamp_improv.approaches.improvisational.heuristics.heuristic_none import Non
 from tamp_improv.approaches.improvisational.heuristics.heuristic_rollouts import RolloutsHeuristic
 from tamp_improv.approaches.improvisational.heuristics.heuristic_smart_rollouts import SmartRolloutsHeuristic
 from tamp_improv.approaches.improvisational.heuristics.heuristic_crl import CRLHeuristic, CRLHeuristicConfig
+from tamp_improv.approaches.improvisational.heuristics.heuristic_dqn import DQNHeuristic, DQNHeuristicConfig
+from tamp_improv.approaches.improvisational.heuristics.heuristic_cmd import CMDHeuristic, CMDHeuristicConfig
 
 
 from tamp_improv.approaches.improvisational.policies.base import (
@@ -128,13 +130,36 @@ def create_heuristic(
         # TODO: Implement V4 heuristic
         crl_config = dataclass_from_cfg(CRLHeuristicConfig, cfg.heuristic)
         print("CRL Config:", crl_config)
-        # print(0 / 0)
 
         return CRLHeuristic(
             training_data=training_data,
             graph_distances=graph_distances,
             system=system,
             config=crl_config,
+            seed=cfg.seed,
+        )
+    elif cfg.heuristic.type == "dqn":
+        # TODO: Implement V4 heuristic
+        dqn_config = dataclass_from_cfg(DQNHeuristicConfig, cfg.heuristic.dqn)
+        print("DQN Config:", dqn_config)
+
+        return DQNHeuristic(
+            training_data=training_data,
+            graph_distances=graph_distances,
+            system=system,
+            config=dqn_config,
+            seed=cfg.seed,
+        )
+    elif cfg.heuristic.type == "cmd":
+        # TODO: Implement V4 heuristic
+        cmd_config = dataclass_from_cfg(CMDHeuristicConfig, cfg.heuristic)
+        print("CMD Config:", cmd_config)
+
+        return CMDHeuristic(
+            training_data=training_data,
+            graph_distances=graph_distances,
+            system=system,
+            config=cmd_config,
             seed=cfg.seed,
         )
     else:   
@@ -394,23 +419,23 @@ def test_heuristic_quality(
             graph_distances_matrix[src_idx, tgt_idx] = sample["graph_distance"]
             estimated_distances_matrix[src_idx, tgt_idx] = sample["estimated_distance"]
 
-        _log_distance_plots_to_wandb(
-            true_distances=true_distances_matrix,
-            graph_distances=graph_distances_matrix,
-            estimated_distances=estimated_distances_matrix,
-            node_ids=all_graph_node_ids,
-        )
+        # _log_distance_plots_to_wandb(
+        #     true_distances=true_distances_matrix,
+        #     graph_distances=graph_distances_matrix,
+        #     estimated_distances=estimated_distances_matrix,
+        #     node_ids=all_graph_node_ids,
+        # )
 
-        wandb.log({
-            "test/avg_estimated_distance": results["avg_estimated_distance"],
-            "test/avg_graph_distance": results["avg_graph_distance"],
-            "test/avg_absolute_error": results["avg_absolute_error"],
-            "test/min_estimated_distance": min_estimated_distance,
-            "test/max_estimated_distance": max_estimated_distance,
-            "test/min_graph_distance": min_graph_distance,
-            "test/max_graph_distance": max_graph_distance,
-            "test/correlation_distance": correlation_distance,
-        })
+        # wandb.log({
+        #     "test/avg_estimated_distance": results["avg_estimated_distance"],
+        #     "test/avg_graph_distance": results["avg_graph_distance"],
+        #     "test/avg_absolute_error": results["avg_absolute_error"],
+        #     "test/min_estimated_distance": min_estimated_distance,
+        #     "test/max_estimated_distance": max_estimated_distance,
+        #     "test/min_graph_distance": min_graph_distance,
+        #     "test/max_graph_distance": max_graph_distance,
+        #     "test/correlation_distance": correlation_distance,
+        # })
 
     return results
 
@@ -963,8 +988,8 @@ def run_pipeline(
         rng=rng
     )
 
-    wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
-    wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True), name=wandb_run_name)
+    # wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
+    # wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True), name=wandb_run_name)
 
 
     # Stage 2: Train heuristic
@@ -1041,6 +1066,6 @@ def run_pipeline(
     results.approach = approach
     results.times = times
 
-    wandb.finish()
+    # wandb.finish()
 
     return results
