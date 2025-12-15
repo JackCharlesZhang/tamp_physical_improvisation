@@ -5,9 +5,9 @@ render_mode: null
 env:
   name: GridworldFixedTAMPSystem
   # Gridworld
-  num_cells: 3
+  num_cells: 5
   num_states_per_cell: 10
-  num_teleporters: 0
+  num_teleporters: 3
 
   # Blocks
   n_blocks: 2
@@ -15,7 +15,7 @@ env:
 
 
 collection:
-  num_episodes: 100
+  num_episodes: 1000
   max_steps_per_edge: 100
   planner_id: pyperplan
 
@@ -23,7 +23,7 @@ heuristic:
   max_shortcuts_per_graph: 50
 
   # Heuristic Parameters
-  type: rollouts
+  type: crl
 
   # Rollout Heuristic Parameters
   num_rollouts_per_node: 100
@@ -34,27 +34,27 @@ heuristic:
 
   # CRL Heuristic Parameters
   hidden_dims: [64, 64]
-  latent_dim: 16
+  latent_dim: 4
   normalize_embeddings: false
-  learning_rate: 1e-3
+  learning_rate: 0.001
   batch_size: 256
   buffer_size: 100000
-  gamma: 0.99
+  gamma: 0.9
   repetition_factor: 8
-  policy_temperature: 1.0
+  policy_temperature: 0.5
   iters_per_epoch: 100
-  learn_frequency: 1
-  num_epochs_per_round: 100 # Epochs per round (used as num_epochs_per_round in multi_train)
+  learn_frequency: 10
+  num_epochs_per_round: 1000 # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
-  max_episode_steps: 100
+  max_episode_steps: 200
   num_rounds: 1  # Number of pruning rounds (1 = no pruning, just normal train)
-  keep_fraction: 0.1  # Fraction of node-node pairs to keep each round
+  keep_fraction: 0.2  # Fraction of node-node pairs to keep each round
   exploration_factor: 0.1
   eval_temperature: 0
 
   # Evaluate Heuristic
-  eval_rollouts: 1
-  eval_max_steps: 10
+  eval_rollouts: 100
+  eval_max_steps: 200
 
   
 

@@ -19,9 +19,13 @@ import time
 import random
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import numpy as np
 import torch
+import wandb
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
 
 if TYPE_CHECKING:
     from tamp_improv.approaches.improvisational.heuristics.base import BaseHeuristic
@@ -104,7 +108,7 @@ def create_heuristic(
             system=system,
             num_rollouts=cfg.heuristic.num_rollouts_per_node,
             max_steps_per_rollout=cfg.heuristic.max_steps_per_rollout,
-            threshold=cfg.heuristic.threshold,
+            threshold=cfg.heuristic.shortcut_success_threshold,
             action_scale=cfg.heuristic.action_scale,
             seed=cfg.seed,
             rng=rng
@@ -116,7 +120,7 @@ def create_heuristic(
             system=system,
             num_rollouts=cfg.heuristic.num_rollouts_per_node,
             max_steps_per_rollout=cfg.heuristic.max_steps_per_rollout,
-            threshold=cfg.heuristic.threshold,
+            threshold=cfg.heuristic.shortcut_success_threshold,
             action_scale=cfg.heuristic.action_scale,
             seed=cfg.seed,
         )
@@ -293,6 +297,11 @@ def test_heuristic_quality(
     print("STAGE 2.5: TEST HEURISTIC QUALITY")
     print("=" * 80)
 
+    # If there are no nodes in the graph, skip plotting
+    if not training_data.graph or not training_data.graph.nodes:
+        print("[WARN] No nodes in the planning graph. Skipping heuristic quality plotting.")
+        return {"samples": [], "avg_estimated_distance": 0.0, "avg_graph_distance": 0.0, "avg_absolute_error": 0.0}
+
     # Sample some node pairs to evaluate (use unique_shortcuts for node-node pairs)
     shortcuts = training_data.unique_shortcuts
     sample_indices = [i for i in range(len(shortcuts))]
@@ -307,10 +316,14 @@ def test_heuristic_quality(
     total_est = 0.0
     total_graph = 0.0
     total_abs_error = 0.0
+    all_estimated_distances = []
+    all_graph_distances = []
+    all_true_distances = []
 
     print(f"\nEvaluating heuristic on {len(sample_indices)} sample shortcuts:")
     print(f"{'Source':>8} {'Target':>8} {'Estimated':>12} {'Graph':>12} {'Error':>12}")
     print("-" * 60)
+    
 
     for idx in sample_indices:
         source_id, target_id = shortcuts[idx]
@@ -336,6 +349,9 @@ def test_heuristic_quality(
             total_est += estimated_dist
             total_graph += graph_dist
             total_abs_error += abs_error
+            all_estimated_distances.append(estimated_dist)
+            all_graph_distances.append(graph_dist)
+            all_true_distances.append(true_dist)
 
     # Compute averages
     num_finite = sum(1 for s in results["samples"] if s["graph_distance"] != float("inf"))
@@ -343,11 +359,184 @@ def test_heuristic_quality(
         results["avg_estimated_distance"] = total_est / num_finite
         results["avg_graph_distance"] = total_graph / num_finite
         results["avg_absolute_error"] = total_abs_error / num_finite
+        
+        # Compute min/max/correlation
+        min_estimated_distance = np.min(all_estimated_distances)
+        max_estimated_distance = np.max(all_estimated_distances)
+        min_graph_distance = np.min(all_graph_distances)
+        max_graph_distance = np.max(all_graph_distances)
+        correlation_distance = np.corrcoef(all_estimated_distances, all_graph_distances)[0, 1]
 
         print("-" * 60)
         print(f"{'Average':>8} {'':<8} {results['avg_estimated_distance']:12.2f} {results['avg_graph_distance']:12.2f} {results['avg_absolute_error']:12.2f}")
+        print(f"{'Min Estimated':>28} {min_estimated_distance:12.2f}")
+        print(f"{'Max Estimated':>28} {max_estimated_distance:12.2f}")
+        print(f"{'Min Graph':>28} {min_graph_distance:12.2f}")
+        print(f"{'Max Graph':>28} {max_graph_distance:12.2f}")
+        print(f"{'Correlation':>28} {correlation_distance:12.2f}")
+
+        # Get all unique node IDs from the graph
+        all_graph_node_ids = sorted([node.id for node in training_data.graph.nodes])
+        num_nodes = len(all_graph_node_ids)
+
+        # Initialize dense matrices with NaN
+        true_distances_matrix = np.full((num_nodes, num_nodes), np.nan)
+        graph_distances_matrix = np.full((num_nodes, num_nodes), np.nan)
+        estimated_distances_matrix = np.full((num_nodes, num_nodes), np.nan)
+
+        node_id_to_idx = {node_id: i for i, node_id in enumerate(all_graph_node_ids)}
+
+        # Populate matrices
+        for sample in results["samples"]:
+            src_idx = node_id_to_idx[sample["source_id"]]
+            tgt_idx = node_id_to_idx[sample["target_id"]]
+            true_distances_matrix[src_idx, tgt_idx] = sample["true_distance"]
+            graph_distances_matrix[src_idx, tgt_idx] = sample["graph_distance"]
+            estimated_distances_matrix[src_idx, tgt_idx] = sample["estimated_distance"]
+
+        _log_distance_plots_to_wandb(
+            true_distances=true_distances_matrix,
+            graph_distances=graph_distances_matrix,
+            estimated_distances=estimated_distances_matrix,
+            node_ids=all_graph_node_ids,
+        )
+
+        wandb.log({
+            "test/avg_estimated_distance": results["avg_estimated_distance"],
+            "test/avg_graph_distance": results["avg_graph_distance"],
+            "test/avg_absolute_error": results["avg_absolute_error"],
+            "test/min_estimated_distance": min_estimated_distance,
+            "test/max_estimated_distance": max_estimated_distance,
+            "test/min_graph_distance": min_graph_distance,
+            "test/max_graph_distance": max_graph_distance,
+            "test/correlation_distance": correlation_distance,
+        })
 
     return results
+
+
+def _log_distance_plots_to_wandb(
+    true_distances: np.ndarray,
+    graph_distances: np.ndarray,
+    estimated_distances: np.ndarray,
+    node_ids: list[int],
+) -> None:
+    """Helper to plot distance matrices and scatterplots and log to WandB."""
+    # Create figure for heatmaps
+    fig, axes = plt.subplots(1, 3, figsize=(20, 6))
+
+    # Common settings for heatmaps
+    vmin = 0
+    vmax = max(np.nanmax(true_distances[np.isfinite(true_distances)]),
+               np.nanmax(estimated_distances))
+
+    # Determine whether to show annotations (hide if grid is larger than 5x5)
+    num_nodes = len(node_ids)
+    show_annot = num_nodes <= 25  # 5x5 or smaller
+
+    # Heatmap 1: True Distances
+    sns.heatmap(true_distances, annot=show_annot, fmt='.1f', cmap='YlOrRd',
+                xticklabels=node_ids, yticklabels=node_ids,
+                vmin=vmin, vmax=vmax, cbar_kws={'label': 'Distance'},
+                ax=axes[0])
+    axes[0].set_title('True Distances (Graph Search)', fontsize=14, fontweight='bold')
+    axes[0].set_xlabel('Target Node', fontsize=12)
+    axes[0].set_ylabel('Source Node', fontsize=12)
+
+    # Heatmap 2: Graph Distances
+    sns.heatmap(graph_distances, annot=show_annot, fmt='.1f', cmap='YlOrRd',
+                xticklabels=node_ids, yticklabels=node_ids,
+                vmin=vmin, vmax=vmax, cbar_kws={'label': 'Distance'},
+                ax=axes[1])
+    axes[1].set_title('Graph Distances (Planning Graph)', fontsize=14, fontweight='bold')
+    axes[1].set_xlabel('Target Node', fontsize=12)
+    axes[1].set_ylabel('Source Node', fontsize=12)
+
+    # Heatmap 3: Estimated Distances
+    sns.heatmap(estimated_distances, annot=show_annot, fmt='.1f', cmap='YlOrRd',
+                xticklabels=node_ids, yticklabels=node_ids,
+                vmin=vmin, vmax=vmax, cbar_kws={'label': 'Distance'},
+                ax=axes[2])
+    axes[2].set_title('Learned Distances (V4 Heuristic)', fontsize=14, fontweight='bold')
+    axes[2].set_xlabel('Target Node', fontsize=12)
+    axes[2].set_ylabel('Source Node', fontsize=12)
+
+    plt.tight_layout()
+    wandb.log({"test/distance_heatmaps": wandb.Image(fig)})
+    plt.close(fig) # Close the figure to free up memory
+
+    # Create scatterplots comparing distances
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Filter out invalid distances
+    valid_mask = np.isfinite(true_distances) & (true_distances > 0)
+    valid_indices = np.where(valid_mask)
+
+    true_flat = true_distances[valid_indices]
+    graph_flat = graph_distances[valid_indices]
+    estimated_flat = estimated_distances[valid_indices]
+
+    # Scatterplot 1: Learned vs True
+    axes[0].scatter(true_flat, estimated_flat, alpha=0.6, s=80, edgecolors='black', linewidth=0.5)
+
+    # Add perfect prediction line
+    max_val = max(np.max(true_flat), np.max(estimated_flat))
+    axes[0].plot([0, max_val], [0, max_val], 'r--', linewidth=2, label='Perfect Prediction')
+
+    # Compute and display correlation
+    corr = np.corrcoef(true_flat, estimated_flat)[0, 1]
+    mae = np.mean(np.abs(estimated_flat - true_flat))
+    rmse = np.sqrt(np.mean((estimated_flat - true_flat)**2))
+
+    axes[0].set_xlabel('True Distance', fontsize=12)
+    axes[0].set_ylabel('Learned Distance', fontsize=12)
+    axes[0].set_title(f'Learned vs True Distances\nCorr={corr:.3f}, MAE={mae:.2f}, RMSE={rmse:.2f}',
+                      fontsize=14, fontweight='bold')
+    axes[0].legend(fontsize=10)
+    axes[0].grid(True, alpha=0.3)
+
+    # Scatterplot 2: Graph vs True
+    axes[1].scatter(true_flat, graph_flat, alpha=0.6, s=80, color='green',
+                    edgecolors='black', linewidth=0.5)
+
+    # Add perfect prediction line
+    max_val = max(np.max(true_flat), np.max(graph_flat))
+    axes[1].plot([0, max_val], [0, max_val], 'r--', linewidth=2, label='Perfect Match')
+
+    # Compute correlation
+    corr_graph = np.corrcoef(true_flat, graph_flat)[0, 1]
+    mae_graph = np.mean(np.abs(graph_flat - true_flat))
+
+    axes[1].set_xlabel('True Distance (Search)', fontsize=12)
+    axes[1].set_ylabel('Graph Distance (Planning Graph)', fontsize=12)
+    axes[1].set_title(f'Graph vs True Distances\nCorr={corr_graph:.3f}, MAE={mae_graph:.2f}',
+                      fontsize=14, fontweight='bold')
+    axes[1].legend(fontsize=10)
+    axes[1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    wandb.log({"test/distance_scatterplots": wandb.Image(fig)})
+    plt.close(fig) # Close the figure to free up memory
+
+    # Error heatmap
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+
+    error_matrix = estimated_distances - true_distances
+    error_matrix[~valid_mask] = np.nan
+
+    max_error = np.nanmax(np.abs(error_matrix))
+    sns.heatmap(error_matrix, annot=show_annot, fmt='.1f', cmap='RdBu_r', center=0,
+                xticklabels=node_ids, yticklabels=node_ids,
+                vmin=-max_error, vmax=max_error,
+                cbar_kws={'label': 'Error (Learned - True)'},
+                ax=ax)
+    ax.set_title('Distance Estimation Error', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Target Node', fontsize=12)
+    ax.set_ylabel('Source Node', fontsize=12)
+
+    plt.tight_layout()
+    wandb.log({"test/distance_error_heatmap": wandb.Image(fig)})
+    plt.close(fig) # Close the figure to free up memory
 
 
 # =============================================================================
@@ -774,6 +963,10 @@ def run_pipeline(
         rng=rng
     )
 
+    wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
+    wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True), name=wandb_run_name)
+
+
     # Stage 2: Train heuristic
     results.heuristic_training_history = train_heuristic(
         heuristic=heuristic,
@@ -785,6 +978,8 @@ def run_pipeline(
 
     # Stage 2.5: Test heuristic quality (optional)
     if cfg.debug:
+        print(f"[DEBUG] training_data.graph.nodes (ids): {[node.id for node in results.training_data.graph.nodes]}")
+        print(f"[DEBUG] training_data.unique_shortcuts: {results.training_data.unique_shortcuts}")
         results.heuristic_quality_results = test_heuristic_quality(
             system=system,
             heuristic=heuristic,
@@ -845,5 +1040,7 @@ def run_pipeline(
 
     results.approach = approach
     results.times = times
+
+    wandb.finish()
 
     return results
