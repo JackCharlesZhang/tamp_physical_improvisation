@@ -5,9 +5,9 @@ render_mode: null
 env:
   name: GridworldFixedTAMPSystem
   # Gridworld
-  num_cells: 3
+  num_cells: 5
   num_states_per_cell: 10
-  num_teleporters: 0
+  num_teleporters: 5
 
   # Blocks
   n_blocks: 2
@@ -23,7 +23,7 @@ heuristic:
   max_shortcuts_per_graph: 50
 
   # Heuristic Parameters
-  type: rollouts
+  type: crl
 
   # Rollout Heuristic Parameters
   num_rollouts_per_node: 100
@@ -41,16 +41,16 @@ heuristic:
   buffer_size: 100000
   gamma: 0.99
   repetition_factor: 8
-  policy_temperature: 1.0
+  policy_temperature: 0.3
   iters_per_epoch: 100
   learn_frequency: 1
-  num_epochs_per_round: 100 # Epochs per round (used as num_epochs_per_round in multi_train)
+  num_epochs_per_round: 1000 # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
   max_episode_steps: 100
   num_rounds: 1  # Number of pruning rounds (1 = no pruning, just normal train)
   keep_fraction: 0.1  # Fraction of node-node pairs to keep each round
   exploration_factor: 0.1
-  eval_temperature: 0
+  eval_temperature: 0.3
 
   # Evaluate Heuristic
   eval_rollouts: 1
