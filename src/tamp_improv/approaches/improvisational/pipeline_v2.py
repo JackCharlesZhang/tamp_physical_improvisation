@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from omegaconf import DictConfig
 import numpy as np
 import torch
+import wandb
 
 if TYPE_CHECKING:
     from tamp_improv.approaches.improvisational.heuristics.base import BaseHeuristic
@@ -104,7 +105,7 @@ def create_heuristic(
             system=system,
             num_rollouts=cfg.heuristic.num_rollouts_per_node,
             max_steps_per_rollout=cfg.heuristic.max_steps_per_rollout,
-            threshold=cfg.heuristic.threshold,
+            threshold=cfg.heuristic.shortcut_success_threshold,
             action_scale=cfg.heuristic.action_scale,
             seed=cfg.seed,
             rng=rng
@@ -116,7 +117,7 @@ def create_heuristic(
             system=system,
             num_rollouts=cfg.heuristic.num_rollouts_per_node,
             max_steps_per_rollout=cfg.heuristic.max_steps_per_rollout,
-            threshold=cfg.heuristic.threshold,
+            threshold=cfg.heuristic.shortcut_success_threshold,
             action_scale=cfg.heuristic.action_scale,
             seed=cfg.seed,
         )
@@ -329,6 +330,8 @@ def test_heuristic_quality(
             "true_distance": true_dist,
             "absolute_error": abs_error,
         })
+
+        wandb.log({"test/estimated_distance": estimated_dist, "test/graph_distance": graph_dist, "test/absolute_error": abs_error})
 
         print(f"{source_id:8d} {target_id:8d} {estimated_dist:12.2f} {graph_dist:12.2f} {abs_error:12.2f}")
 

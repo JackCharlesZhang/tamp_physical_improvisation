@@ -1042,16 +1042,16 @@ class CRLHeuristic(BaseHeuristic):
 
                 # Log to wandb
                 wandb.log({
-                    "total_loss": metrics['loss'],
-                    "alignment_loss": metrics['l_align'],
-                    "uniformity_loss": metrics['l_unif'],
-                    "accuracy": metrics['accuracy'],
-                    "success_rate": traj_stats['success_rate'],
-                    "avg_trajectory_length": traj_stats['avg_length'],
-                    "avg_success_length": traj_stats['avg_success_length'],
-                    "learning_rate": current_lr,
-                    "policy_temperature": self.policy_temperature,
-                    "epoch": epoch
+                    "train/total_loss": metrics['loss'],
+                    "train/alignment_loss": metrics['l_align'],
+                    "train/uniformity_loss": metrics['l_unif'],
+                    "train/accuracy": metrics['accuracy'],
+                    "train/success_rate": traj_stats['success_rate'],
+                    "train/avg_trajectory_length": traj_stats['avg_length'],
+                    "train/avg_success_length": traj_stats['avg_success_length'],
+                    "train/learning_rate": current_lr,
+                    "train/policy_temperature": self.policy_temperature,
+                    "train/epoch": epoch
                 })
 
             # Step the learning rate scheduler every epoch
