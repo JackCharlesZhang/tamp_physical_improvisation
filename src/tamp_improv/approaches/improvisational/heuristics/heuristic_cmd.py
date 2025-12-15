@@ -31,6 +31,8 @@ ActType = TypeVar("ActType")
 @dataclass
 class CMDHeuristicConfig:
     """Configuration for contrastive state-node distance heuristic."""
+    wandb_enabled: bool = True  # Whether to enable Weights & Biases logging
+
     # Pruning
     threshold: float = 0.05
     beta: float = 1 # Complex distance scaling parameter
@@ -959,6 +961,19 @@ class CMDHeuristic(BaseHeuristic):
                 training_history['avg_success_length'].append(traj_stats['avg_success_length'])
                 training_history['learning_rate'].append(current_lr)
                 training_history['policy_temperature'].append(self.policy_temperature)
+
+                if self.config.wandb_enabled:
+                    wandb.log({
+                        "total_loss": metrics['loss'],
+                        "accuracy": metrics['accuracy'],
+                        "pos_energy_mean": metrics['pos_energy_mean'],
+                        "neg_energy_mean": metrics['neg_energy_mean'],
+                        "energy_gap": metrics['energy_gap'],
+                        "success_rate": traj_stats['success_rate'],
+                        "avg_success_length": traj_stats['avg_success_length'],
+                        "learning_rate": current_lr,
+                        "policy_temperature": self.policy_temperature,
+                    })
 
                 # Logging after learning
                 print(f"\n[Epoch {epoch}/{num_epochs}]")
