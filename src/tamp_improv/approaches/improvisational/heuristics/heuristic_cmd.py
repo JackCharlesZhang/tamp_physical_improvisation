@@ -973,15 +973,15 @@ class CMDHeuristic(BaseHeuristic):
 
                 if self.config.wandb_enabled:
                     wandb.log({
-                        "total_loss": metrics['loss'],
-                        "accuracy": metrics['accuracy'],
-                        "pos_energy_mean": metrics['pos_energy_mean'],
-                        "neg_energy_mean": metrics['neg_energy_mean'],
-                        "energy_gap": metrics['energy_gap'],
-                        "success_rate": traj_stats['success_rate'],
-                        "avg_success_length": traj_stats['avg_success_length'],
-                        "learning_rate": current_lr,
-                        "policy_temperature": self.policy_temperature,
+                        "train/total_loss": metrics['loss'],
+                        "train/accuracy": metrics['accuracy'],
+                        "train/pos_energy_mean": metrics['pos_energy_mean'],
+                        "train/neg_energy_mean": metrics['neg_energy_mean'],
+                        "train/energy_gap": metrics['energy_gap'],
+                        "train/success_rate": traj_stats['success_rate'],
+                        "train/avg_success_length": traj_stats['avg_success_length'],
+                        "train/learning_rate": current_lr,
+                        "train/policy_temperature": self.policy_temperature,
                     })
 
                 # Logging after learning
@@ -1029,7 +1029,7 @@ class CMDHeuristic(BaseHeuristic):
                 self.energy,
                 current_states,
                 future_nodes,
-                temperature=0.01,
+                temperature=self.policy_temperature,
             )
 
             # Backward pass
