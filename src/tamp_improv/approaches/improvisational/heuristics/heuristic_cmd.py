@@ -407,69 +407,88 @@ class ContrastiveReplayBuffer:
         }
 
 
+
 def cmd_contrastive_loss(
     energy_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
     current_states: torch.Tensor,
     future_nodes: torch.Tensor,
     temperature: float = 1.0,
 ) -> tuple[torch.Tensor, dict]:
-    """Compute CMD-1 contrastive loss using energy-based formulation.
-
-    Implements the InfoNCE loss using energy function f(s,g) = c(g) - d(s,g):
-    - For each state s_i with positive goal g_pos_i, compute energies for all goals
-    - The positive pair (s_i, g_pos_i) should have higher energy than negatives
-    - Loss = cross_entropy(energies / temperature, labels)
-
-    Args:
-        energy_fn: Function that computes f(s,g) = c(g) - d(s,g)
-        current_states: Batch of current states (batch_size, state_dim)
-        future_nodes: Batch of positive goal nodes (batch_size,)
-        temperature: Temperature for softmax
-
-    Returns:
-        Tuple of (total_loss, metrics_dict)
     """
-    batch_size = current_states.shape[0]
+    CMD-1 contrastive loss with duplicate-goal collapse fixed.
+    Signature unchanged.
+    """
 
-    # Build energy matrix: energy[i, j] = f(s_i, g_j)
-    # We compute energies for all (state, goal) pairs in the batch
-    # Positive pairs are on the diagonal (i.e., f(s_i, g_i))
+    device = current_states.device
+    B = current_states.shape[0]
 
-    # Create expanded tensors for pairwise computation
-    states_expanded = current_states.unsqueeze(1).repeat(1, batch_size, 1)  # (B, B, state_dim)
-    goals_expanded = future_nodes.unsqueeze(0).repeat(batch_size, 1)  # (B, B)
+    # --------------------------------------------------
+    # 1. Deduplicate goals and build label mapping
+    # --------------------------------------------------
+    unique_goals, inverse_indices = torch.unique(
+        future_nodes, return_inverse=True
+    )
+    G = unique_goals.shape[0]
 
-    # Flatten for batch computation
-    states_flat = states_expanded.reshape(-1, current_states.shape[-1])  # (B*B, state_dim)
-    goals_flat = goals_expanded.reshape(-1)  # (B*B,)
+    # If all goals identical, contrastive learning is impossible
+    if G == 1:
+        zero = torch.tensor(0.0, device=device, requires_grad=True)
+        return zero, {
+            "loss": 0.0,
+            "accuracy": 1.0,
+            "pos_energy_mean": 0.0,
+            "neg_energy_mean": 0.0,
+            "energy_gap": 0.0,
+        }
 
-    # Compute all energies
-    all_energies = energy_fn(states_flat, goals_flat)  # (B*B,)
-    energy_matrix = all_energies.reshape(batch_size, batch_size)  # (B, B)
+    # --------------------------------------------------
+    # 2. Build (state, unique-goal) energy matrix
+    # --------------------------------------------------
+    # states: (B, G, state_dim)
+    states_expanded = current_states.unsqueeze(1).expand(B, G, -1)
 
-    # Logits for cross-entropy: positive is at index i for row i
-    logits = energy_matrix / temperature  # (B, B)
+    # goals: (B, G)
+    goals_expanded = unique_goals.unsqueeze(0).expand(B, G)
 
-    # Labels: positive pair is on diagonal
-    labels = torch.arange(batch_size, dtype=torch.long, device=current_states.device)
+    # flatten
+    states_flat = states_expanded.reshape(-1, current_states.shape[-1])
+    goals_flat = goals_expanded.reshape(-1)
 
-    # Cross-entropy loss
+    # compute energies
+    energies = energy_fn(states_flat, goals_flat)
+    energy_matrix = energies.view(B, G)
+
+    logits = energy_matrix / temperature
+
+    # --------------------------------------------------
+    # 3. Correct labels (state → its goal’s column)
+    # --------------------------------------------------
+    labels = inverse_indices  # (B,)
+
     loss = F.cross_entropy(logits, labels)
 
-    # Accuracy: how often is the highest energy the correct goal?
-    predicted_goals = torch.argmax(logits, dim=1)
-    accuracy = torch.mean((predicted_goals == labels).float())
+    # --------------------------------------------------
+    # 4. Metrics
+    # --------------------------------------------------
+    with torch.no_grad():
+        preds = torch.argmax(logits, dim=1)
+        accuracy = (preds == labels).float().mean()
 
-    # Additional metrics
-    pos_energies = torch.diagonal(energy_matrix)  # (batch_size,)
-    neg_energies = energy_matrix[~torch.eye(batch_size, dtype=bool, device=energy_matrix.device)]
+        pos_energies = energy_matrix[
+            torch.arange(B, device=device), labels
+        ]
+
+        neg_mask = torch.ones_like(energy_matrix, dtype=bool)
+        neg_mask[torch.arange(B), labels] = False
+        neg_energies = energy_matrix[neg_mask]
 
     metrics = {
-        'loss': loss.item(),
-        'accuracy': accuracy.item(),
-        'pos_energy_mean': pos_energies.mean().item(),
-        'neg_energy_mean': neg_energies.mean().item(),
-        'energy_gap': (pos_energies.mean() - neg_energies.mean()).item(),
+        "loss": loss.item(),
+        "accuracy": accuracy.item(),
+        "pos_energy_mean": pos_energies.mean().item(),
+        "neg_energy_mean": neg_energies.mean().item(),
+        "energy_gap": (pos_energies.mean() - neg_energies.mean()).item(),
+        "num_unique_goals": G,
     }
 
     return loss, metrics

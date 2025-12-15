@@ -23,7 +23,7 @@ collection:
 
 heuristic:
   # Heuristic Parameters
-  type: dqn
+  type: crl
 
   # Pruning Parameters
   max_shortcuts_per_graph: 10
