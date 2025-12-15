@@ -309,6 +309,7 @@ def test_heuristic_quality(
     training_data: GoalConditionedTrainingData,
     graph_distances: dict[tuple[int, int], float],
     cfg: DictConfig,
+    times: dict[str, float],
 ) -> dict[str, Any]:
     """Stage 2.5: Test heuristic quality on sample node pairs.
 
@@ -441,6 +442,7 @@ def test_heuristic_quality(
                 "test/min_graph_distance": min_graph_distance,
                 "test/max_graph_distance": max_graph_distance,
                 "test/correlation_distance": correlation_distance,
+                "times/heuristic_training_time": times['heuristic_training_time'],
             })
 
     return results
@@ -1028,6 +1030,7 @@ def run_pipeline(
             training_data=results.training_data,
             graph_distances=results.graph_distances,
             cfg=cfg,
+            times=times,
         )
 
     if cfg.eval_heuristic_only:
