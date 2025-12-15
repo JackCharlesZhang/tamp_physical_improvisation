@@ -129,6 +129,7 @@ def create_heuristic(
     elif cfg.heuristic.type == "crl":
         # crl_config is now created outside this function for broader scope
         crl_config = dataclass_from_cfg(CRLHeuristicConfig, cfg.heuristic)
+        crl_config.wandb_enabled = cfg.wandb_enabled
         print("CRL Config:", crl_config)
 
         return CRLHeuristic(
@@ -153,6 +154,7 @@ def create_heuristic(
     elif cfg.heuristic.type == "cmd":
         # TODO: Implement V4 heuristic
         cmd_config = dataclass_from_cfg(CMDHeuristicConfig, cfg.heuristic)
+        cmd_config.wandb_enabled = cfg.wandb_enabled
         print("CMD Config:", cmd_config)
 
         return CMDHeuristic(
