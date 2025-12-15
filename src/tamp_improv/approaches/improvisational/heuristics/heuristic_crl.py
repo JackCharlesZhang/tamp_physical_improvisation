@@ -423,15 +423,49 @@ class CRLHeuristic(BaseHeuristic):
         else:
             self.device = torch.device(self.config.device)
 
-        # Networks
-        self.s_encoder: StateEncoder | None = None  # State encoder network
-        self.g_encoder: torch.Tensor | None = None  # Goal node embedding matrix (S x k)
-        self.optimizer: torch.optim.Optimizer | None = None
-        self.replay_buffer: ContrastiveReplayBuffer | None = None
-
         # Training state
         self.total_episodes = 0
         self.policy_temperature = config.policy_temperature
+
+        # Determine state dimension
+        sample_state = state_node_pairs[0][0]
+        state_flat = self._flatten_state(sample_state)
+        state_dim = state_flat.shape[0]
+
+        print(f"State dimension: {state_dim}")
+        print(f"Latent dimension: {self.config.latent_dim}")
+
+        # Create state encoder network
+        self.s_encoder = StateEncoder(
+            state_dim=state_dim,
+            latent_dim=self.config.latent_dim,
+            hidden_dims=self.config.hidden_dims or [64, 64],
+        ).to(self.device)
+
+        # Initialize goal node embedding matrix (S x k)
+        self.g_encoder = nn.Parameter(
+            torch.randn(self.num_nodes, self.config.latent_dim, device=self.device) * 0.01
+        )
+
+        # Create optimizer for all parameters
+        self.optimizer = torch.optim.Adam(
+            list(self.s_encoder.parameters()) + [self.g_encoder],
+            lr=self.config.learning_rate
+        )
+
+        # Create cosine annealing learning rate scheduler
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=self.config.num_epochs_per_round * self.config.num_rounds,
+            eta_min=self.config.learning_rate
+        )
+
+        # Create replay buffer
+        self.replay_buffer = ContrastiveReplayBuffer(
+            capacity=self.config.buffer_size,
+            gamma=self.config.gamma,
+            repetition_factor=self.config.repetition_factor,
+        )
 
     def _encode_state(self, state_tensor: torch.Tensor) -> torch.Tensor:
         """Encode state tensor to embedding.
@@ -755,6 +789,8 @@ class CRLHeuristic(BaseHeuristic):
         max_episode_steps = self.config.max_episode_steps
         keep_fraction = self.config.keep_fraction
 
+        # wandb.init(project="slap_crl_heuristic", config=self.config.__dict__)
+
         print(f"\n{'='*80}")
         print(f"MULTI-ROUND TRAINING: {num_rounds} rounds, {num_epochs_per_round} epochs/round")
         print(f"Starting with {len(state_node_pairs)} state-node pairs")
@@ -794,7 +830,16 @@ class CRLHeuristic(BaseHeuristic):
         # Start with all node-node pairs
         current_node_pairs = list(node_pair_to_state_pairs.keys())
 
+        initial_temp = self.config.policy_temperature
+        min_temp = self.config.eval_temperature
+
+
         for round_idx in range(num_rounds):
+            # Update policy temperature using cosine annealing
+            progress = (round_idx+1) / num_rounds
+            cosine_factor = 0.5 * (1 + np.cos(np.pi * progress))
+            self.policy_temperature = min_temp + (initial_temp - min_temp) * cosine_factor
+
             # Get all state-node pairs for current node-node pairs
             current_state_pairs = []
             for node_pair in current_node_pairs:
@@ -844,7 +889,7 @@ class CRLHeuristic(BaseHeuristic):
                 print(f"{'='*80}\n")
 
                 # Call prune() to get selected node pairs
-                new_data = self.prune(add_exploration=True)
+                new_data = self.prune_explore()
                 selected_node_pairs_set = new_data.unique_shortcuts
                 current_node_pairs = list(selected_node_pairs_set)
 
@@ -867,6 +912,8 @@ class CRLHeuristic(BaseHeuristic):
         print(f"Final node-node pairs: {len(current_node_pairs)}")
         print(f"Final state-node pairs: {len(final_state_pairs)}")
         print(f"{'='*80}\n")
+
+        # wandb.finish()
 
         return combined_history
 
@@ -918,53 +965,10 @@ class CRLHeuristic(BaseHeuristic):
         print(f"Device: {self.device}")
         print(f"Number of nodes: {self.num_nodes}")
 
-        # Determine state dimension
-        sample_state = state_node_pairs[0][0]
-        state_flat = self._flatten_state(sample_state)
-        state_dim = state_flat.shape[0]
-
-        print(f"State dimension: {state_dim}")
-        print(f"Latent dimension: {self.config.latent_dim}")
-
-        # Create state encoder network
-        self.s_encoder = StateEncoder(
-            state_dim=state_dim,
-            latent_dim=self.config.latent_dim,
-            hidden_dims=self.config.hidden_dims or [64, 64],
-        ).to(self.device)
-
-        # Initialize goal node embedding matrix (S x k)
-        self.g_encoder = nn.Parameter(
-            torch.randn(self.num_nodes, self.config.latent_dim, device=self.device) * 0.01
-        )
-
-        # Create optimizer for all parameters
-        self.optimizer = torch.optim.Adam(
-            list(self.s_encoder.parameters()) + [self.g_encoder],
-            lr=self.config.learning_rate
-        )
-
-        # Create cosine annealing learning rate scheduler
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer,
-            T_max=num_epochs,
-            eta_min=self.config.learning_rate
-        )
-
-        # Create replay buffer
-        self.replay_buffer = ContrastiveReplayBuffer(
-            capacity=self.config.buffer_size,
-            gamma=self.config.gamma,
-            repetition_factor=self.config.repetition_factor,
-        )
 
         print(f"\nStarting training for {num_epochs} epochs...")
         print(f"Collecting {trajectories_per_epoch} trajectories per epoch")
         print(f"Using cosine annealing LR scheduler: {self.config.learning_rate} -> {self.config.learning_rate * 0.01}")
-
-        # Temperature annealing parameters
-        initial_temp = self.config.policy_temperature
-        min_temp = self.config.eval_temperature
 
         # Initialize training history tracking
         training_history = {
@@ -981,10 +985,7 @@ class CRLHeuristic(BaseHeuristic):
         # Training loop
         for epoch in range(num_epochs):
             print("Epoch", epoch)
-            # Update policy temperature using cosine annealing
-            progress = (epoch+1) / num_epochs
-            cosine_factor = 0.5 * (1 + np.cos(np.pi * progress))
-            self.policy_temperature = min_temp + (initial_temp - min_temp) * cosine_factor
+            
 
             # Collect trajectories
             trajectories, trajectory_metadata, traj_stats = self.collect_trajectories(
@@ -1176,14 +1177,14 @@ class CRLHeuristic(BaseHeuristic):
     def estimate_probability(self, source_node: int, target_node: int) -> float:
         est_dist = self.estimate_node_distance(source_node, target_node)
         # compute the state dimension
-        goal_states = self.training_data.node_states[target_node]
-        flat_states = np.array([self._flatten_state(s) for s in goal_states])
-        centroid = np.mean(flat_states, axis=0)
-        radius = max(np.mean(np.linalg.norm(flat_states - centroid, axis=1)), 1)
-        n = flat_states.shape[1]
+        # goal_states = self.training_data.node_states[target_node]
+        # flat_states = np.array([self._flatten_state(s) for s in goal_states])
+        # # centroid = np.mean(flat_states, axis=0)
+        # # radius = max(np.mean(np.linalg.norm(flat_states - centroid, axis=1)), 1)
+        # # n = flat_states.shape[1]
 
-        print("Radius:", radius)
-        print("n:", n)
+        # # print("Radius:", radius)
+        # # print("n:", n)
 
         if est_dist <= 0:
             p_rr = 1.0
@@ -1256,7 +1257,7 @@ class CRLHeuristic(BaseHeuristic):
         num_exploration = int(len(self.training_data.unique_shortcuts) * self.config.exploration_factor)  # 5% exploration
         all_pairs = set(self.training_data.unique_shortcuts)
         unexplored_pairs = all_pairs - top_pairs
-        exploration_pairs = random.sample(unexplored_pairs, min(num_exploration, len(unexplored_pairs)))
+        exploration_pairs = random.sample(list(unexplored_pairs), min(num_exploration, len(unexplored_pairs)))
         for source_node, target_node in exploration_pairs:
             top_pairs.add((source_node, target_node))
         print(f"[DEBUG] Added {len(exploration_pairs)} exploration pairs")

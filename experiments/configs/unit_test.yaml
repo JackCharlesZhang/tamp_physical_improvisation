@@ -3,7 +3,7 @@ debug: true
 render_mode: null
 
 env:
-  name: GraphObstacle2DTAMPSystem
+  name: GridworldFixedTAMPSystem
   # Gridworld
   num_cells: 3
   num_states_per_cell: 10
@@ -49,12 +49,13 @@ heuristic:
   learn_frequency: 1
   num_action_samples: 4
 
-  num_epochs_per_round: 1  # Epochs per round (used as num_epochs_per_round in multi_train)
+  num_epochs_per_round: 10  # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
   max_episode_steps: 100
 
-  num_rounds: 1  # Number of pruning rounds (1 = no pruning, just normal train)
-  keep_fraction: 0.5  # Fraction of node-node pairs to keep each round
+  num_rounds: 5  # Number of pruning rounds (1 = no pruning, just normal train)
+  keep_fraction: 0.2  # Fraction of node-node pairs to keep each round
+  exploration_factor: 0.05
 
   eval_rollouts: 1
   eval_temperature: 0.3
