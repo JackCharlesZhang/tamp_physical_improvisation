@@ -17,6 +17,7 @@ import time
 import os
 import pickle
 import random
+import wandb
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, TypeVar, Callable
@@ -752,6 +753,8 @@ class CRLHeuristic(BaseHeuristic):
         max_episode_steps = self.config.max_episode_steps
         keep_fraction = self.config.keep_fraction
 
+        wandb.init(project="slap_crl_heuristic", config=self.config.__dict__)
+
         print(f"\n{'='*80}")
         print(f"MULTI-ROUND TRAINING: {num_rounds} rounds, {num_epochs_per_round} epochs/round")
         print(f"Starting with {len(state_node_pairs)} state-node pairs")
@@ -864,6 +867,8 @@ class CRLHeuristic(BaseHeuristic):
         print(f"Final node-node pairs: {len(current_node_pairs)}")
         print(f"Final state-node pairs: {len(final_state_pairs)}")
         print(f"{'='*80}\n")
+
+        wandb.finish()
 
         return combined_history
 
@@ -1034,6 +1039,20 @@ class CRLHeuristic(BaseHeuristic):
                 print(f"  Alignment loss: {metrics['l_align']:.4f}")
                 print(f"  Uniformity loss: {metrics['l_unif']:.4f}")
                 print(f"  Accuracy: {metrics['accuracy']:.2%}")
+
+                # Log to wandb
+                wandb.log({
+                    "total_loss": metrics['loss'],
+                    "alignment_loss": metrics['l_align'],
+                    "uniformity_loss": metrics['l_unif'],
+                    "accuracy": metrics['accuracy'],
+                    "success_rate": traj_stats['success_rate'],
+                    "avg_trajectory_length": traj_stats['avg_length'],
+                    "avg_success_length": traj_stats['avg_success_length'],
+                    "learning_rate": current_lr,
+                    "policy_temperature": self.policy_temperature,
+                    "epoch": epoch
+                })
 
             # Step the learning rate scheduler every epoch
             self.scheduler.step()
