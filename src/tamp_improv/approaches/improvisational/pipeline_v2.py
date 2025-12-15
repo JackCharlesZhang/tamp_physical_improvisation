@@ -465,7 +465,7 @@ def _log_distance_plots_to_wandb(
     axes[2].set_ylabel('Source Node', fontsize=12)
 
     plt.tight_layout()
-    wandb.log({"test/distance_heatmaps": wandb.Image(fig)})
+    # wandb.log({"test/distance_heatmaps": wandb.Image(fig)})
     plt.close(fig) # Close the figure to free up memory
 
     # Create scatterplots comparing distances
@@ -518,7 +518,7 @@ def _log_distance_plots_to_wandb(
     axes[1].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    wandb.log({"test/distance_scatterplots": wandb.Image(fig)})
+    # wandb.log({"test/distance_scatterplots": wandb.Image(fig)})
     plt.close(fig) # Close the figure to free up memory
 
     # Error heatmap
@@ -538,7 +538,7 @@ def _log_distance_plots_to_wandb(
     ax.set_ylabel('Source Node', fontsize=12)
 
     plt.tight_layout()
-    wandb.log({"test/distance_error_heatmap": wandb.Image(fig)})
+    # wandb.log({"test/distance_error_heatmap": wandb.Image(fig)})
     plt.close(fig) # Close the figure to free up memory
 
 

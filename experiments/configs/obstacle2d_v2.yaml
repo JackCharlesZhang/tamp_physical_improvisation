@@ -3,7 +3,7 @@ debug: true
 render_mode: null
 
 env:
-  name: GridworldFixedTAMPSystem
+  name: GraphObstacle2DTAMPSystem
   # Gridworld
   num_cells: 5
   num_states_per_cell: 10
@@ -34,24 +34,23 @@ heuristic:
 
   # CRL Heuristic Parameters
   hidden_dims: [64, 64]
-  latent_dim: 4
+  latent_dim: 64
   normalize_embeddings: false
   learning_rate: 0.001
   batch_size: 256
   buffer_size: 100000
-  gamma: 0.9
+  gamma: 0.99
   repetition_factor: 8
   policy_temperature: 0.5
   iters_per_epoch: 100
-  learn_frequency: 2
-  num_epochs_per_round: 200 # Epochs per round (used as num_epochs_per_round in multi_train)
+  learn_frequency: 4
+  num_epochs_per_round: 400 # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
   max_episode_steps: 200
   num_rounds: 5  # Number of pruning rounds (1 = no pruning, just normal train)
   keep_fraction: 0.2  # Fraction of node-node pairs to keep each round
   exploration_factor: 0.1
   eval_temperature: 0
-  wandb_enabled: false
 
   # Evaluate Heuristic
   eval_rollouts: 100
