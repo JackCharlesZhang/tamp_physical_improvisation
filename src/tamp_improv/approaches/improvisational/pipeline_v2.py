@@ -127,7 +127,7 @@ def create_heuristic(
             seed=cfg.seed,
         )
     elif cfg.heuristic.type == "crl":
-        # TODO: Implement V4 heuristic
+        # crl_config is now created outside this function for broader scope
         crl_config = dataclass_from_cfg(CRLHeuristicConfig, cfg.heuristic)
         print("CRL Config:", crl_config)
 
@@ -306,6 +306,7 @@ def test_heuristic_quality(
     heuristic: "BaseHeuristic",
     training_data: GoalConditionedTrainingData,
     graph_distances: dict[tuple[int, int], float],
+    crl_config: CRLHeuristicConfig,
 ) -> dict[str, Any]:
     """Stage 2.5: Test heuristic quality on sample node pairs.
 
@@ -419,23 +420,25 @@ def test_heuristic_quality(
             graph_distances_matrix[src_idx, tgt_idx] = sample["graph_distance"]
             estimated_distances_matrix[src_idx, tgt_idx] = sample["estimated_distance"]
 
-        # _log_distance_plots_to_wandb(
-        #     true_distances=true_distances_matrix,
-        #     graph_distances=graph_distances_matrix,
-        #     estimated_distances=estimated_distances_matrix,
-        #     node_ids=all_graph_node_ids,
-        # )
+        if crl_config.wandb_enabled:
+            _log_distance_plots_to_wandb(
+                true_distances=true_distances_matrix,
+                graph_distances=graph_distances_matrix,
+                estimated_distances=estimated_distances_matrix,
+                node_ids=all_graph_node_ids,
+            )
 
-        # wandb.log({
-        #     "test/avg_estimated_distance": results["avg_estimated_distance"],
-        #     "test/avg_graph_distance": results["avg_graph_distance"],
-        #     "test/avg_absolute_error": results["avg_absolute_error"],
-        #     "test/min_estimated_distance": min_estimated_distance,
-        #     "test/max_estimated_distance": max_estimated_distance,
-        #     "test/min_graph_distance": min_graph_distance,
-        #     "test/max_graph_distance": max_graph_distance,
-        #     "test/correlation_distance": correlation_distance,
-        # })
+        if crl_config.wandb_enabled:
+            wandb.log({
+                "test/avg_estimated_distance": results["avg_estimated_distance"],
+                "test/avg_graph_distance": results["avg_graph_distance"],
+                "test/avg_absolute_error": results["avg_absolute_error"],
+                "test/min_estimated_distance": min_estimated_distance,
+                "test/max_estimated_distance": max_estimated_distance,
+                "test/min_graph_distance": min_graph_distance,
+                "test/max_graph_distance": max_graph_distance,
+                "test/correlation_distance": correlation_distance,
+            })
 
     return results
 
@@ -487,7 +490,7 @@ def _log_distance_plots_to_wandb(
     axes[2].set_ylabel('Source Node', fontsize=12)
 
     plt.tight_layout()
-    wandb.log({"test/distance_heatmaps": wandb.Image(fig)})
+    # wandb.log({"test/distance_heatmaps": wandb.Image(fig)})
     plt.close(fig) # Close the figure to free up memory
 
     # Create scatterplots comparing distances
@@ -540,7 +543,7 @@ def _log_distance_plots_to_wandb(
     axes[1].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    wandb.log({"test/distance_scatterplots": wandb.Image(fig)})
+    # wandb.log({"test/distance_scatterplots": wandb.Image(fig)})
     plt.close(fig) # Close the figure to free up memory
 
     # Error heatmap
@@ -560,7 +563,7 @@ def _log_distance_plots_to_wandb(
     ax.set_ylabel('Source Node', fontsize=12)
 
     plt.tight_layout()
-    wandb.log({"test/distance_error_heatmap": wandb.Image(fig)})
+    # wandb.log({"test/distance_error_heatmap": wandb.Image(fig)})
     plt.close(fig) # Close the figure to free up memory
 
 
@@ -980,6 +983,9 @@ def run_pipeline(
 
     # Create heuristic instance based on config
     start = time.time()
+    # Retrieve crl_config here to ensure it's available for conditional WandB logging
+    crl_config = dataclass_from_cfg(CRLHeuristicConfig, cfg.heuristic) if cfg.heuristic.type == "crl" else None
+
     heuristic = create_heuristic(
         training_data=results.training_data,
         graph_distances=results.graph_distances,
@@ -988,8 +994,9 @@ def run_pipeline(
         rng=rng
     )
 
-    # wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
-    # wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True), name=wandb_run_name)
+    if crl_config and crl_config.wandb_enabled:
+        wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
+        wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True), name=wandb_run_name)
 
 
     # Stage 2: Train heuristic
@@ -1010,6 +1017,7 @@ def run_pipeline(
             heuristic=heuristic,
             training_data=results.training_data,
             graph_distances=results.graph_distances,
+            crl_config=crl_config,
         )
 
 
@@ -1066,6 +1074,7 @@ def run_pipeline(
     results.approach = approach
     results.times = times
 
-    # wandb.finish()
+    if crl_config.wandb_enabled:
+        wandb.finish()
 
     return results
