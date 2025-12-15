@@ -306,7 +306,7 @@ def test_heuristic_quality(
     heuristic: "BaseHeuristic",
     training_data: GoalConditionedTrainingData,
     graph_distances: dict[tuple[int, int], float],
-    heuristic_config: Union[CRLHeuristicConfig, DQNHeuristicConfig, CMDHeuristicConfig],
+    cfg: DictConfig,
 ) -> dict[str, Any]:
     """Stage 2.5: Test heuristic quality on sample node pairs.
 
@@ -421,7 +421,7 @@ def test_heuristic_quality(
             graph_distances_matrix[src_idx, tgt_idx] = sample["graph_distance"]
             estimated_distances_matrix[src_idx, tgt_idx] = sample["estimated_distance"]
 
-        if heuristic_config.wandb_enabled:
+        if cfg.wandb_enabled:
             _log_distance_plots_to_wandb(
                 true_distances=true_distances_matrix,
                 graph_distances=graph_distances_matrix,
@@ -429,7 +429,7 @@ def test_heuristic_quality(
                 node_ids=all_graph_node_ids,
             )
 
-        if heuristic_config.wandb_enabled:
+        if cfg.wandb_enabled:
             wandb.log({
                 "test/avg_estimated_distance": results["avg_estimated_distance"],
                 "test/avg_graph_distance": results["avg_graph_distance"],
@@ -961,6 +961,10 @@ def run_pipeline(
     set_torch_seed(seed)
     random.seed(seed)
 
+    if cfg.wandb_enabled:
+        wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
+        wandb.init(project="slap_gridworld_fixed", config=OmegaConf.to_container(cfg, resolve=True), name=wandb_run_name)
+
     # Create policy instance based on config
     policy = create_policy(
         cfg=cfg
@@ -1002,10 +1006,6 @@ def run_pipeline(
         rng=rng
     )
 
-    if heuristic_config and heuristic_config.wandb_enabled:
-        wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
-        wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True), name=wandb_run_name)
-
 
     # Stage 2: Train heuristic
     results.heuristic_training_history = train_heuristic(
@@ -1025,7 +1025,7 @@ def run_pipeline(
             heuristic=heuristic,
             training_data=results.training_data,
             graph_distances=results.graph_distances,
-            heuristic_config=heuristic_config,
+            cfg=cfg,
         )
 
     if cfg.eval_heuristic_only:
@@ -1087,7 +1087,7 @@ def run_pipeline(
     results.approach = approach
     results.times = times
 
-    if heuristic_config and heuristic_config.wandb_enabled:
+    if cfg.wandb_enabled:
         wandb.finish()
 
     return results

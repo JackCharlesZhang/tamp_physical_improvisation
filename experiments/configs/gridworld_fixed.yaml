@@ -2,13 +2,14 @@ seed: 42
 debug: true
 render_mode: null
 eval_heuristic_only: false  # If true, stop pipeline after heuristic evaluation (stage 2.5)
+wandb_enabled: true
 
 env:
   name: GridworldFixedTAMPSystem
   # Gridworld
-  num_cells: 10
+  num_cells: 5
   num_states_per_cell: 10
-  num_teleporters: 10
+  num_teleporters: 5
 
   # Blocks
   n_blocks: 2
@@ -21,10 +22,10 @@ collection:
   planner_id: pyperplan
 
 heuristic:
-  max_shortcuts_per_graph: 20
+  max_shortcuts_per_graph: 10
 
   # Heuristic Parameters
-  type: cmd
+  type: dqn
 
   # Rollout Heuristic Parameters
   num_rollouts_per_node: 10
@@ -52,7 +53,6 @@ heuristic:
   keep_fraction: 0.2  # Fraction of node-node pairs to keep each round
   exploration_factor: 0.1
   eval_temperature: 0
-  wandb_enabled: true
 
   # Evaluate Heuristic
   eval_rollouts: 100
@@ -70,7 +70,6 @@ heuristic:
     gamma: 0.9
     exploration_factor: 0.05
     keep_fraction: 0.2
-    wandb_enabled: true
 
   
 

@@ -31,8 +31,6 @@ ActType = TypeVar("ActType")
 @dataclass
 class CMDHeuristicConfig:
     """Configuration for contrastive state-node distance heuristic."""
-    wandb_enabled: bool = False  # Whether to enable Weights & Biases logging
-
     # Pruning
     threshold: float = 0.05
     beta: float = 1 # Complex distance scaling parameter
