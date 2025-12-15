@@ -20,12 +20,15 @@ import random
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, TypeVar, Callable
+import math
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from numpy.typing import NDArray
+import gymnasium as gym
+
 
 from tamp_improv.approaches.improvisational.heuristics.base import BaseHeuristic
 from tamp_improv.approaches.improvisational.policies.base import GoalConditionedTrainingData
@@ -42,6 +45,9 @@ ActType = TypeVar("ActType")
 @dataclass
 class CRLHeuristicConfig:
     """Configuration for contrastive state-node distance heuristic."""
+    # Pruning
+    threshold: float = 0.05
+    beta: float = 1 # Complex distance scaling parameter
 
     # Network architecture
     latent_dim: int = 32  # Dimension of embedding space (k)
@@ -59,6 +65,7 @@ class CRLHeuristicConfig:
     repetition_factor: int = 4  # CRTR: repeat each trajectory this many times in batch
     policy_temperature: float = 1.0
     eval_temperature: float = 0.0
+    num_action_samples: int = 4
 
     # Training
     iters_per_epoch: int = 1  # Gradient steps per training call
@@ -396,6 +403,10 @@ class CRLHeuristic(BaseHeuristic):
         def get_node(state: ObsType) -> int:
             """Convert state to node ID."""
             atoms = self.perceiver.step(state)
+            # print(atoms)
+            # print(self.atoms_to_node)
+            if frozenset(atoms) not in self.atoms_to_node:
+                return -1
             return self.atoms_to_node[frozenset(atoms)]
 
 
@@ -452,77 +463,132 @@ class CRLHeuristic(BaseHeuristic):
     def _select_action_greedy(
         self,
         env: Any,
-        current_state: ObsType,
+        current_state,
         goal_node: int,
-    ) -> int | None:
-        """Select action using greedy policy over learned embedding space.
+    ) -> Any | None:
 
-        Uses softmax over distances in embedding space (lower distance → higher probability).
+            """
+            Soft greedy action selection over embedding distances.
 
-        Args:
-            env: Environment
-            current_state: Current state
-            goal_node: Goal node ID
+            policy_temperature == 0:
+                - Discrete action space  -> argmin distance
+                - Continuous action space -> weighted mean of sampled actions
 
-        Returns:
-            Selected action, or None if no valid actions
-        """
-        # Get available actions
-        available_actions = list(range(env.action_space.n))
+            policy_temperature > 0:
+                - Sample from softmax distribution (both discrete and continuous)
+            """
+            num_action_samples = self.config.num_action_samples
+            action_space = env.action_space
+            tau = self.policy_temperature
 
-        if len(available_actions) == 0:
-            return None
+            # ------------------------------------------------------------
+            # 1. Collect candidate actions
+            # ------------------------------------------------------------
 
-        # If networks not trained yet, use random policy
-        if self.s_encoder is None or self.g_encoder is None:
-            print("Outputting random action")
-            return random.choice(available_actions)
+            if isinstance(action_space, gym.spaces.Discrete):
+                candidate_actions = list(range(action_space.n))
+                is_discrete = True
 
-        # Get goal node embedding
-        with torch.no_grad():
-            goal_emb = self._encode_node(goal_node).cpu().numpy()  # (k,)
+            elif isinstance(action_space, gym.spaces.Box):
+                candidate_actions = [
+                    action_space.sample() for _ in range(num_action_samples)
+                ]
+                is_discrete = False
 
-        # Compute distances in embedding space for each action
-        distances = []
-        for action in available_actions:
-            # Save current state
-            env.reset_from_state(current_state)
+            else:
+                raise NotImplementedError(
+                    f"Unsupported action space type: {type(action_space)}"
+                )
 
-            # Take action to get next state
-            next_state, _, _, _, _ = env.step(action)
+            if len(candidate_actions) == 0:
+                return None
 
-            # Encode next state
-            next_flat = self._flatten_state(next_state)
+            # ------------------------------------------------------------
+            # 2. Fallback: random policy if encoders are uninitialized
+            # ------------------------------------------------------------
+
+            if self.s_encoder is None or self.g_encoder is None:
+                return random.choice(candidate_actions)
+
+            # ------------------------------------------------------------
+            # 3. Encode goal
+            # ------------------------------------------------------------
+
             with torch.no_grad():
-                next_tensor = torch.FloatTensor(next_flat).unsqueeze(0).to(self.device)
-                next_emb = self._encode_state(next_tensor).squeeze(0).cpu().numpy()  # (k,)
+                goal_emb = (
+                    self._encode_node(goal_node)
+                    .squeeze(0)
+                    .cpu()
+                    .numpy()
+                )  # (k,)
 
-            # Compute L2 distance to goal in embedding space
-            dist = 0.5 * np.linalg.norm(next_emb - goal_emb)**2
-            distances.append(dist)
+            # ------------------------------------------------------------
+            # 4. Score candidate actions
+            # ------------------------------------------------------------
 
-            # print("Distance of next state:", next_flat[1:3], dist)
+            distances = []
 
-        distances = np.array(distances)
+            for action in candidate_actions:
+                env.reset_from_state(current_state)
+                next_state, _, _, _, _ = env.step(action)
 
-        if self.policy_temperature == 0:
-            return available_actions[np.argmin(distances)]
+                next_flat = self._flatten_state(next_state)
+                next_tensor = (
+                    torch.FloatTensor(next_flat)
+                    .unsqueeze(0)
+                    .to(self.device)
+                )
 
-        # Softmax over negative distances (lower distance = higher probability)
-        logits = -distances / self.policy_temperature
-        # Numerical stability
-        logits = logits - np.max(logits)
-        exp_logits = np.exp(logits)
-        probabilities = exp_logits / np.sum(exp_logits)
-        # print("Current State:", self._flatten_state(current_state))
-        # print("Actions:", available_actions)
-        # print("Distances:", distances)
-        # print("Probabilities:", probabilities)
-        # Sample action
-        action = np.random.choice(available_actions, p=probabilities)
-        # print("Selected action:", action)
-        return action
+                with torch.no_grad():
+                    next_emb = (
+                        self._encode_state(next_tensor)
+                        .squeeze(0)
+                        .cpu()
+                        .numpy()
+                    )
 
+                dist = 0.5 * np.linalg.norm(next_emb - goal_emb) ** 2
+                distances.append(dist)
+
+            distances = np.asarray(distances)  # (N,)
+
+            # ------------------------------------------------------------
+            # 5. Zero-temperature limit
+            # ------------------------------------------------------------
+
+            if tau == 0:
+                if is_discrete:
+                    # Hard greedy
+                    idx = int(np.argmin(distances))
+                    return candidate_actions[idx]
+
+                else:
+                    # Continuous: weighted mean (MPPI-style)
+                    # Use exp(-d) *without* dividing by tau
+                    weights = np.exp(-distances)
+                    weights /= np.sum(weights)
+
+                    actions = np.stack(candidate_actions)  # (N, action_dim)
+                    action = np.sum(actions * weights[:, None], axis=0)
+
+                    return np.clip(
+                        action,
+                        action_space.low,
+                        action_space.high,
+                    )
+
+            # ------------------------------------------------------------
+            # 6. Soft (stochastic) policy
+            # ------------------------------------------------------------
+
+            logits = -distances / tau
+            logits -= np.max(logits)  # numerical stability
+            probs = np.exp(logits)
+            probs /= np.sum(probs)
+
+            idx = np.random.choice(len(candidate_actions), p=probs)
+            return candidate_actions[idx]
+    
     def rollout(
         self,
         env: Any,
@@ -612,6 +678,9 @@ class CRLHeuristic(BaseHeuristic):
         lengths = []
 
         for _ in range(num_trajectories):
+            if len(state_node_pairs) == 0:
+                break
+
             # Sample random state-node pair
             source_state, target_node = random.choice(state_node_pairs)
 
@@ -1049,6 +1118,7 @@ class CRLHeuristic(BaseHeuristic):
         Returns:
             Estimated number of steps to reach target from source
         """
+
         d_sg_sq = (self.latent_dist(source_state, target_node))**2
         d_gg_sq = 0
         target_states = self.node_to_states[target_node]
@@ -1061,101 +1131,120 @@ class CRLHeuristic(BaseHeuristic):
             n += 1
         d_gg_sq /= n
 
-        print("D_gg:", d_gg_sq, "D_sg:", d_sg_sq)
+        # print("D_gg:", d_gg_sq, "D_sg:", d_sg_sq)
 
-        return (1 / (2 * np.log(self.config.gamma))) * (d_gg_sq - d_sg_sq)
+
+        return min(0, (1 / (2 * np.log(self.config.gamma))) * (d_gg_sq - d_sg_sq))
 
     def estimate_node_distance(self, source_node: int, target_node: int) -> float:
-        source_states = self.node_to_states[source_node]
-        avg = 0
-        n = 0
-        for source_state in random.sample(source_states, min(100, len(source_states))):
-            avg += self.estimate_distance(source_state, target_node)
-            n += 1
-        return avg / n
+        # source_states = self.node_to_states[source_node]
+        # avg = 0
+        # n = 0
+        # for source_state in random.sample(source_states, min(100, len(source_states))):
+        #     avg += self.estimate_distance(source_state, target_node)
+        #     n += 1
+        # return avg / n
 
-    def prune(
-        self, add_exploration: bool = False, **kwargs: Any
-    ) -> GoalConditionedTrainingData:
-        """Prune node pairs based on estimated vs graph distances.
+        source_emb = self._encode_node(source_node)
 
-        Returns the union of:
-        1. Node pairs where estimated_distance < graph_distance (promising shortcuts)
-        2. Bottom keep_fraction of node pairs by (estimated - graph) distance
+        target_emb = self._encode_node(target_node)
 
-        This ensures we keep both:
-        - Shortcuts that look learnable (estimated < graph)
-        - The most promising shortcuts overall (lowest estimated - graph)
+        # Compute L2 distance in embedding space
+        latent_dist = torch.norm(source_emb - target_emb).item()
+        return  -(1 / (2 * np.log(self.config.gamma))) * latent_dist
 
-        Additionally filters out pairs where estimated distance exceeds max_episode_steps,
-        since those are unreachable within the episode limit.
 
-        Args:
-            graph_distances: Dictionary mapping (source_node, target_node) -> graph distance
-            keep_fraction: Fraction of total node pairs to keep (0.0 to 1.0)
-            max_episode_steps: Maximum episode steps (filters out pairs with est_dist > this)
 
-        Returns:
-            Set of (source_node, target_node) tuples to keep
-        """
+    def estimate_probability(self, source_node: int, target_node: int) -> float:
+        est_dist = self.estimate_node_distance(source_node, target_node)
+        # compute the state dimension
+        goal_states = self.training_data.node_states[target_node]
+        flat_states = np.array([self._flatten_state(s) for s in goal_states])
+        centroid = np.mean(flat_states, axis=0)
+        radius = max(np.mean(np.linalg.norm(flat_states - centroid, axis=1)), 1)
+        n = flat_states.shape[1]
+
+        print("Radius:", radius)
+        print("n:", n)
+
+        if est_dist <= 0:
+            p_rr = 1.0
+        else:
+            p_rr = np.clip(self.config.beta * np.exp(-(est_dist)**2 / (2 * self.config.max_episode_steps)), 0, 1)
+        
+
+        print("Rollout probability of reaching node", target_node, "from node", source_node, ":", p_rr, "for distance", est_dist)
+
+        k = np.log(0.5) / np.log(1 - self.config.threshold)
+        return 1 - (1 - p_rr)**k
+
+            
+    def estimate_gain(self, source_node: int, target_node: int) -> float:
+        """Estimate gain of training on a shortcut, relative to distance in the
+        initial graph. Higher gain means more useful shortcut."""
+
+        graph_distance = self.graph_distances.get((source_node, target_node), float('inf'))
+        estimated_distance = self.estimate_node_distance(source_node, target_node)
+        
+        # Use this if we're learning too many backwards shortcuts. Might not be a great idea in general.
+        # gain = max(graph_distance - estimated_distance, 0)
+        # if math.isinf(gain):
+        #     gain = 0
+        
+        gain = np.clip(graph_distance - estimated_distance, 0, self.config.max_episode_steps)
+        return gain
+
+    
+    def prune_explore(self) -> GoalConditionedTrainingData:
         print(f"\n[DEBUG] Pruning with keep_fraction={self.config.keep_fraction}, max_episode_steps={self.config.max_episode_steps}")
 
         # Score all node pairs: score = estimated_distance - graph_distance
         # Negative scores = shortcuts (estimated < graph)
         # Lower scores = more promising
-        node_pair_scores = []
-        filtered_by_max_steps = 0
 
-        for (source_node, target_node), graph_dist in self.graph_distances.items():
-            # Estimate distance using the heuristic
-            est_dist = self.estimate_node_distance(source_node, target_node)
+        score_tuples = []
+        for source_id, target_id in self.training_data.unique_shortcuts:
+            p = self.estimate_probability(source_id, target_id)
+            g = self.estimate_gain(source_id, target_id)
+            score = p * g
+            score_tuples.append((source_id, target_id, score, p, g))
 
-            # Filter out pairs that exceed max_episode_steps
-            if self.config.max_episode_steps is not None and est_dist > self.config.max_episode_steps:
-                filtered_by_max_steps += 1
-                continue
+        # Sort score tuples first by score, and then by probability
+        score_tuples.sort(key=lambda x: (x[2], x[3]), reverse=True)
+        print("  Shortcut scores (source -> target: score (dist, prob, gain)):")
+        for source_id, target_id, score, p, g in score_tuples:
+            d = self.estimate_node_distance(source_id, target_id)
+            print(f"    ({source_id} -> {target_id}): {score:.4f} ({d:.2f}, {p:.2f}, {g:.2f})")
+        
+        
 
-            # Score: lower is better
-            # Negative = shortcut (estimated < graph)
-            score = est_dist - graph_dist
+        # # Strategy 1: Keep all negative scores (shortcuts)
+        # shortcuts = set()
+        # for score, source_node, target_node, est_dist in node_pair_scores:
+        #     if score < 0:
+        #         shortcuts.add((source_node, target_node))
 
-            node_pair_scores.append((score, source_node, target_node, est_dist))
-
-        print(f"[DEBUG] Scored {len(node_pair_scores)} node pairs")
-        if self.config.max_episode_steps is not None:
-            print(f"[DEBUG] Filtered out {filtered_by_max_steps} pairs with est_dist > {self.config.max_episode_steps}")
-
-        # Sort by score (ascending = most promising first)
-        node_pair_scores.sort(key=lambda x: x[0])
-
-        # Strategy 1: Keep all negative scores (shortcuts)
-        shortcuts = set()
-        for score, source_node, target_node, est_dist in node_pair_scores:
-            if score < 0:
-                shortcuts.add((source_node, target_node))
-
-        print(f"[DEBUG] Found {len(shortcuts)} shortcuts (negative scores)")
+        # print(f"[DEBUG] Found {len(shortcuts)} shortcuts (negative scores)")
 
         # Strategy 2: Keep top keep_fraction by score
-        num_to_keep = max(1, int(len(node_pair_scores) * self.config.keep_fraction))
+        num_to_keep = max(1, int(len(score_tuples) * self.config.keep_fraction))
         top_pairs = set()
-        for score, source_node, target_node, est_dist in node_pair_scores[:num_to_keep]:
+        for source_node, target_node, score, p, g in score_tuples[:num_to_keep]:
             top_pairs.add((source_node, target_node))
 
         print(f"[DEBUG] Keeping top {num_to_keep} pairs ({self.config.keep_fraction:.1%})")
 
-        # Strategy 3: (optional) Add exploration pairs randomly
-        if add_exploration:
-            num_exploration = int(len(self.graph_distances) * self.config.exploration_factor)  # 5% exploration
-            all_pairs = set(self.graph_distances.keys())
-            unexplored_pairs = all_pairs - shortcuts - top_pairs
-            exploration_pairs = random.sample(unexplored_pairs, min(num_exploration, len(unexplored_pairs)))
-            for source_node, target_node in exploration_pairs:
-                top_pairs.add((source_node, target_node))
-            print(f"[DEBUG] Added {len(exploration_pairs)} exploration pairs")
+        # Strategy 3: Add exploration pairs randomly
+        num_exploration = int(len(self.training_data.unique_shortcuts) * self.config.exploration_factor)  # 5% exploration
+        all_pairs = set(self.training_data.unique_shortcuts)
+        unexplored_pairs = all_pairs - top_pairs
+        exploration_pairs = random.sample(unexplored_pairs, min(num_exploration, len(unexplored_pairs)))
+        for source_node, target_node in exploration_pairs:
+            top_pairs.add((source_node, target_node))
+        print(f"[DEBUG] Added {len(exploration_pairs)} exploration pairs")
 
         # Return union
-        result = shortcuts | top_pairs
+        result = top_pairs
         print(f"[DEBUG] Total pairs to keep: {len(result)} (union of shortcuts and top)")
 
 
@@ -1189,6 +1278,75 @@ class CRLHeuristic(BaseHeuristic):
                 **self.training_data.config,
                 "shortcut_info": pruned_shortcut_info,
                 "pruning_method": "crl",
+            },
+        )
+
+        return pruned_data
+
+    def prune(self, max_shortcuts: int | None, ) -> GoalConditionedTrainingData:
+        """Like prune_explore, but only prunes the top max_shortcuts shortcuts from the list
+        instead of keep_fraction/explore_fraction."""
+
+        if max_shortcuts is None:
+            return self.training_data
+
+        print(f"\n[DEBUG] Pruning to max_shortcuts={max_shortcuts}")
+
+        # Compute success rates and select shortcuts (use unique_shortcuts for node-node pairs)
+        score_tuples = []
+        for source_id, target_id in self.training_data.unique_shortcuts:
+            p = self.estimate_probability(source_id, target_id)
+            g = self.estimate_gain(source_id, target_id)
+            score = p * g
+            score_tuples.append((source_id, target_id, score, p, g))
+        
+        # Sort score tuples first by score, and then by probability
+        score_tuples.sort(key=lambda x: (x[2], x[3]), reverse=True)
+        print("  Shortcut scores (source -> target: score (dist, prob, gain)):")
+        for source_id, target_id, score, p, g in score_tuples:
+            d = self.estimate_node_distance(source_id, target_id)
+            dg = self.graph_distances.get((source_id, target_id), np.inf)
+            print(f"    ({source_id} -> {target_id}): {score:.4f} ({d:.2f}, {dg:.2f}, {p:.2f}, {g:.2f})")
+        
+        # Select top max_shortcuts shortcuts
+        selected_shortcuts = score_tuples[:max_shortcuts]
+        selected_unique_shortcuts = [
+            (source_id, target_id) for source_id, target_id, _, _, _ in selected_shortcuts
+        ]
+
+        # Filter training data to match selected unique shortcuts
+        # Keep all state-node pairs that correspond to selected node-node pairs
+        selected_set = set(selected_unique_shortcuts)
+        selected_indices = []
+
+        for i, (source_id, target_id) in enumerate(self.training_data.valid_shortcuts):
+            if (source_id, target_id) in selected_set:
+                selected_indices.append(i)
+
+        print(f"  ({len(selected_indices)} state-node pairs)")
+
+        # Filter shortcut_info to match the pruned data
+        original_shortcut_info = self.training_data.config.get("shortcut_info", [])
+        pruned_shortcut_info = (
+            [original_shortcut_info[i] for i in selected_indices]
+            if original_shortcut_info
+            else []
+        )
+
+        pruned_data = GoalConditionedTrainingData(
+            states=[self.training_data.states[i] for i in selected_indices],
+            current_atoms=[self.training_data.current_atoms[i] for i in selected_indices],
+            goal_atoms=[self.training_data.goal_atoms[i] for i in selected_indices],
+            valid_shortcuts=[self.training_data.valid_shortcuts[i] for i in selected_indices],
+            unique_shortcuts=selected_unique_shortcuts,  # Unique node-node pairs
+            node_states=self.training_data.node_states,  # Keep all node states
+            node_atoms=self.training_data.node_atoms,  # Keep all node atoms
+            graph=self.training_data.graph,  # Keep planning graph
+            config={
+                **self.training_data.config,
+                "shortcut_info": pruned_shortcut_info,
+                "pruning_method": "smart_rollouts",
+                "threshold": self.config.threshold,
             },
         )
 

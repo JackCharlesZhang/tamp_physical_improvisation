@@ -33,7 +33,7 @@ class SmartRolloutsHeuristic(BaseHeuristic):
         system: "ImprovisationalTAMPSystem",
         num_rollouts: int = 1000,
         max_steps_per_rollout: int = 100,
-        factor: float = 1,
+        threshold: float = 0.01,
         action_scale: float = 1.0,
         seed: int = 42,
     ):
@@ -53,7 +53,7 @@ class SmartRolloutsHeuristic(BaseHeuristic):
         self.system = system
         self.num_rollouts = num_rollouts
         self.max_steps_per_rollout = max_steps_per_rollout
-        self.factor = factor
+        self.threshold = threshold
         self.action_scale = action_scale
         self.seed = seed
 
@@ -228,9 +228,31 @@ class SmartRolloutsHeuristic(BaseHeuristic):
             return float(np.mean(lengths))
         else:
             return float(self.max_steps_per_rollout)
-        
+    
+    def estimate_probability(self, source_node: int, target_node: int) -> float:
+        """Estimate probability of policy convergence, using a heuristic
+        that it follows a step function based on random rollout success rate."""
 
-    def prune(self, **kwargs: Any) -> "GoalConditionedTrainingData":
+        if self._success_counts is None:
+            raise RuntimeError("Must call multi_train() before estimate_probability()")
+
+        success_count = self._success_counts.get((source_node, target_node), 0)
+        p_rr = success_count / self.num_rollouts if self.num_rollouts > 0 else 0.0
+
+        k = np.log(0.5) / np.log(1 - self.threshold)
+        return 1 - (1 - p_rr)**k
+
+    def estimate_gain(self, source_node: int, target_node: int) -> float:
+        """Estimate gain of training on a shortcut, relative to distance in the
+        initial graph. Higher gain means more useful shortcut."""
+
+        graph_distance = self.graph_distances.get((source_node, target_node), float('inf'))
+        estimated_distance = self.estimate_node_distance(source_node, target_node)
+
+        gain = np.clip(graph_distance - estimated_distance, 0, self.max_steps_per_rollout)
+        return gain
+
+    def prune(self, max_shortcuts: int | None, **kwargs: Any) -> "GoalConditionedTrainingData":
         """Prune shortcuts based on rollout length.
 
         Keeps only shortcuts where estimated distance < min(graph_distance, max_steps_per_rollout).
@@ -244,27 +266,30 @@ class SmartRolloutsHeuristic(BaseHeuristic):
         if self._success_lens is None:
             raise RuntimeError("Must call multi_train() before prune()")
 
-        print(f"\nPruning with rollouts (factor={self.factor})")
+        if max_shortcuts is None:
+            return self.training_data
+
+        print(f"\nPruning with rollouts (threshold={self.threshold}, max_shortcuts={max_shortcuts}):")
 
         # Compute success rates and select shortcuts (use unique_shortcuts for node-node pairs)
-        selected_unique_shortcuts = []
+        score_tuples = []
         for source_id, target_id in self.training_data.unique_shortcuts:
-            estimated_distance = self.estimate_node_distance(source_id, target_id)
-            graph_distance = self.graph_distances.get((source_id, target_id), float('inf'))
-            effective_distance = min(graph_distance, self.max_steps_per_rollout)
-            if estimated_distance < effective_distance * self.factor:
-                selected_unique_shortcuts.append((source_id, target_id))
-                print(
-                    f"  Keeping shortcut ({source_id} -> {target_id}): "
-                    f"estimated_distance={estimated_distance:.2f} < "
-                    f"effective_distance={(self.factor * effective_distance):.2f}"
-                )
-            else:
-                print(
-                    f"  Pruning shortcut ({source_id} -> {target_id}): "
-                    f"estimated_distance={estimated_distance:.2f} >= "
-                    f"effective_distance={(self.factor * effective_distance):.2f}"
-                )
+            p = self.estimate_probability(source_id, target_id)
+            g = self.estimate_gain(source_id, target_id)
+            score = p * g
+            score_tuples.append((source_id, target_id, score, p, g))
+        
+        # Sort score tuples first by score, and then by probability
+        score_tuples.sort(key=lambda x: (x[2], x[3]), reverse=True)
+        print("  Shortcut scores (source -> target: score (prob, gain)):")
+        for source_id, target_id, score, p, g in score_tuples:
+            print(f"    ({source_id} -> {target_id}): {score:.4f} ({p:.2f}, {g:.2f})")
+        
+        # Select top max_shortcuts shortcuts
+        selected_shortcuts = score_tuples[:max_shortcuts]
+        selected_unique_shortcuts = [
+            (source_id, target_id) for source_id, target_id, _, _, _ in selected_shortcuts
+        ]
 
         # Filter training data to match selected unique shortcuts
         # Keep all state-node pairs that correspond to selected node-node pairs
@@ -297,8 +322,8 @@ class SmartRolloutsHeuristic(BaseHeuristic):
             config={
                 **self.training_data.config,
                 "shortcut_info": pruned_shortcut_info,
-                "pruning_method": "rollouts",
-                "rollout_factor": self.factor,
+                "pruning_method": "smart_rollouts",
+                "threshold": self.threshold,
                 "num_rollouts": self.num_rollouts,
             },
         )

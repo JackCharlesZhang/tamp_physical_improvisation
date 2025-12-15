@@ -491,7 +491,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
 
                 source_atoms = set(source_node.atoms)
                 target_atoms = set(target_node.atoms)
-                print(source_atoms, target_atoms)
+                # print(source_atoms, target_atoms)
                 if not target_atoms:
                     continue
 
@@ -531,7 +531,8 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                     graph.add_edge(source_node, target_node, None, is_shortcut=True)
                     shortcuts_added += 1
                 elif not self.training_mode:
-                    print(f"  DEBUG: Matched signature for {source_node.id}→{target_node.id} but policy.can_initiate() = False")
+                    # print(f"  DEBUG: Matched signature for {source_node.id}→{target_node.id} but policy.can_initiate() = False")
+                    pass
 
         if not self.training_mode and self.trained_signatures:
             print(f"DEBUG: Added {shortcuts_added} shortcuts to graph")

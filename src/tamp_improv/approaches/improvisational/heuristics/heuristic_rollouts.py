@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 import gymnasium as gym
 import numpy as np
 
-from tamp_improv.approaches.improvisational.heuristics.base import BaseHeuristic
+from tamp_improv.approaches.improvisational.heuristics.base import BaseHeuristic, random_selection
 from tamp_improv.approaches.improvisational.policies.base import GoalConditionedTrainingData
 
 if TYPE_CHECKING:
@@ -31,6 +31,7 @@ class RolloutsHeuristic(BaseHeuristic):
         training_data: "GoalConditionedTrainingData",
         graph_distances: dict[tuple[int, int], float],
         system: "ImprovisationalTAMPSystem",
+        rng: np.random.Generator,
         num_rollouts: int = 1000,
         max_steps_per_rollout: int = 100,
         threshold: float = 0.01,
@@ -56,6 +57,7 @@ class RolloutsHeuristic(BaseHeuristic):
         self.threshold = threshold
         self.action_scale = action_scale
         self.seed = seed
+        self.rng = rng
 
         # Cache for success counts: (source_node, target_node) -> count
         # Populated during multi_train()
@@ -229,7 +231,7 @@ class RolloutsHeuristic(BaseHeuristic):
 
         return distance
 
-    def prune(self, **kwargs: Any) -> "GoalConditionedTrainingData":
+    def prune(self, max_shortcuts: int | None, **kwargs: Any) -> "GoalConditionedTrainingData":
         """Prune shortcuts based on rollout success rate.
 
         Keeps only shortcuts where success_rate >= threshold.
@@ -298,4 +300,8 @@ class RolloutsHeuristic(BaseHeuristic):
             },
         )
 
-        return pruned_data
+        return random_selection(
+            pruned_data,
+            max_shortcuts=max_shortcuts,
+            rng=self.rng,
+        )

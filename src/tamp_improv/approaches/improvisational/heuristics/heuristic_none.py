@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 import gymnasium as gym
 import numpy as np
 
-from tamp_improv.approaches.improvisational.heuristics.base import BaseHeuristic
+from tamp_improv.approaches.improvisational.heuristics.base import BaseHeuristic, random_selection
 from tamp_improv.approaches.improvisational.policies.base import GoalConditionedTrainingData
 
 if TYPE_CHECKING:
@@ -30,6 +30,7 @@ class NoneHeuristic(BaseHeuristic):
         self,
         training_data: "GoalConditionedTrainingData",
         graph_distances: dict[tuple[int, int], float],
+        rng: np.random.Generator,
     ):
         """Initialize rollouts heuristic.
 
@@ -46,6 +47,7 @@ class NoneHeuristic(BaseHeuristic):
         super().__init__(training_data, graph_distances)
         self.training_data = training_data
         self.graph_distances = graph_distances
+        self.rng = rng
 
     def multi_train(self, **kwargs: Any) -> dict[str, Any]:
         """Run rollouts to evaluate all shortcuts.
@@ -91,7 +93,7 @@ class NoneHeuristic(BaseHeuristic):
         # print(self._success_counts, self._success_counts is None)
         return 0
 
-    def prune(self, **kwargs: Any) -> "GoalConditionedTrainingData":
+    def prune(self, max_shortcuts: int | None, **kwargs: Any) -> "GoalConditionedTrainingData":
         """Prune shortcuts based on rollout success rate.
 
         Keeps only shortcuts where success_rate >= threshold.
@@ -102,4 +104,13 @@ class NoneHeuristic(BaseHeuristic):
         Returns:
             Pruned training data
         """
-        return self.training_data
+
+        if max_shortcuts is None:
+            return self.training_data
+
+        pruned_training_data = random_selection(self.training_data,
+                                                max_shortcuts=max_shortcuts,
+                                                rng=self.rng)
+
+
+        return pruned_training_data

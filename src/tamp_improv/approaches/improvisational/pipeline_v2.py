@@ -77,6 +77,7 @@ def create_heuristic(
     graph_distances: dict[tuple[int, int], float],
     system: ImprovisationalTAMPSystem,
     cfg: DictConfig,
+    rng: np.random.Generator,
 ) -> "BaseHeuristic":
     """Create a heuristic instance based on type.
 
@@ -94,6 +95,7 @@ def create_heuristic(
         return NoneHeuristic(
             training_data=training_data,
             graph_distances=graph_distances,
+            rng=rng
         )
     elif cfg.heuristic.type == "rollouts":
         return RolloutsHeuristic(
@@ -102,9 +104,10 @@ def create_heuristic(
             system=system,
             num_rollouts=cfg.heuristic.num_rollouts_per_node,
             max_steps_per_rollout=cfg.heuristic.max_steps_per_rollout,
-            threshold=cfg.heuristic.shortcut_success_threshold,
+            threshold=cfg.heuristic.threshold,
             action_scale=cfg.heuristic.action_scale,
             seed=cfg.seed,
+            rng=rng
         )
     elif cfg.heuristic.type == "smart_rollouts":
         return SmartRolloutsHeuristic(
@@ -113,7 +116,7 @@ def create_heuristic(
             system=system,
             num_rollouts=cfg.heuristic.num_rollouts_per_node,
             max_steps_per_rollout=cfg.heuristic.max_steps_per_rollout,
-            factor=cfg.heuristic.shortcut_length_factor,
+            threshold=cfg.heuristic.threshold,
             action_scale=cfg.heuristic.action_scale,
             seed=cfg.seed,
         )
@@ -184,7 +187,6 @@ class PipelineResults:
         self.heuristic_training_history: dict[str, Any] | None = None
         self.heuristic_quality_results: dict[str, Any] | None = None
         self.pruned_training_data: GoalConditionedTrainingData | None = None
-        self.final_training_data: GoalConditionedTrainingData | None = None  # After random selection
         self.shortcut_quality_results: dict[str, Any] | None = None
         self.evaluation_results: Metrics | None = None
         self.times: dict[str, float] | None = None
@@ -355,6 +357,7 @@ def test_heuristic_quality(
 
 def prune_with_heuristic(
     heuristic: "BaseHeuristic",
+    max_shortcuts: int | None
 ) -> GoalConditionedTrainingData:
     """Stage 3: Prune shortcuts using the heuristic.
 
@@ -370,7 +373,7 @@ def prune_with_heuristic(
     print("=" * 80)
 
     # Call prune - interface is the same for all heuristics
-    pruned_data = heuristic.prune()
+    pruned_data = heuristic.prune(max_shortcuts=max_shortcuts)
 
     print(f"\nPruning complete: {len(pruned_data.unique_shortcuts)} unique shortcuts remaining")
     print(f"  ({len(pruned_data.valid_shortcuts)} state-node pairs)")
@@ -765,6 +768,7 @@ def run_pipeline(
         graph_distances=results.graph_distances,
         system=system,
         cfg=cfg,
+        rng=rng
     )
 
     # Stage 2: Train heuristic
@@ -790,19 +794,20 @@ def run_pipeline(
     start = time.time()
     results.pruned_training_data = prune_with_heuristic(
         heuristic=heuristic,
+        max_shortcuts=cfg.heuristic.max_shortcuts_per_graph,
     )
     times['heuristic_pruning_time'] = time.time() - start
 
-    # Stage 3.5: Random selection
-    max_shortcuts = cfg.heuristic.max_shortcuts_per_graph
-    if max_shortcuts != float("inf"):
-        results.final_training_data = random_selection(
-            training_data=results.pruned_training_data,
-            max_shortcuts=int(max_shortcuts),
-            rng=rng,
-        )
-    else:
-        results.final_training_data = results.pruned_training_data
+    # # Stage 3.5: Random selection
+    # max_shortcuts = cfg.heuristic.max_shortcuts_per_graph
+    # if max_shortcuts != float("inf"):
+    #     results.final_training_data = random_selection(
+    #         training_data=results.pruned_training_data,
+    #         max_shortcuts=int(max_shortcuts),
+    #         rng=rng,
+    #     )
+    # else:
+    #     results.final_training_data = results.pruned_training_data
 
 
     # Stage 4: Train policy
@@ -810,7 +815,7 @@ def run_pipeline(
     train_policy(
         system=system,
         policy=policy,
-        training_data=results.final_training_data,
+        training_data=results.pruned_training_data,
         cfg=cfg,
     )
 
@@ -818,11 +823,11 @@ def run_pipeline(
     times["policy_training_time"] = time.time() - start
 
     # Stage 4.5: Test shortcut quality (optional)
-    if cfg.debug and len(results.final_training_data.valid_shortcuts) > 0:
+    if cfg.debug and len(results.pruned_training_data.valid_shortcuts) > 0:
         results.shortcut_quality_results = test_shortcut_quality(
             system=system,
             policy=policy,
-            training_data=results.final_training_data,
+            training_data=results.pruned_training_data,
             cfg=cfg,
         )
 
