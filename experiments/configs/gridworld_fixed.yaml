@@ -1,7 +1,7 @@
 seed: 42
 debug: true
 render_mode: null
-eval_heuristic_only: true  # If true, stop pipeline after heuristic evaluation (stage 2.5)
+eval_heuristic_only: false  # If true, stop pipeline after heuristic evaluation (stage 2.5)
 
 env:
   name: GridworldFixedTAMPSystem
@@ -21,7 +21,7 @@ collection:
   planner_id: pyperplan
 
 heuristic:
-  max_shortcuts_per_graph: 10
+  max_shortcuts_per_graph: 6
 
   # Heuristic Parameters
   type: crl
@@ -93,7 +93,7 @@ policy:
 evaluation:
   render: false
   fast_eval: false
-  num_episodes: 3
+  num_episodes: 100
   max_episode_steps: 100
 
 

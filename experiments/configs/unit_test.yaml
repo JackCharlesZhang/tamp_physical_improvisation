@@ -1,9 +1,10 @@
 seed: 42
 debug: true
 render_mode: null
+eval_heuristic_only: false
 
 env:
-  name: GraphObstacleTowerTAMPSystem
+  name: GridworldFixedTAMPSystem
   # Gridworld
   num_cells: 3
   num_states_per_cell: 10

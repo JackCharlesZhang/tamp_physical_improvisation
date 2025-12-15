@@ -58,6 +58,8 @@ ActType = TypeVar("ActType")
 @dataclass
 class DQNHeuristicConfig:
     """Configuration for distance heuristic training."""
+    wandb_enabled: bool = False  # Whether to enable Weights & Biases logging
+
     # Learning parameters
     learning_rate: float = 3e-4
     batch_size: int = 256

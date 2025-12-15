@@ -106,61 +106,63 @@ class RolloutsHeuristic(BaseHeuristic):
                 continue
 
             source_atoms = self._target_atoms_by_id.get(source_id, set())
-            rollouts_per_state = max(1, self.num_rollouts // len(source_states))
 
             print(
-                f"\nPerforming {rollouts_per_state} rollouts for each of "
+                f"\nPerforming {self.num_rollouts} rollouts by randomly sampling from "
                 f"{len(source_states)} state(s) from node {source_id}",
                 flush=True,
             )
 
-            for state_idx, source_state in enumerate(source_states):
-                for rollout_idx in range(rollouts_per_state):
-                    if rollout_idx > 0 and rollout_idx % 100 == 0:
-                        print(
-                            f"  Completed {rollout_idx}/{rollouts_per_state} rollouts",
-                            flush=True,
-                        )
+            # Sample from source_states exactly self.num_rollouts times
+            for rollout_idx in range(self.num_rollouts):
+                if rollout_idx > 0 and rollout_idx % 100 == 0:
+                    print(
+                        f"  Completed {rollout_idx}/{self.num_rollouts} rollouts",
+                        flush=True,
+                    )
 
-                    # Reset to source state
-                    raw_env.reset_from_state(source_state)
-                    curr_atoms = source_atoms.copy()
+                # Randomly sample a source state
+                source_state = self.rng.choice(source_states)
 
-                    # Track which nodes we've reached in this rollout
-                    reached_in_this_rollout: set[int] = set()
+                # Reset to source state
+                raw_env.reset_from_state(source_state)
+                curr_atoms = source_atoms.copy()
 
-                    # Execute random rollout
-                    for step_idx in range(self.max_steps_per_rollout):
-                        action = self.sampling_space.sample()
-                        obs, _, terminated, truncated, _ = raw_env.step(action)
-                        curr_atoms = self.system.perceiver.step(obs)
+                # Track which nodes we've reached in this rollout
+                reached_in_this_rollout: set[int] = set()
 
-                        # Check if we've reached any target nodes
-                        for target_id in self.training_data.node_states.keys():
-                            # Skip if not a valid shortcut
-                            if (source_id, target_id) not in self.training_data.valid_shortcuts:
-                                continue
+                # Execute random rollout
+                for step_idx in range(self.max_steps_per_rollout):
+                    action = self.sampling_space.sample()
+                    obs, _, terminated, truncated, _ = raw_env.step(action)
+                    curr_atoms = self.system.perceiver.step(obs)
 
-                            # Skip if already reached in this rollout
-                            if target_id in reached_in_this_rollout:
-                                continue
+                    # Check if we've reached any target nodes
+                    for target_id in self.training_data.node_states.keys():
+                        # Skip if not a valid shortcut
+                        if (source_id, target_id) not in self.training_data.valid_shortcuts:
+                            continue
 
-                            # Check if atoms match target node
-                            target_atoms = self._target_atoms_by_id.get(target_id)
-                            if target_atoms and target_atoms == curr_atoms:
-                                shortcut_success_counts[(source_id, target_id)] += 1
-                                reached_in_this_rollout.add(target_id)
+                        # Skip if already reached in this rollout
+                        if target_id in reached_in_this_rollout:
+                            continue
 
-                        if terminated or truncated:
-                            break
+                        # Check if atoms match target node
+                        target_atoms = self._target_atoms_by_id.get(target_id)
+                        if target_atoms and target_atoms == curr_atoms:
+                            shortcut_success_counts[(source_id, target_id)] += 1
+                            reached_in_this_rollout.add(target_id)
 
-                    total_rollouts += 1
+                    if terminated or truncated:
+                        break
 
-                # Print progress after each state
-                print(
-                    f"  Completed all rollouts for state {state_idx + 1}/{len(source_states)} from node {source_id}",
-                    flush=True,
-                )
+                total_rollouts += 1
+
+            # Print progress after completing all rollouts for this node
+            print(
+                f"  Completed all {self.num_rollouts} rollouts from node {source_id}",
+                flush=True,
+            )
 
         print("\nRollout results:")
         for (source_id, target_id), count in shortcut_success_counts.items():

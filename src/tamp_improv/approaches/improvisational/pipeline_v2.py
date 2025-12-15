@@ -18,7 +18,7 @@ The pipeline returns all results; the experiment handles saving.
 import time
 import random
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, Union
 from omegaconf import DictConfig, OmegaConf
 import numpy as np
 import torch
@@ -306,7 +306,7 @@ def test_heuristic_quality(
     heuristic: "BaseHeuristic",
     training_data: GoalConditionedTrainingData,
     graph_distances: dict[tuple[int, int], float],
-    crl_config: CRLHeuristicConfig,
+    heuristic_config: Union[CRLHeuristicConfig, DQNHeuristicConfig, CMDHeuristicConfig],
 ) -> dict[str, Any]:
     """Stage 2.5: Test heuristic quality on sample node pairs.
 
@@ -420,7 +420,7 @@ def test_heuristic_quality(
             graph_distances_matrix[src_idx, tgt_idx] = sample["graph_distance"]
             estimated_distances_matrix[src_idx, tgt_idx] = sample["estimated_distance"]
 
-        if crl_config.wandb_enabled:
+        if heuristic_config.wandb_enabled:
             _log_distance_plots_to_wandb(
                 true_distances=true_distances_matrix,
                 graph_distances=graph_distances_matrix,
@@ -428,7 +428,7 @@ def test_heuristic_quality(
                 node_ids=all_graph_node_ids,
             )
 
-        if crl_config.wandb_enabled:
+        if heuristic_config.wandb_enabled:
             wandb.log({
                 "test/avg_estimated_distance": results["avg_estimated_distance"],
                 "test/avg_graph_distance": results["avg_graph_distance"],
@@ -983,8 +983,15 @@ def run_pipeline(
 
     # Create heuristic instance based on config
     start = time.time()
-    # Retrieve crl_config here to ensure it's available for conditional WandB logging
-    crl_config = dataclass_from_cfg(CRLHeuristicConfig, cfg.heuristic) if cfg.heuristic.type == "crl" else None
+    # Retrieve heuristic_config here to ensure it's available for conditional WandB logging
+    if cfg.heuristic.type == "crl":
+        heuristic_config = dataclass_from_cfg(CRLHeuristicConfig, cfg.heuristic)
+    elif cfg.heuristic.type == "dqn":
+        heuristic_config = dataclass_from_cfg(DQNHeuristicConfig, cfg.heuristic.dqn)
+    elif cfg.heuristic.type == "cmd":
+        heuristic_config = dataclass_from_cfg(CMDHeuristicConfig, cfg.heuristic)
+    else:
+        heuristic_config = None
 
     heuristic = create_heuristic(
         training_data=results.training_data,
@@ -994,7 +1001,7 @@ def run_pipeline(
         rng=rng
     )
 
-    if crl_config and crl_config.wandb_enabled:
+    if heuristic_config and heuristic_config.wandb_enabled:
         wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
         wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True), name=wandb_run_name)
 
@@ -1017,7 +1024,7 @@ def run_pipeline(
             heuristic=heuristic,
             training_data=results.training_data,
             graph_distances=results.graph_distances,
-            crl_config=crl_config,
+            heuristic_config=heuristic_config,
         )
 
     if cfg.eval_heuristic_only:
@@ -1079,7 +1086,7 @@ def run_pipeline(
     results.approach = approach
     results.times = times
 
-    if crl_config.wandb_enabled:
+    if heuristic_config and heuristic_config.wandb_enabled:
         wandb.finish()
 
     return results
