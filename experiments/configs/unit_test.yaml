@@ -3,7 +3,7 @@ debug: true
 render_mode: null
 
 env:
-  name: GridworldFixedTAMPSystem
+  name: GraphObstacleTowerTAMPSystem
   # Gridworld
   num_cells: 3
   num_states_per_cell: 10
@@ -60,6 +60,7 @@ heuristic:
   eval_rollouts: 1
   eval_temperature: 0.3
   eval_max_steps: 10
+  wandb_enabled: false
 
   dqn:
     learning_rate: 3e-4

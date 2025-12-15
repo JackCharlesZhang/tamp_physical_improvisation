@@ -1020,6 +1020,11 @@ def run_pipeline(
             crl_config=crl_config,
         )
 
+    if cfg.eval_heuristic_only:
+        results.approach = approach
+        results.times = times
+        return results
+
 
     # Stage 3: Prune with heuristic
     start = time.time()
