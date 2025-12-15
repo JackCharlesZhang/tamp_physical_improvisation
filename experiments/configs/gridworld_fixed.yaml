@@ -6,9 +6,9 @@ eval_heuristic_only: false  # If true, stop pipeline after heuristic evaluation 
 env:
   name: GridworldFixedTAMPSystem
   # Gridworld
-  num_cells: 5
+  num_cells: 10
   num_states_per_cell: 10
-  num_teleporters: 3
+  num_teleporters: 10
 
   # Blocks
   n_blocks: 2
@@ -21,7 +21,7 @@ collection:
   planner_id: pyperplan
 
 heuristic:
-  max_shortcuts_per_graph: 6
+  max_shortcuts_per_graph: 20
 
   # Heuristic Parameters
   type: crl
@@ -44,11 +44,11 @@ heuristic:
   repetition_factor: 8
   policy_temperature: 0.5
   iters_per_epoch: 100
-  learn_frequency: 2
-  num_epochs_per_round: 200 # Epochs per round (used as num_epochs_per_round in multi_train)
+  learn_frequency: 10
+  num_epochs_per_round: 1000 # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
   max_episode_steps: 200
-  num_rounds: 5  # Number of pruning rounds (1 = no pruning, just normal train)
+  num_rounds: 1  # Number of pruning rounds (1 = no pruning, just normal train)
   keep_fraction: 0.2  # Fraction of node-node pairs to keep each round
   exploration_factor: 0.1
   eval_temperature: 0

@@ -6,9 +6,9 @@ eval_heuristic_only: false
 env:
   name: GridworldFixedTAMPSystem
   # Gridworld
-  num_cells: 3
+  num_cells: 10
   num_states_per_cell: 10
-  num_teleporters: 0
+  num_teleporters: 10
 
   # Blocks
   n_blocks: 2
@@ -16,7 +16,7 @@ env:
 
 
 collection:
-  num_episodes: 5
+  num_episodes: 100
   max_steps_per_edge: 100
   planner_id: pyperplan
 

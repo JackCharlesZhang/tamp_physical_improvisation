@@ -370,7 +370,8 @@ def test_heuristic_quality(
         })
 
         print(f"{source_id:8d} {target_id:8d} {estimated_dist:12.2f} {graph_dist:12.2f} {abs_error:12.2f}")
-
+        print(f"TRUE DISTANCE: {true_dist}")
+        
         if graph_dist != float("inf"):
             total_est += estimated_dist
             total_graph += graph_dist
