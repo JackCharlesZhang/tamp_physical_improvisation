@@ -219,6 +219,7 @@ class PipelineResults:
         self.heuristic_quality_results: dict[str, Any] | None = None
         self.pruned_training_data: GoalConditionedTrainingData | None = None
         self.shortcut_quality_results: dict[str, Any] | None = None
+        self.successful_shortcut_paths: list[list[Any]] | None = None # New field for storing successful shortcut paths
         self.evaluation_results: Metrics | None = None
         self.times: dict[str, float] | None = None
 
@@ -778,6 +779,7 @@ def test_shortcut_quality(
     print(f"\nTesting {len(training_data.unique_shortcuts)} shortcuts...")
     print("=" * 80)
     results = []
+    successful_shortcut_paths = []
 
     max_steps = cfg.policy.max_episode_steps
     num_test_rollouts = cfg.policy.eval_rollouts  # Test each shortcut multiple times
@@ -804,7 +806,7 @@ def test_shortcut_quality(
             source_state = random.choice(source_states)
 
             # Execute shortcut once using helper function
-            success, num_steps = execute_shortcut_once(
+            success, num_steps, path = execute_shortcut_once(
                 policy=policy,
                 system=system,
                 start_state=source_state,
@@ -817,6 +819,7 @@ def test_shortcut_quality(
             if success:
                 successes += 1
                 lengths.append(num_steps)
+                successful_shortcut_paths.append(path)
 
         success_rate = successes / num_test_rollouts
         avg_length = np.mean(lengths) if lengths else max_steps
@@ -830,8 +833,8 @@ def test_shortcut_quality(
         length_stats[(source_node, target_node)] = avg_length
 
         # Print progress every 5 shortcuts
-        if (idx + 1) % 5 == 0 or (idx + 1) == len(training_data.valid_shortcuts):
-            print(f"  Tested {idx + 1}/{len(training_data.valid_shortcuts)} shortcuts...")
+        if (idx + 1) % 5 == 0 or (idx + 1) == len(training_data.unique_shortcuts):
+            print(f"  Tested {idx + 1}/{len(training_data.unique_shortcuts)} shortcuts...")
 
     # Print detailed results
     print("Mapping:", training_data.node_atoms)
@@ -854,7 +857,7 @@ def test_shortcut_quality(
         print(f"  Shortcuts with >50% success: {num_successful}/{len(success_counts)}")
         print("=" * 80)
 
-    full_results = {'pairs': results, 'avg_success_rate': overall_success, 'avg_steps': overall_length}
+    full_results = {'pairs': results, 'avg_success_rate': overall_success, 'avg_steps': overall_length, 'successful_shortcut_paths': successful_shortcut_paths}
     
     return full_results
 

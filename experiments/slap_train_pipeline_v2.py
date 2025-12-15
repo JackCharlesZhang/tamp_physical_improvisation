@@ -80,6 +80,7 @@ class SerializableResults:
     pruned_training_data: Optional[GoalConditionedTrainingData] = None
     final_training_data: Optional[GoalConditionedTrainingData] = None
     teleporter_locations: Optional[list] = None
+    successful_shortcut_paths: Optional[list[list[Any]]] = None
 
 def extract_serializable_results(results: PipelineResults) -> SerializableResults:
     teleporter_locations = None
@@ -109,6 +110,7 @@ def extract_serializable_results(results: PipelineResults) -> SerializableResult
         pruned_training_data=results.pruned_training_data,
         final_training_data=results.pruned_training_data,
         teleporter_locations=teleporter_locations,
+        successful_shortcut_paths=results.shortcut_quality_results.get('successful_shortcut_paths') if results.shortcut_quality_results else None,
     )
 
 

@@ -22,7 +22,7 @@ def execute_shortcut_once(
     max_steps: int = 100,
     source_node_id: int | None = None,
     target_node_id: int | None = None,
-) -> tuple[bool, int]:
+) -> tuple[bool, int, list[ObsType]]:
     """Execute a shortcut policy once from start state to goal atoms.
 
     Args:
@@ -35,15 +35,19 @@ def execute_shortcut_once(
         target_node_id: Optional target node ID for policy key matching
 
     Returns:
-        Tuple of (success, num_steps)
+        Tuple of (success, num_steps, path)
             - success: Whether the goal atoms were reached
             - num_steps: Number of steps taken
+            - path: List of observations (low-level states) during the shortcut execution
     """
     # Get the base environment
     env = system.env
 
     # Reset environment to start state
     obs, _ = env.reset_from_state(start_state)
+
+    # Store the path
+    path = [obs]
 
     # Get start atoms from perceiver
     start_atoms = system.perceiver.step(obs)
@@ -77,6 +81,7 @@ def execute_shortcut_once(
         # Step environment
         obs, _, _, _, _ = env.step(action)
         num_steps += 1
+        path.append(obs)
 
         # Check if goal atoms are reached
         current_atoms = system.perceiver.step(obs)
@@ -84,7 +89,7 @@ def execute_shortcut_once(
             success = True
             break
 
-    return success, num_steps
+    return success, num_steps, path
 
 
 def execute_edge_once(
