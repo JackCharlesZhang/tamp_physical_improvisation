@@ -7,22 +7,22 @@
 BASE_CONFIG="gridworld_fixed"
 
 # Define parameter ranges
-LATENT_DIMS=(8 16)
+LATENT_DIMS=(12)
 LEARNING_RATES=(1e-3)
 GAMMAS=(0.9)
-POLICY_TEMPS=(0.5)
+HEURISTIC_TYPES=("crl" "rollouts" "smart_rollouts" "dqn" "cmd")
 
 # Loop through all combinations
 for latent_dim in "${LATENT_DIMS[@]}"; do
   for lr in "${LEARNING_RATES[@]}"; do
     for gamma in "${GAMMAS[@]}"; do
-      for policy_temp in "${POLICY_TEMPS[@]}"; do
+      for heuristic_type in "${HEURISTIC_TYPES[@]}"; do
 
         # Construct the override string
-        CONFIG_OVERRIDES="heuristic.latent_dim=${latent_dim} heuristic.learning_rate=${lr} heuristic.gamma=${gamma} heuristic.policy_temperature=${policy_temp}"
+        CONFIG_OVERRIDES="heuristic.type=${heuristic_type} heuristic.latent_dim=${latent_dim} heuristic.learning_rate=${lr} heuristic.gamma=${gamma}"
         
         # Construct the WandB run name
-        WANDB_RUN_NAME="${BASE_CONFIG}_L${latent_dim}_LR${lr}_G${gamma}_PT${policy_temp}"
+        WANDB_RUN_NAME="${BASE_CONFIG}_HT${heuristic_type}_L${latent_dim}_LR${lr}_G${gamma}"
         
         echo "Submitting SLURM job for config: ${BASE_CONFIG} with overrides: ${CONFIG_OVERRIDES}"
         echo "WandB Run Name: ${WANDB_RUN_NAME}"

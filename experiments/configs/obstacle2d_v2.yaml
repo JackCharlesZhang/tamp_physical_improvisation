@@ -1,6 +1,7 @@
 seed: 42
 debug: true
 render_mode: null
+eval_heuristic_only: true  # If true, stop pipeline after heuristic evaluation (stage 2.5)
 
 env:
   name: GraphObstacle2DTAMPSystem
@@ -20,7 +21,7 @@ collection:
   planner_id: pyperplan
 
 heuristic:
-  max_shortcuts_per_graph: 50
+  max_shortcuts_per_graph: 10
 
   # Heuristic Parameters
   type: crl
@@ -69,7 +70,7 @@ policy:
   early_stopping: false
   early_stopping_patience: 10
   max_episode_steps: 100
-  episodes_per_scenario: 100
+  episodes_per_scenario: 10
   training_record_interval: 100
 
   eval_rollouts: 100
@@ -78,7 +79,7 @@ policy:
 evaluation:
   render: false
   fast_eval: false
-  num_episodes: 100
+  num_episodes: 3
   max_episode_steps: 100
 
 

@@ -47,7 +47,7 @@ ActType = TypeVar("ActType")
 class CRLHeuristicConfig:
     """Configuration for contrastive state-node distance heuristic."""
     wandb_enabled: bool = False  # Whether to enable Weights & Biases logging
-
+    
     # Pruning
     threshold: float = 0.05
     beta: float = 1 # Complex distance scaling parameter
@@ -835,10 +835,11 @@ class CRLHeuristic(BaseHeuristic):
 
 
         for round_idx in range(num_rounds):
-            # Update policy temperature using cosine annealing
-            progress = (round_idx+1) / num_rounds
-            cosine_factor = 0.5 * (1 + np.cos(np.pi * progress))
-            self.policy_temperature = min_temp + (initial_temp - min_temp) * cosine_factor
+            if num_rounds > 1:
+                # Update policy temperature using cosine annealing (per-round)
+                progress = (round_idx+0.5) / num_rounds
+                cosine_factor = 0.5 * (1 + np.cos(np.pi * progress))
+                self.policy_temperature = min_temp + (initial_temp - min_temp) * cosine_factor
 
             # Get all state-node pairs for current node-node pairs
             current_state_pairs = []
@@ -970,6 +971,9 @@ class CRLHeuristic(BaseHeuristic):
         print(f"Collecting {trajectories_per_epoch} trajectories per epoch")
         print(f"Using cosine annealing LR scheduler: {self.config.learning_rate} -> {self.config.learning_rate * 0.01}")
 
+        initial_temp = self.config.policy_temperature
+        min_temp = self.config.eval_temperature
+
         # Initialize training history tracking
         training_history = {
             'total_loss': [],
@@ -985,6 +989,12 @@ class CRLHeuristic(BaseHeuristic):
         # Training loop
         for epoch in range(num_epochs):
             print("Epoch", epoch)
+
+            if self.config.num_rounds == 1:
+                # Update policy temperature using cosine annealing (per-epoch)
+                progress = (epoch+1) / num_epochs
+                cosine_factor = 0.5 * (1 + np.cos(np.pi * progress))
+                self.policy_temperature = min_temp + (initial_temp - min_temp) * cosine_factor
             
 
             # Collect trajectories

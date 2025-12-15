@@ -40,4 +40,4 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 # Ensure output directories exist
 mkdir -p slurm_outputs/train_slap
 
-python -m experiments.slap_train_pipeline_v2 --config-name gridworld_fixed seed=42 | tee run_log.txt
+python -m experiments.slap_train_pipeline_v2 --config-name gridworld_fixed ${CONFIG_OVERRIDES} seed=42 | tee run_log.txt

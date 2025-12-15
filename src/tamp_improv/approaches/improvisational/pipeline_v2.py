@@ -18,7 +18,7 @@ The pipeline returns all results; the experiment handles saving.
 import time
 import random
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, Union
 from omegaconf import DictConfig, OmegaConf
 import numpy as np
 import torch
@@ -129,6 +129,7 @@ def create_heuristic(
     elif cfg.heuristic.type == "crl":
         # crl_config is now created outside this function for broader scope
         crl_config = dataclass_from_cfg(CRLHeuristicConfig, cfg.heuristic)
+        crl_config.wandb_enabled = cfg.wandb_enabled
         print("CRL Config:", crl_config)
 
         return CRLHeuristic(
@@ -153,6 +154,7 @@ def create_heuristic(
     elif cfg.heuristic.type == "cmd":
         # TODO: Implement V4 heuristic
         cmd_config = dataclass_from_cfg(CMDHeuristicConfig, cfg.heuristic)
+        cmd_config.wandb_enabled = cfg.wandb_enabled
         print("CMD Config:", cmd_config)
 
         return CMDHeuristic(
@@ -306,7 +308,8 @@ def test_heuristic_quality(
     heuristic: "BaseHeuristic",
     training_data: GoalConditionedTrainingData,
     graph_distances: dict[tuple[int, int], float],
-    crl_config: CRLHeuristicConfig,
+    cfg: DictConfig,
+    times: dict[str, float],
 ) -> dict[str, Any]:
     """Stage 2.5: Test heuristic quality on sample node pairs.
 
@@ -370,7 +373,8 @@ def test_heuristic_quality(
         })
 
         print(f"{source_id:8d} {target_id:8d} {estimated_dist:12.2f} {graph_dist:12.2f} {abs_error:12.2f}")
-
+        print(f"TRUE DISTANCE: {true_dist}")
+        
         if graph_dist != float("inf"):
             total_est += estimated_dist
             total_graph += graph_dist
@@ -420,7 +424,7 @@ def test_heuristic_quality(
             graph_distances_matrix[src_idx, tgt_idx] = sample["graph_distance"]
             estimated_distances_matrix[src_idx, tgt_idx] = sample["estimated_distance"]
 
-        if crl_config.wandb_enabled:
+        if cfg.wandb_enabled:
             _log_distance_plots_to_wandb(
                 true_distances=true_distances_matrix,
                 graph_distances=graph_distances_matrix,
@@ -428,7 +432,7 @@ def test_heuristic_quality(
                 node_ids=all_graph_node_ids,
             )
 
-        if crl_config.wandb_enabled:
+        if cfg.wandb_enabled:
             wandb.log({
                 "test/avg_estimated_distance": results["avg_estimated_distance"],
                 "test/avg_graph_distance": results["avg_graph_distance"],
@@ -438,6 +442,7 @@ def test_heuristic_quality(
                 "test/min_graph_distance": min_graph_distance,
                 "test/max_graph_distance": max_graph_distance,
                 "test/correlation_distance": correlation_distance,
+                "times/heuristic_training_time": times['heuristic_training_time'],
             })
 
     return results
@@ -490,7 +495,7 @@ def _log_distance_plots_to_wandb(
     axes[2].set_ylabel('Source Node', fontsize=12)
 
     plt.tight_layout()
-    # wandb.log({"test/distance_heatmaps": wandb.Image(fig)})
+    wandb.log({"test/distance_heatmaps": wandb.Image(fig)})
     plt.close(fig) # Close the figure to free up memory
 
     # Create scatterplots comparing distances
@@ -543,7 +548,7 @@ def _log_distance_plots_to_wandb(
     axes[1].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    # wandb.log({"test/distance_scatterplots": wandb.Image(fig)})
+    wandb.log({"test/distance_scatterplots": wandb.Image(fig)})
     plt.close(fig) # Close the figure to free up memory
 
     # Error heatmap
@@ -563,7 +568,7 @@ def _log_distance_plots_to_wandb(
     ax.set_ylabel('Source Node', fontsize=12)
 
     plt.tight_layout()
-    # wandb.log({"test/distance_error_heatmap": wandb.Image(fig)})
+    wandb.log({"test/distance_error_heatmap": wandb.Image(fig)})
     plt.close(fig) # Close the figure to free up memory
 
 
@@ -960,6 +965,10 @@ def run_pipeline(
     set_torch_seed(seed)
     random.seed(seed)
 
+    if cfg.wandb_enabled:
+        wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
+        wandb.init(project="slap_gridworld_fixed", config=OmegaConf.to_container(cfg, resolve=True), name=wandb_run_name)
+
     # Create policy instance based on config
     policy = create_policy(
         cfg=cfg
@@ -983,8 +992,15 @@ def run_pipeline(
 
     # Create heuristic instance based on config
     start = time.time()
-    # Retrieve crl_config here to ensure it's available for conditional WandB logging
-    crl_config = dataclass_from_cfg(CRLHeuristicConfig, cfg.heuristic) if cfg.heuristic.type == "crl" else None
+    # Retrieve heuristic_config here to ensure it's available for conditional WandB logging
+    if cfg.heuristic.type == "crl":
+        heuristic_config = dataclass_from_cfg(CRLHeuristicConfig, cfg.heuristic)
+    elif cfg.heuristic.type == "dqn":
+        heuristic_config = dataclass_from_cfg(DQNHeuristicConfig, cfg.heuristic.dqn)
+    elif cfg.heuristic.type == "cmd":
+        heuristic_config = dataclass_from_cfg(CMDHeuristicConfig, cfg.heuristic)
+    else:
+        heuristic_config = None
 
     heuristic = create_heuristic(
         training_data=results.training_data,
@@ -993,10 +1009,6 @@ def run_pipeline(
         cfg=cfg,
         rng=rng
     )
-
-    if crl_config and crl_config.wandb_enabled:
-        wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
-        wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True), name=wandb_run_name)
 
 
     # Stage 2: Train heuristic
@@ -1017,8 +1029,14 @@ def run_pipeline(
             heuristic=heuristic,
             training_data=results.training_data,
             graph_distances=results.graph_distances,
-            crl_config=crl_config,
+            cfg=cfg,
+            times=times,
         )
+
+    if cfg.eval_heuristic_only:
+        results.approach = approach
+        results.times = times
+        return results
 
 
     # Stage 3: Prune with heuristic
@@ -1074,7 +1092,7 @@ def run_pipeline(
     results.approach = approach
     results.times = times
 
-    if crl_config.wandb_enabled:
+    if cfg.wandb_enabled:
         wandb.finish()
 
     return results

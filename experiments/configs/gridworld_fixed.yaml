@@ -1,13 +1,15 @@
 seed: 42
 debug: true
 render_mode: null
+eval_heuristic_only: false  # If true, stop pipeline after heuristic evaluation (stage 2.5)
+wandb_enabled: true
 
 env:
   name: GridworldFixedTAMPSystem
   # Gridworld
   num_cells: 5
   num_states_per_cell: 10
-  num_teleporters: 3
+  num_teleporters: 5
 
   # Blocks
   n_blocks: 2
@@ -20,21 +22,21 @@ collection:
   planner_id: pyperplan
 
 heuristic:
-  max_shortcuts_per_graph: 50
+  max_shortcuts_per_graph: 10
 
   # Heuristic Parameters
-  type: crl
+  type: dqn
 
   # Rollout Heuristic Parameters
-  num_rollouts_per_node: 100
-  max_steps_per_rollout: 100
+  num_rollouts_per_node: 10
+  max_steps_per_rollout: 50
   shortcut_success_threshold: 0.1
   shortcut_length_factor: 1
   action_scale: 1.0
 
   # CRL Heuristic Parameters
   hidden_dims: [64, 64]
-  latent_dim: 4
+  latent_dim: 12
   normalize_embeddings: false
   learning_rate: 0.001
   batch_size: 256
@@ -47,11 +49,10 @@ heuristic:
   num_epochs_per_round: 200 # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
   max_episode_steps: 200
-  num_rounds: 5  # Number of pruning rounds (1 = no pruning, just normal train)
+  num_rounds: 1  # Number of pruning rounds (1 = no pruning, just normal train)
   keep_fraction: 0.2  # Fraction of node-node pairs to keep each round
   exploration_factor: 0.1
   eval_temperature: 0
-  wandb_enabled: false
 
   # Evaluate Heuristic
   eval_rollouts: 100
@@ -62,7 +63,7 @@ heuristic:
     batch_size: 256
     buffer_size: 100000
     max_episode_steps: 100
-    num_steps_per_round: 10000
+    num_steps_per_round: 50000
     num_rounds: 1
     threshold: 0.05
     beta: 1.0
@@ -83,7 +84,7 @@ policy:
   early_stopping: false
   early_stopping_patience: 10
   max_episode_steps: 100
-  episodes_per_scenario: 100
+  episodes_per_scenario: 10
   training_record_interval: 100
 
   eval_rollouts: 100

@@ -1,13 +1,14 @@
 seed: 42
 debug: true
 render_mode: null
+eval_heuristic_only: false
 
 env:
   name: GridworldFixedTAMPSystem
   # Gridworld
   num_cells: 3
   num_states_per_cell: 10
-  num_teleporters: 0
+  num_teleporters: 2
 
   # Blocks
   n_blocks: 2
@@ -15,7 +16,7 @@ env:
 
 
 collection:
-  num_episodes: 5
+  num_episodes: 1000
   max_steps_per_edge: 100
   planner_id: pyperplan
 
@@ -60,6 +61,7 @@ heuristic:
   eval_rollouts: 1
   eval_temperature: 0.3
   eval_max_steps: 10
+  wandb_enabled: true
 
   dqn:
     learning_rate: 3e-4
@@ -73,6 +75,7 @@ heuristic:
     gamma: 0.99
     exploration_factor: 0.05
     keep_fraction: 0.2
+    wandb_enabled: true
 
 
 policy:
@@ -89,7 +92,7 @@ policy:
   episodes_per_scenario: 1
   training_record_interval: 100
 
-  eval_rollouts: 10
+  eval_rollouts: 1
 
 
 evaluation:

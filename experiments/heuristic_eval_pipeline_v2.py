@@ -107,7 +107,7 @@ def extract_serializable_results(results: PipelineResults) -> SerializableResult
         evaluation_results=results.evaluation_results,
         training_data=results.training_data,
         pruned_training_data=results.pruned_training_data,
-        final_training_data=results.final_training_data,
+        final_training_data=results.pruned_training_data,
         teleporter_locations=teleporter_locations,
     )
 
@@ -228,13 +228,7 @@ def main(cfg: DictConfig) -> float:
                 )
                 f.write("\n")
 
-            # Final training data
-            if results.final_training_data:
-                f.write("FINAL (after random selection):\n")
-                f.write(
-                    f"  Shortcuts for training: {len(results.final_training_data.unique_shortcuts)}\n"
-                )
-                f.write("\n")
+
 
             # Shortcut quality
             if results.shortcut_quality_results:
@@ -252,6 +246,7 @@ def main(cfg: DictConfig) -> float:
 
     save_serializable_results(results, output_dir)
     return 0.0
+
 
 if __name__ == "__main__":
     main()  # pylint: disable=no-value-for-parameter

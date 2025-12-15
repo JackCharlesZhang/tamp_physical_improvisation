@@ -249,87 +249,164 @@ def compute_true_distance_gridworld_fixed(
     start_state: "GraphInstance",
     goal_node_atoms: set[GroundAtom],
 ) -> float:
-    """Compute true minimum Manhattan distance from start state to goal node.
+    """Compute true minimum distance from start state to goal node using Dijkstra's algorithm.
 
-    For gridworld, we can compute the exact minimum distance because:
-    1. The state space is continuous positions in a grid
-    2. Goal nodes are defined by cell predicates (e.g., InRow1, InCol2)
-    3. Manhattan distance is the true optimal distance (no teleporters case)
+    This function considers teleporters when computing the shortest path at the state level.
 
     Args:
-        system: GridworldTAMPSystem instance
+        system: GridworldFixedTAMPSystem instance
         start_state: Low-level state (GraphInstance observation)
         goal_node_atoms: Set of atoms defining the goal node
 
     Returns:
-        Minimum Manhattan distance from start_state to any state satisfying goal_node_atoms
-
-    Example:
-        Grid is 3x3 cells with 10x10 states per cell (total 30x30 continuous space)
-        Start state: robot at (0, 2)
-        Goal node: InRow1, InCol1 (cell (1,1))
-        The closest state in cell (1,1) is at position (10, 10)
-        True distance = |0-10| + |2-10| = 10 + 8 = 18
+        Minimum distance from start_state to any state satisfying goal_node_atoms
     """
     # Extract robot position from start state
     robot_node = start_state.nodes[0]  # type=0 is robot
     robot_x, robot_y = robot_node[0], robot_node[1]
 
     # Parse goal atoms to determine target cell
-    # Atoms are like: InRow1(robot0), InCol2(robot0)
     target_row = None
     target_col = None
 
     for atom in goal_node_atoms:
         atom_str = str(atom)
         if "InRow" in atom_str or "Row" in atom_str:
-            # Extract row number from atom like "InRow1(robot0)" or "Row1(robot0)"
             for i in range(system.env.num_cells):
                 if f"Row{i}" in atom_str or f"InRow{i}" in atom_str:
                     target_row = i
                     break
         elif "InCol" in atom_str or "Col" in atom_str:
-            # Extract col number from atom like "InCol2(robot0)" or "Col2(robot0)"
             for i in range(system.env.num_cells):
                 if f"Col{i}" in atom_str or f"InCol{i}" in atom_str:
                     target_col = i
                     break
 
     if target_row is None or target_col is None:
-        # Incomplete goal specification
         return float("inf")
 
-    # Compute cell boundaries
-    # Each cell spans [row*states_per_cell, (row+1)*states_per_cell]
+    # Compute target cell boundaries
     num_states_per_cell = system.env.num_states_per_cell
-
-    # Target cell boundaries in continuous space
     target_x_min = target_col * num_states_per_cell
     target_x_max = (target_col + 1) * num_states_per_cell
     target_y_min = target_row * num_states_per_cell
     target_y_max = (target_row + 1) * num_states_per_cell
 
     # Find closest point in target cell to robot position
-    # Clamp robot position to cell boundaries
     closest_x = np.clip(robot_x, target_x_min, target_x_max)
     closest_y = np.clip(robot_y, target_y_min, target_y_max)
 
-    # Manhattan distance
-    distance = abs(robot_x - closest_x) + abs(robot_y - closest_y)
+    # Use Dijkstra considering teleporters at state level
+    return _dijkstra_state_level(
+        system, robot_x, robot_y, closest_x, closest_y
+    )
 
-    return float(distance)
+
+def _dijkstra_state_level(
+    system: "GridworldFixedTAMPSystem",
+    start_x: float,
+    start_y: float,
+    goal_x: float,
+    goal_y: float,
+) -> float:
+    """Compute shortest path using Dijkstra's algorithm at state level with teleporters.
+
+    The graph consists of:
+    - Start position
+    - Goal position
+    - All teleporter portal positions
+
+    Edges:
+    - Direct Manhattan distance between any two positions
+    - Cost 1 for teleporting between paired portals
+
+    Args:
+        system: GridworldFixedTAMPSystem instance
+        start_x, start_y: Starting position
+        goal_x, goal_y: Goal position
+
+    Returns:
+        Minimum distance considering teleporters
+    """
+    import heapq
+
+    # If no teleporters, use direct Manhattan distance
+    if not hasattr(system.env, 'portal_positions') or not system.env.portal_positions:
+        return float(abs(start_x - goal_x) + abs(start_y - goal_y))
+
+    # Build graph of important positions (start, goal, and all portal positions)
+    positions = [(start_x, start_y)]  # Index 0: start
+    positions.append((goal_x, goal_y))  # Index 1: goal
+
+    # Add all portal positions
+    portal_indices = []  # List of (portal1_idx, portal2_idx) pairs
+    for portal1_pos, portal2_pos in system.env.portal_positions:
+        idx1 = len(positions)
+        positions.append((float(portal1_pos[0]), float(portal1_pos[1])))
+
+        idx2 = len(positions)
+        positions.append((float(portal2_pos[0]), float(portal2_pos[1])))
+
+        portal_indices.append((idx1, idx2))
+
+    # Dijkstra's algorithm
+    # State: position index in positions list
+    distances = {0: 0.0}  # Start at position 0 with distance 0
+    pq = [(0.0, 0)]  # (distance, position_idx)
+    visited = set()
+
+    while pq:
+        curr_dist, curr_idx = heapq.heappop(pq)
+
+        if curr_idx in visited:
+            continue
+        visited.add(curr_idx)
+
+        if curr_idx == 1:  # Reached goal
+            return curr_dist
+
+        curr_x, curr_y = positions[curr_idx]
+
+        # Explore all neighbors
+        for next_idx in range(len(positions)):
+            if next_idx == curr_idx or next_idx in visited:
+                continue
+
+            next_x, next_y = positions[next_idx]
+
+            # Check if this is a teleporter edge
+            is_teleporter = False
+            for portal1_idx, portal2_idx in portal_indices:
+                if (curr_idx == portal1_idx and next_idx == portal2_idx) or \
+                   (curr_idx == portal2_idx and next_idx == portal1_idx):
+                    is_teleporter = True
+                    break
+
+            if is_teleporter:
+                # Teleporter cost is 1
+                edge_cost = 1.0
+            else:
+                # Normal movement: Manhattan distance
+                edge_cost = abs(curr_x - next_x) + abs(curr_y - next_y)
+
+            new_dist = curr_dist + edge_cost
+
+            if next_idx not in distances or new_dist < distances[next_idx]:
+                distances[next_idx] = new_dist
+                heapq.heappush(pq, (new_dist, next_idx))
+
+    # If goal not reached (shouldn't happen), return direct Manhattan distance
+    return float(abs(start_x - goal_x) + abs(start_y - goal_y))
+
 
 def compute_true_distance_gridworld(
     system: "GridworldTAMPSystem",
     start_state: "GraphInstance",
     goal_node_atoms: set[GroundAtom],
 ) -> float:
-    """Compute true minimum Manhattan distance from start state to goal node.
+    """Compute true minimum distance from start state to goal node using Dijkstra's algorithm.
 
-    For gridworld, we can compute the exact minimum distance because:
-    1. The state space is continuous positions in a grid
-    2. Goal nodes are defined by cell predicates (e.g., InRow1, InCol2)
-    3. Manhattan distance is the true optimal distance (no teleporters case)
+    This function considers teleporters when computing the shortest path at the state level.
 
     Args:
         system: GridworldTAMPSystem instance
