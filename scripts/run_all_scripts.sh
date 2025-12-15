@@ -3,35 +3,53 @@
 # Define configurations and their overrides
 # Each entry in CONFIGS_TO_RUN is a space-separated string:
 # "config_name override1=value1 override2=value2 ..."
-CONFIGS_TO_RUN=(
-  "gridworld_fixed heuristic.num_epochs_per_round=300"
-)
+# Base config name
+BASE_CONFIG="gridworld_fixed"
 
-# Loop through each config entry and submit a SLURM job
-for config_entry in "${CONFIGS_TO_RUN[@]}"; do
-  # Split the entry into config_name and overrides
-  read -r config_name CONFIG_OVERRIDES <<< "$config_entry"
+# Define parameter ranges
+LATENT_DIMS=(8 16)
+LEARNING_RATES=(1e-3)
+GAMMAS=(0.9)
+POLICY_TEMPS=(0.5)
 
-  echo "Submitting SLURM job for config: $config_name with overrides: ${CONFIG_OVERRIDES}"
+# Loop through all combinations
+for latent_dim in "${LATENT_DIMS[@]}"; do
+  for lr in "${LEARNING_RATES[@]}"; do
+    for gamma in "${GAMMAS[@]}"; do
+      for policy_temp in "${POLICY_TEMPS[@]}"; do
 
-  # Set the CONFIG_OVERRIDES environment variable for run_slap_v2.sh
-  export CONFIG_OVERRIDES="${CONFIG_OVERRIDES}"
+        # Construct the override string
+        CONFIG_OVERRIDES="heuristic.latent_dim=${latent_dim} heuristic.learning_rate=${lr} heuristic.gamma=${gamma} heuristic.policy_temperature=${policy_temp}"
+        
+        # Construct the WandB run name
+        WANDB_RUN_NAME="${BASE_CONFIG}_L${latent_dim}_LR${lr}_G${gamma}_PT${policy_temp}"
+        
+        echo "Submitting SLURM job for config: ${BASE_CONFIG} with overrides: ${CONFIG_OVERRIDES}"
+        echo "WandB Run Name: ${WANDB_RUN_NAME}"
 
-  # Submit the job
-  sbatch scripts/run_slap_v2.sh --config-name "$config_name"
+        # Export environment variables for the sbatch script
+        export CONFIG_OVERRIDES="${CONFIG_OVERRIDES}"
+        export WANDB_RUN_NAME="${WANDB_RUN_NAME}"
+        
+        # Submit the job
+        sbatch scripts/run_slap_v2.sh --config-name "${BASE_CONFIG}"
 
-  # Unset CONFIG_OVERRIDES to prevent it from affecting subsequent sbatch calls if not explicitly set
-  unset CONFIG_OVERRIDES
+        # Unset environment variables to prevent them from affecting subsequent sbatch calls
+        unset CONFIG_OVERRIDES
+        unset WANDB_RUN_NAME
 
-  sleep 1 # Add a small delay to avoid overwhelming the SLURM scheduler
+        sleep 1 # Add a small delay to avoid overwhelming the SLURM scheduler
+      done
+    done
+  done
 done
 
-echo "All SLURM jobs submitted."
+echo "All SLURM jobs for ${BASE_CONFIG} combinations submitted."
+
+# You can add more loops for other base configs if needed
 
 
-# max shorcuts per graph [ ]
-# num epochs per round [ ]
-# exploration factor [ ]
-# eval temperature [ ]
-# policy temperature []
-# max episode steps [ ]
+# latent dim [8 16 32]
+# learning rate [1e-3 3e-4 1e-4]
+# gamma [0.9 0.99 0.999]
+# policy temperature / eval temperature [0.1 0.3 0.5]
