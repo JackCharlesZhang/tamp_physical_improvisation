@@ -16,7 +16,7 @@ env:
 
 
 collection:
-  num_episodes: 100
+  num_episodes: 1000
   max_steps_per_edge: 100
   planner_id: pyperplan
 
