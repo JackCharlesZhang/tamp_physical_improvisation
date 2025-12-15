@@ -7,9 +7,9 @@
 BASE_CONFIG="gridworld_fixed"
 
 # Define parameter ranges
-LATENT_DIMS=(12)
+LATENT_DIMS=(16 32)
 LEARNING_RATES=(1e-3)
-GAMMAS=(0.9)
+GAMMAS=(0.9 0.99)
 HEURISTIC_TYPES=("crl" "rollouts" "smart_rollouts" "dqn" "cmd")
 
 # Loop through all combinations

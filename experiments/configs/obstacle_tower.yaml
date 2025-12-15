@@ -1,7 +1,8 @@
 seed: 42
 debug: true
 render_mode: null
-eval_heuristic_only: true  # If true, stop pipeline after heuristic evaluation (stage 2.5)
+eval_heuristic_only: false  # If true, stop pipeline after heuristic evaluation (stage 2.5)
+wandb_enabled: true
 
 env:
   name: GraphObstacleTowerTAMPSystem
@@ -27,8 +28,8 @@ heuristic:
   type: crl
 
   # Rollout Heuristic Parameters
-  num_rollouts_per_node: 100
-  max_steps_per_rollout: 100
+  num_rollouts_per_node: 50
+  max_steps_per_rollout: 50
   shortcut_success_threshold: 0.1
   shortcut_length_factor: 1
   action_scale: 0.015
