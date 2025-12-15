@@ -19,7 +19,7 @@ import time
 import random
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import numpy as np
 import torch
 import wandb
@@ -308,10 +308,13 @@ def test_heuristic_quality(
     total_est = 0.0
     total_graph = 0.0
     total_abs_error = 0.0
+    all_estimated_distances = []
+    all_graph_distances = []
 
     print(f"\nEvaluating heuristic on {len(sample_indices)} sample shortcuts:")
     print(f"{'Source':>8} {'Target':>8} {'Estimated':>12} {'Graph':>12} {'Error':>12}")
     print("-" * 60)
+    
 
     for idx in sample_indices:
         source_id, target_id = shortcuts[idx]
@@ -331,14 +334,14 @@ def test_heuristic_quality(
             "absolute_error": abs_error,
         })
 
-        wandb.log({"test/estimated_distance": estimated_dist, "test/graph_distance": graph_dist, "test/absolute_error": abs_error})
-
         print(f"{source_id:8d} {target_id:8d} {estimated_dist:12.2f} {graph_dist:12.2f} {abs_error:12.2f}")
 
         if graph_dist != float("inf"):
             total_est += estimated_dist
             total_graph += graph_dist
             total_abs_error += abs_error
+            all_estimated_distances.append(estimated_dist)
+            all_graph_distances.append(graph_dist)
 
     # Compute averages
     num_finite = sum(1 for s in results["samples"] if s["graph_distance"] != float("inf"))
@@ -346,9 +349,32 @@ def test_heuristic_quality(
         results["avg_estimated_distance"] = total_est / num_finite
         results["avg_graph_distance"] = total_graph / num_finite
         results["avg_absolute_error"] = total_abs_error / num_finite
+        
+        # Compute min/max/correlation
+        min_estimated_distance = np.min(all_estimated_distances)
+        max_estimated_distance = np.max(all_estimated_distances)
+        min_graph_distance = np.min(all_graph_distances)
+        max_graph_distance = np.max(all_graph_distances)
+        correlation_distance = np.corrcoef(all_estimated_distances, all_graph_distances)[0, 1]
 
         print("-" * 60)
         print(f"{'Average':>8} {'':<8} {results['avg_estimated_distance']:12.2f} {results['avg_graph_distance']:12.2f} {results['avg_absolute_error']:12.2f}")
+        print(f"{'Min Estimated':>28} {min_estimated_distance:12.2f}")
+        print(f"{'Max Estimated':>28} {max_estimated_distance:12.2f}")
+        print(f"{'Min Graph':>28} {min_graph_distance:12.2f}")
+        print(f"{'Max Graph':>28} {max_graph_distance:12.2f}")
+        print(f"{'Correlation':>28} {correlation_distance:12.2f}")
+
+        wandb.log({
+            "test/avg_estimated_distance": results["avg_estimated_distance"],
+            "test/avg_graph_distance": results["avg_graph_distance"],
+            "test/avg_absolute_error": results["avg_absolute_error"],
+            "test/min_estimated_distance": min_estimated_distance,
+            "test/max_estimated_distance": max_estimated_distance,
+            "test/min_graph_distance": min_graph_distance,
+            "test/max_graph_distance": max_graph_distance,
+            "test/correlation_distance": correlation_distance,
+        })
 
     return results
 
@@ -777,7 +803,8 @@ def run_pipeline(
         rng=rng
     )
 
-    wandb.init(project="slap_crl_heuristic", config=cfg.heuristic.__dict__)
+    wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True))
+
 
     # Stage 2: Train heuristic
     results.heuristic_training_history = train_heuristic(

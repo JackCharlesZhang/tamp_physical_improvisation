@@ -753,8 +753,6 @@ class CRLHeuristic(BaseHeuristic):
         max_episode_steps = self.config.max_episode_steps
         keep_fraction = self.config.keep_fraction
 
-        wandb.init(project="slap_crl_heuristic", config=self.config.__dict__)
-
         print(f"\n{'='*80}")
         print(f"MULTI-ROUND TRAINING: {num_rounds} rounds, {num_epochs_per_round} epochs/round")
         print(f"Starting with {len(state_node_pairs)} state-node pairs")
@@ -867,8 +865,6 @@ class CRLHeuristic(BaseHeuristic):
         print(f"Final node-node pairs: {len(current_node_pairs)}")
         print(f"Final state-node pairs: {len(final_state_pairs)}")
         print(f"{'='*80}\n")
-
-        wandb.finish()
 
         return combined_history
 
