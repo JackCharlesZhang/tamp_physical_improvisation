@@ -4,7 +4,7 @@
 # Each entry in CONFIGS_TO_RUN is a space-separated string:
 # "config_name override1=value1 override2=value2 ..."
 CONFIGS_TO_RUN=(
-  "gridworld_fixed heuristic.num_epochs_per_round=100"
+  "gridworld_fixed heuristic.num_epochs_per_round=300"
 )
 
 # Loop through each config entry and submit a SLURM job
@@ -27,3 +27,11 @@ for config_entry in "${CONFIGS_TO_RUN[@]}"; do
 done
 
 echo "All SLURM jobs submitted."
+
+
+# max shorcuts per graph [ ]
+# num epochs per round [ ]
+# exploration factor [ ]
+# eval temperature [ ]
+# policy temperature []
+# max episode steps [ ]

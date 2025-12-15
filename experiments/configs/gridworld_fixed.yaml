@@ -44,7 +44,7 @@ heuristic:
   policy_temperature: 0.3
   iters_per_epoch: 100
   learn_frequency: 1
-  num_epochs_per_round: 1000 # Epochs per round (used as num_epochs_per_round in multi_train)
+  num_epochs_per_round: 300 # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
   max_episode_steps: 100
   num_rounds: 1  # Number of pruning rounds (1 = no pruning, just normal train)
