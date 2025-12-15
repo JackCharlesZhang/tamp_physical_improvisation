@@ -21,7 +21,7 @@ collection:
 
 heuristic:
   # Heuristic Parameters
-  type: cmd
+  type: crl
 
   # Pruning Parameters
   max_shortcuts_per_graph: 1
@@ -49,7 +49,7 @@ heuristic:
   learn_frequency: 1
   num_action_samples: 4
 
-  num_epochs_per_round: 100  # Epochs per round (used as num_epochs_per_round in multi_train)
+  num_epochs_per_round: 10  # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
   max_episode_steps: 100
 

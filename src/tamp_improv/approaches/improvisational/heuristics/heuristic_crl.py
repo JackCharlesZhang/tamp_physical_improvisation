@@ -1210,6 +1210,9 @@ class CRLHeuristic(BaseHeuristic):
         # if math.isinf(gain):
         #     gain = 0
 
+        x = source_node
+        y = target_node
+
         nodes = self.training_data.node_states.keys()
 
 
