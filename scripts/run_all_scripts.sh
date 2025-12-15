@@ -45,11 +45,3 @@ for latent_dim in "${LATENT_DIMS[@]}"; do
 done
 
 echo "All SLURM jobs for ${BASE_CONFIG} combinations submitted."
-
-# You can add more loops for other base configs if needed
-
-
-# latent dim [8 16 32]
-# learning rate [1e-3 3e-4 1e-4]
-# gamma [0.9 0.99 0.999]
-# policy temperature / eval temperature [0.1 0.3 0.5]

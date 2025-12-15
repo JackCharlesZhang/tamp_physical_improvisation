@@ -963,7 +963,9 @@ def run_pipeline(
         rng=rng
     )
 
-    wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True))
+    wandb_run_name = os.getenv("WANDB_RUN_NAME", None)
+    wandb.init(project="slap_crl_heuristic", config=OmegaConf.to_container(cfg.heuristic, resolve=True), name=wandb_run_name)
+
 
     # Stage 2: Train heuristic
     results.heuristic_training_history = train_heuristic(
