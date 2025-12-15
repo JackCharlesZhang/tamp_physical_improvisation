@@ -24,18 +24,18 @@ heuristic:
   max_shortcuts_per_graph: 20
 
   # Heuristic Parameters
-  type: crl
+  type: cmd
 
   # Rollout Heuristic Parameters
-  num_rollouts_per_node: 100
-  max_steps_per_rollout: 100
+  num_rollouts_per_node: 10
+  max_steps_per_rollout: 50
   shortcut_success_threshold: 0.1
   shortcut_length_factor: 1
   action_scale: 1.0
 
   # CRL Heuristic Parameters
   hidden_dims: [64, 64]
-  latent_dim: 4
+  latent_dim: 12
   normalize_embeddings: false
   learning_rate: 0.001
   batch_size: 256
@@ -44,15 +44,15 @@ heuristic:
   repetition_factor: 8
   policy_temperature: 0.5
   iters_per_epoch: 100
-  learn_frequency: 10
-  num_epochs_per_round: 1000 # Epochs per round (used as num_epochs_per_round in multi_train)
+  learn_frequency: 2
+  num_epochs_per_round: 200 # Epochs per round (used as num_epochs_per_round in multi_train)
   trajectories_per_epoch: 10
   max_episode_steps: 200
   num_rounds: 1  # Number of pruning rounds (1 = no pruning, just normal train)
   keep_fraction: 0.2  # Fraction of node-node pairs to keep each round
   exploration_factor: 0.1
   eval_temperature: 0
-  wandb_enabled: false
+  wandb_enabled: true
 
   # Evaluate Heuristic
   eval_rollouts: 100
@@ -70,6 +70,7 @@ heuristic:
     gamma: 0.9
     exploration_factor: 0.05
     keep_fraction: 0.2
+    wandb_enabled: true
 
   
 

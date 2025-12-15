@@ -6,9 +6,9 @@ eval_heuristic_only: false
 env:
   name: GridworldFixedTAMPSystem
   # Gridworld
-  num_cells: 10
+  num_cells: 3
   num_states_per_cell: 10
-  num_teleporters: 10
+  num_teleporters: 2
 
   # Blocks
   n_blocks: 2
@@ -22,7 +22,7 @@ collection:
 
 heuristic:
   # Heuristic Parameters
-  type: cmd
+  type: dqn
 
   # Pruning Parameters
   max_shortcuts_per_graph: 1
@@ -61,7 +61,7 @@ heuristic:
   eval_rollouts: 1
   eval_temperature: 0.3
   eval_max_steps: 10
-  wandb_enabled: false
+  wandb_enabled: true
 
   dqn:
     learning_rate: 3e-4
@@ -75,6 +75,7 @@ heuristic:
     gamma: 0.99
     exploration_factor: 0.05
     keep_fraction: 0.2
+    wandb_enabled: true
 
 
 policy:
@@ -91,7 +92,7 @@ policy:
   episodes_per_scenario: 1
   training_record_interval: 100
 
-  eval_rollouts: 10
+  eval_rollouts: 1
 
 
 evaluation:
