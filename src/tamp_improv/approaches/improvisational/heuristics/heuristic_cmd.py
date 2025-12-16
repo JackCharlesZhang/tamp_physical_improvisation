@@ -415,22 +415,40 @@ def cmd_contrastive_loss(
     temperature: float = 1.0,
 ) -> tuple[torch.Tensor, dict]:
     """
-    CMD-1 contrastive loss with duplicate-goal collapse fixed.
-    Signature unchanged.
+    CMD-1 contrastive loss with duplicate-goal collapse fixed,
+    and ignoring goals marked as -1.
     """
 
     device = current_states.device
     B = current_states.shape[0]
 
     # --------------------------------------------------
-    # 1. Deduplicate goals and build label mapping
+    # 1. Mask invalid goals (-1)
+    # --------------------------------------------------
+    valid_mask = future_nodes != -1
+    if valid_mask.sum() == 0:
+        # All goals invalid, return zero loss
+        zero = torch.tensor(0.0, device=device, requires_grad=True)
+        return zero, {
+            "loss": 0.0,
+            "accuracy": 1.0,
+            "pos_energy_mean": 0.0,
+            "neg_energy_mean": 0.0,
+            "energy_gap": 0.0,
+            "num_unique_goals": 0,
+        }
+
+    valid_states = current_states[valid_mask]
+    valid_goals = future_nodes[valid_mask]
+
+    # --------------------------------------------------
+    # 2. Deduplicate goals
     # --------------------------------------------------
     unique_goals, inverse_indices = torch.unique(
-        future_nodes, return_inverse=True
+        valid_goals, return_inverse=True
     )
     G = unique_goals.shape[0]
 
-    # If all goals identical, contrastive learning is impossible
     if G == 1:
         zero = torch.tensor(0.0, device=device, requires_grad=True)
         return zero, {
@@ -439,47 +457,42 @@ def cmd_contrastive_loss(
             "pos_energy_mean": 0.0,
             "neg_energy_mean": 0.0,
             "energy_gap": 0.0,
+            "num_unique_goals": 1,
         }
 
     # --------------------------------------------------
-    # 2. Build (state, unique-goal) energy matrix
+    # 3. Build (state, unique-goal) energy matrix
     # --------------------------------------------------
-    # states: (B, G, state_dim)
-    states_expanded = current_states.unsqueeze(1).expand(B, G, -1)
+    states_expanded = valid_states.unsqueeze(1).expand(-1, G, -1)
+    goals_expanded = unique_goals.unsqueeze(0).expand(valid_states.shape[0], G)
 
-    # goals: (B, G)
-    goals_expanded = unique_goals.unsqueeze(0).expand(B, G)
-
-    # flatten
     states_flat = states_expanded.reshape(-1, current_states.shape[-1])
     goals_flat = goals_expanded.reshape(-1)
 
-    # compute energies
     energies = energy_fn(states_flat, goals_flat)
-    energy_matrix = energies.view(B, G)
+    energy_matrix = energies.view(valid_states.shape[0], G)
 
     logits = energy_matrix / temperature
+    labels = inverse_indices
 
     # --------------------------------------------------
-    # 3. Correct labels (state → its goal’s column)
+    # 4. Compute loss
     # --------------------------------------------------
-    labels = inverse_indices  # (B,)
-
     loss = F.cross_entropy(logits, labels)
 
     # --------------------------------------------------
-    # 4. Metrics
+    # 5. Metrics
     # --------------------------------------------------
     with torch.no_grad():
         preds = torch.argmax(logits, dim=1)
         accuracy = (preds == labels).float().mean()
 
         pos_energies = energy_matrix[
-            torch.arange(B, device=device), labels
+            torch.arange(valid_states.shape[0], device=device), labels
         ]
 
         neg_mask = torch.ones_like(energy_matrix, dtype=bool)
-        neg_mask[torch.arange(B), labels] = False
+        neg_mask[torch.arange(valid_states.shape[0]), labels] = False
         neg_energies = energy_matrix[neg_mask]
 
     metrics = {
@@ -489,9 +502,11 @@ def cmd_contrastive_loss(
         "neg_energy_mean": neg_energies.mean().item(),
         "energy_gap": (pos_energies.mean() - neg_energies.mean()).item(),
         "num_unique_goals": G,
+        "num_valid_states": valid_states.shape[0],
     }
 
     return loss, metrics
+
 
 
 class CMDHeuristic(BaseHeuristic):
@@ -1120,21 +1135,65 @@ class CMDHeuristic(BaseHeuristic):
         k = np.log(0.5) / np.log(1 - self.config.threshold)
         return 1 - (1 - p_rr)**k
     
+    # def estimate_gain(self, source_node: int, target_node: int) -> float:
+    #     """Estimate gain of training on a shortcut, relative to distance in the
+    #     initial graph. Higher gain means more useful shortcut."""
+
+    #     graph_distance = self.graph_distances.get((source_node, target_node), float('inf'))
+    #     estimated_distance = self.estimate_node_distance(source_node, target_node)
+        
+    #     # Use this if we're learning too many backwards shortcuts. Might not be a great idea in general.
+    #     # gain = max(graph_distance - estimated_distance, 0)
+    #     # if math.isinf(gain):
+    #     #     gain = 0
+        
+    #     gain = np.clip(graph_distance - estimated_distance, 0, self.config.max_episode_steps)
+    #     return gain
+
     def estimate_gain(self, source_node: int, target_node: int) -> float:
         """Estimate gain of training on a shortcut, relative to distance in the
         initial graph. Higher gain means more useful shortcut."""
 
-        graph_distance = self.graph_distances.get((source_node, target_node), float('inf'))
-        estimated_distance = self.estimate_node_distance(source_node, target_node)
+        # graph_distance = self.graph_distances.get((source_node, target_node), float('inf'))
+        length = self.estimate_node_distance(source_node, target_node)
         
         # Use this if we're learning too many backwards shortcuts. Might not be a great idea in general.
         # gain = max(graph_distance - estimated_distance, 0)
         # if math.isinf(gain):
         #     gain = 0
-        
-        gain = np.clip(graph_distance - estimated_distance, 0, self.config.max_episode_steps)
-        return gain
 
+        x = source_node
+        y = target_node
+
+        nodes = self.training_data.node_states.keys()
+
+
+        def d(u, v):
+            return self.graph_distances[(u, v)]
+
+        # --- Phase 1: affected node sets ---
+        A_x = [u for u in nodes if d(u, y) + length < d(u, x)]
+        A_y = [v for v in nodes if d(v, x) + length < d(v, y)]
+
+        # Iterate over smaller set (optimization)
+        if len(A_y) < len(A_x):
+            A_x, A_y = A_y, A_x
+            x, y = y, x
+
+        RG = 0.0
+
+        # --- Phase 2: affected pairs ---
+        for u in A_x:
+            du_y = d(u, y)
+            for v in A_y:
+                d_old = d(u, v)
+                d_new = du_y + length + d(x, v)
+
+                if d_new < d_old:
+                    RG += (d_old - d_new)
+
+        gain = np.clip(RG, 0, self.config.max_episode_steps)
+        return gain
 
     def prune_explore(self) -> GoalConditionedTrainingData:
         print(f"\n[DEBUG] Pruning with keep_fraction={self.config.keep_fraction}, max_episode_steps={self.config.max_episode_steps}")

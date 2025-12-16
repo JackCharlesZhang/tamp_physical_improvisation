@@ -551,7 +551,7 @@ class DQNHeuristic(BaseHeuristic):
 
             self.algorithm_used = algorithm
             # Train with callback (enable debug for detailed logging)
-            self.callback = DQNHeuristicCallback(check_freq=1000, debug=True)
+        self.callback = DQNHeuristicCallback(check_freq=1000, debug=True)
 
     def train(
         self,
@@ -821,14 +821,59 @@ class DQNHeuristic(BaseHeuristic):
         k = np.log(0.5) / np.log(1 - self.config.threshold)
         return 1 - (1 - p_rr)**k
 
+    # def estimate_gain(self, source_node: int, target_node: int) -> float:
+    #     """Estimate gain of training on a shortcut, relative to distance in the
+    #     initial graph. Higher gain means more useful shortcut."""
+
+    #     graph_distance = self.graph_distances.get((source_node, target_node), float('inf'))
+    #     estimated_distance = self.estimate_node_distance(source_node, target_node)
+        
+    #     gain = np.clip(graph_distance - estimated_distance, 0, self.config.max_episode_steps)
+    #     return gain
+
     def estimate_gain(self, source_node: int, target_node: int) -> float:
         """Estimate gain of training on a shortcut, relative to distance in the
         initial graph. Higher gain means more useful shortcut."""
 
-        graph_distance = self.graph_distances.get((source_node, target_node), float('inf'))
-        estimated_distance = self.estimate_node_distance(source_node, target_node)
+        # graph_distance = self.graph_distances.get((source_node, target_node), float('inf'))
+        length = self.estimate_node_distance(source_node, target_node)
         
-        gain = np.clip(graph_distance - estimated_distance, 0, self.config.max_episode_steps)
+        # Use this if we're learning too many backwards shortcuts. Might not be a great idea in general.
+        # gain = max(graph_distance - estimated_distance, 0)
+        # if math.isinf(gain):
+        #     gain = 0
+
+        x = source_node
+        y = target_node
+
+        nodes = self.training_data.node_states.keys()
+
+
+        def d(u, v):
+            return self.graph_distances[(u, v)]
+
+        # --- Phase 1: affected node sets ---
+        A_x = [u for u in nodes if d(u, y) + length < d(u, x)]
+        A_y = [v for v in nodes if d(v, x) + length < d(v, y)]
+
+        # Iterate over smaller set (optimization)
+        if len(A_y) < len(A_x):
+            A_x, A_y = A_y, A_x
+            x, y = y, x
+
+        RG = 0.0
+
+        # --- Phase 2: affected pairs ---
+        for u in A_x:
+            du_y = d(u, y)
+            for v in A_y:
+                d_old = d(u, v)
+                d_new = du_y + length + d(x, v)
+
+                if d_new < d_old:
+                    RG += (d_old - d_new)
+
+        gain = np.clip(RG, 0, self.config.max_episode_steps)
         return gain
 
     def prune_explore(self) -> GoalConditionedTrainingData:
