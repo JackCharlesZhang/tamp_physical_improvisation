@@ -287,6 +287,9 @@ def prune_with_rollouts(
     # Build node lookup for efficiency
     node_by_id = {node.id: node for node in planning_graph.nodes}
 
+    # Pre-compute target node atom sets for efficiency
+    target_atoms_by_id = {node.id: set(node.atoms) for node in planning_graph.nodes}
+
     # Perform rollouts from each source node
     for source_id, source_states in training_data.node_states.items():
         source_node = node_by_id.get(source_id)
@@ -298,13 +301,14 @@ def prune_with_rollouts(
 
         print(
             f"\nPerforming {rollouts_per_state} rollouts for each of "
-            f"{len(source_states)} state(s) from node {source_id}"
+            f"{len(source_states)} state(s) from node {source_id}",
+            flush=True
         )
 
-        for source_state in source_states:
+        for state_idx, source_state in enumerate(source_states):
             for rollout_idx in range(rollouts_per_state):
                 if rollout_idx > 0 and rollout_idx % 100 == 0:
-                    print(f"  Completed {rollout_idx}/{rollouts_per_state} rollouts")
+                    print(f"  Completed {rollout_idx}/{rollouts_per_state} rollouts", flush=True)
 
                 # Reset to source state
                 raw_env.reset_from_state(source_state)
@@ -314,7 +318,7 @@ def prune_with_rollouts(
                 reached_in_this_rollout: set[int] = set()
 
                 # Execute random rollout
-                for _ in range(max_steps_per_rollout):
+                for step_idx in range(max_steps_per_rollout):
                     action = sampling_space.sample()
                     obs, _, terminated, truncated, _ = raw_env.step(action)
                     curr_atoms = system.perceiver.step(obs)
@@ -334,13 +338,16 @@ def prune_with_rollouts(
                             continue
 
                         # Check if atoms match target node
-                        target_node = node_by_id.get(target_id)
-                        if target_node and set(target_node.atoms) == curr_atoms:
+                        target_atoms = target_atoms_by_id.get(target_id)
+                        if target_atoms and target_atoms == curr_atoms:
                             shortcut_success_counts[(source_id, target_id)] += 1
                             reached_in_this_rollout.add(target_id)
 
                     if terminated or truncated:
                         break
+
+            # Print progress after each state
+            print(f"  Completed all rollouts for state {state_idx + 1}/{len(source_states)} from node {source_id}", flush=True)
 
     print("\nRollout results:")
     for (source_id, target_id), count in shortcut_success_counts.items():
@@ -498,52 +505,23 @@ def prune_with_distance_heuristic(
     print(f"\nEvaluating heuristic on all {len(all_state_pairs)} state pairs...")
     print(f"Pruning criterion: f(s,s') < min(D(s,s'), {practical_horizon})")
 
-    # Compute average learned distance for each node pair
-    node_pair_distances = {}  # (source_id, target_id) -> average learned distance
+    # Use V4's prune() method to select promising node pairs
+    # This returns the union of:
+    # 1. Shortcuts where estimated < graph distance
+    # 2. Top keep_fraction of pairs by (estimated - graph) score
+    # Also filters out pairs with estimated distance > practical_horizon
+    keep_fraction = config.get("heuristic_keep_fraction", 0.5)
+    selected_node_pairs = heuristic.prune(
+        graph_distances,
+        keep_fraction=keep_fraction,
+        max_episode_steps=practical_horizon,
+    )
 
-    for node_pair, state_pair_indices in node_pair_to_state_pairs.items():
-        # Evaluate all state pairs for this node pair
-        learned_distances = []
-        for idx in state_pair_indices:
-            pair = all_state_pairs[idx]
-            learned_dist = heuristic.estimate_distance(
-                pair["source_state"], pair["target_state"]
-            )
-            learned_distances.append(learned_dist)
+    print(f"Pruned {len(training_data.valid_shortcuts) - len(selected_node_pairs)} shortcuts")
+    print(f"Kept {len(selected_node_pairs)} shortcuts")
 
-        # Use average distance as the robust estimate
-        avg_learned_dist = sum(learned_distances) / len(learned_distances)
-        node_pair_distances[node_pair] = avg_learned_dist
-
-    print(f"Computed average distances for {len(node_pair_distances)} node pairs")
-
-    # Apply pruning criterion to each node pair
-    selected_shortcuts = []
-    pruned_count = 0
-
-    for source_id, target_id in training_data.valid_shortcuts:
-        if (source_id, target_id) not in node_pair_distances:
-            # No state pairs available, skip
-            pruned_count += 1
-            continue
-
-        avg_learned_dist = node_pair_distances[(source_id, target_id)]
-        graph_dist = graph_distances.get((source_id, target_id), float("inf"))
-
-        # Compute the threshold: min(D, K)
-        if graph_dist == float("inf"):
-            threshold = practical_horizon
-        else:
-            threshold = min(graph_dist, practical_horizon)
-
-        # Keep shortcut if average f(s,s') < min(D(s,s'), K)
-        if avg_learned_dist < threshold:
-            selected_shortcuts.append((source_id, target_id))
-        else:
-            pruned_count += 1
-
-    print(f"Pruned {pruned_count} shortcuts")
-    print(f"Kept {len(selected_shortcuts)} shortcuts")
+    # Convert to list for consistency with training data structure
+    selected_shortcuts = list(selected_node_pairs)
 
     # Step 5: Create pruned training data
     # Filter training data to match selected shortcuts

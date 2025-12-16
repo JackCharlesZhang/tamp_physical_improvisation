@@ -29,7 +29,12 @@ from tamp_improv.benchmarks.pybullet_cluttered_drawer import ClutteredDrawerTAMP
 from tamp_improv.benchmarks.pybullet_obstacle_tower_graph import (
     GraphObstacleTowerTAMPSystem,
 )
-from tamp_improv.benchmarks.gridworld import GridworldTAMPSystem
+from tamp_improv.benchmarks.gridworld import (
+    GridworldTAMPSystem,
+)
+from tamp_improv.benchmarks.gridworld_fixed import (
+    GridworldFixedTAMPSystem,
+)
 
 SYSTEM_CLASSES: dict[str, Type[ImprovisationalTAMPSystem[Any, Any]]] = {
     "GraphObstacle2DTAMPSystem": GraphObstacle2DTAMPSystem,
@@ -37,10 +42,11 @@ SYSTEM_CLASSES: dict[str, Type[ImprovisationalTAMPSystem[Any, Any]]] = {
     "ClutteredDrawerTAMPSystem": ClutteredDrawerTAMPSystem,
     "CleanupTableTAMPSystem": CleanupTableTAMPSystem,
     "GridworldTAMPSystem": GridworldTAMPSystem,  # Reuse for gridworld
+    "GridworldFixedTAMPSystem": GridworldFixedTAMPSystem
 }
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="obstacle2d")
+@hydra.main(version_base=None, config_path="configs", config_name="gridworld_fixed")
 def main(cfg: DictConfig) -> float:
     """Main training function using modular pipeline."""
     print("=" * 80)
@@ -72,11 +78,11 @@ def main(cfg: DictConfig) -> float:
     # Setup device and RL config
     device = "cuda" if torch.cuda.is_available() else "cpu"
     rl_config = RLConfig(
-        learning_rate=cfg.learning_rate,
+        learning_rate=cfg.rl_learning_rate,
         batch_size=cfg.rl_batch_size,
-        n_epochs=cfg.n_epochs,
-        gamma=cfg.gamma,
-        ent_coef=cfg.ent_coef,
+        n_epochs=cfg.rl_n_epochs,
+        gamma=cfg.rl_gamma,
+        ent_coef=cfg.rl_ent_coef,
         deterministic=cfg.deterministic,
         device=device,
     )
@@ -111,7 +117,7 @@ def main(cfg: DictConfig) -> float:
         config=config_dict,
         save_dir=save_dir,
         policy_name="MultiRL",
-        num_eval_episodes=cfg.num_episodes,
+        num_eval_episodes=cfg.eval_rollouts,
     )
 
     print("\n" + "=" * 80)

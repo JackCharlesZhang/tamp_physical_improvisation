@@ -6,16 +6,20 @@ Pruning is handled separately in pruning.py.
 
 from typing import Any
 
+from omegaconf import DictConfig
+
 import numpy as np
 
 from tamp_improv.approaches.improvisational.base import (
     ImprovisationalTAMPApproach,
     ShortcutSignature,
 )
-from tamp_improv.approaches.improvisational.graph import PlanningGraph
+from tamp_improv.approaches.improvisational.graph import (
+    PlanningGraph,
+    PlanningGraphNode,
+)
 from tamp_improv.approaches.improvisational.graph_training import (
     ShortcutCandidate,
-    collect_states_for_all_nodes,
     identify_shortcut_candidates,
 )
 from tamp_improv.approaches.improvisational.policies.base import (
@@ -23,6 +27,145 @@ from tamp_improv.approaches.improvisational.policies.base import (
 )
 from tamp_improv.approaches.improvisational.policies.multi_rl import MultiRLPolicy
 from tamp_improv.benchmarks.base import ImprovisationalTAMPSystem
+
+
+def collect_states_for_all_nodes(
+    system: ImprovisationalTAMPSystem,
+    planning_graph: PlanningGraph,
+    max_steps_per_skill: int = 50,
+) -> dict[frozenset, list[Any]]:
+    """Collect states for all reachable atoms using BFS on planning graph.
+
+    Performs BFS on the planning graph edges, executing skills to transition
+    between nodes and collecting states for each reachable atom set.
+
+    Args:
+        system: The TAMP system (should be reset to initial state before calling)
+        planning_graph: The planning graph with nodes and edges
+        max_steps_per_skill: Maximum low-level steps to execute each skill
+
+    Returns:
+        Dictionary mapping frozenset(atoms) -> list of states for those atoms
+    """
+    from collections import deque
+
+    # Get initial state and node
+    obs, info = system.reset()
+    _, initial_atoms, _ = system.perceiver.reset(obs, info)
+    initial_atoms_frozen = frozenset(initial_atoms)
+
+    # Find initial node in planning graph
+    print(planning_graph.nodes)
+    initial_node = None
+    for node in planning_graph.nodes:
+        if frozenset(node.atoms) == initial_atoms_frozen:
+            initial_node = node
+            break
+
+    if initial_node is None:
+        print(f"Warning: Could not find node matching initial atoms: {initial_atoms}")
+        return {}
+
+    print(f"Starting BFS exploration from node {initial_node.id}: {initial_atoms}")
+
+    # Initialize with initial state
+    atom_states: dict[frozenset, list[Any]] = {initial_atoms_frozen: [obs]}
+
+    # BFS queue: (node, state_at_node)
+    queue: deque[tuple[PlanningGraphNode, Any]] = deque([(initial_node, obs)])
+    visited_nodes: set[int] = {initial_node.id}
+
+    explored_count = 0
+
+    while queue:
+        current_node, current_state = queue.popleft()
+        explored_count += 1
+
+        current_atoms_frozen = frozenset(current_node.atoms)
+        print(f"\n[{explored_count}] Exploring from node {current_node.id}: {current_atoms_frozen}")
+        print(f"  Queue size: {len(queue)}, Visited nodes: {len(visited_nodes)}")
+
+        # Try each outgoing edge from current node
+        for edge in planning_graph.node_to_outgoing_edges.get(current_node, []):
+            # Skip shortcut edges (only use skill-based transitions)
+            if edge.is_shortcut:
+                continue
+
+            target_node = edge.target
+            target_atoms_frozen = frozenset(target_node.atoms)
+
+            # Skip if already visited this node
+            if target_node.id in visited_nodes:
+                continue
+
+            # Find skill that can execute this edge's operator
+            if not edge.operator:
+                continue
+
+            skill = None
+            for s in system.skills:
+                if s.can_execute(edge.operator):
+                    skill = s
+                    break
+
+            if not skill:
+                print(f"  Warning: No skill found for operator {edge.operator.name}")
+                continue
+
+            print(f"  Trying edge {current_node.id} → {target_node.id} (operator: {edge.operator.name})")
+
+            # Reset environment to current state
+            obs, _ = system.env.reset_from_state(current_state)
+
+            # Reset skill with the edge's ground operator
+            skill.reset(edge.operator)
+
+            # Execute the skill
+            success = False
+
+            for step in range(max_steps_per_skill):
+                action = skill.get_action(obs)
+                obs, _, _, _, _ = system.env.step(action)
+                atoms = system.perceiver.step(obs)
+                atoms_frozen = frozenset(atoms)
+
+                # Check if we reached target node
+                if atoms_frozen == target_atoms_frozen:
+                    success = True
+                    print(f"    → Reached target node {target_node.id} in {step + 1} steps")
+                    break
+
+
+            if success:
+                # Mark node as visited
+                visited_nodes.add(target_node.id)
+
+                # Add state to atom_states
+                if target_atoms_frozen not in atom_states:
+                    atom_states[target_atoms_frozen] = []
+                atom_states[target_atoms_frozen].append(obs)
+
+                # Add to queue for further exploration
+                queue.append((target_node, obs))
+                print(f"    ✓ Added to queue for exploration")
+            else:
+                print(f"    ✗ Failed to reach target node")
+
+    print(f"\n{'='*80}")
+    print(f"BFS Exploration Complete")
+    print(f"{'='*80}")
+    print(f"Visited {len(visited_nodes)}/{len(planning_graph.nodes)} nodes")
+    print(f"Discovered {len(atom_states)} unique atom sets")
+    print(f"Total states collected: {sum(len(states) for states in atom_states.values())}")
+    print(f"\nAtom sets discovered:")
+    for atoms_frozen in sorted(atom_states.keys(), key=lambda x: len(x)):
+        atoms_str = ", ".join(sorted([str(atom) for atom in atoms_frozen]))
+        if not atoms_str:
+            atoms_str = "(initial state)"
+        print(f"  • {atoms_str} ({len(atom_states[atoms_frozen])} states)")
+    print(f"{'='*80}\n")
+
+    return atom_states
 
 
 def collect_all_shortcuts(
@@ -89,12 +232,16 @@ def collect_all_shortcuts(
             print("Using observed states from approach")
             observed_states = approach.observed_states
         else:
-            print("Collecting states for all nodes...")
-            observed_states = collect_states_for_all_nodes(
-                system, planning_graph, max_attempts=3
-            )
-            # Convert to multi-state format
-            observed_states = {k: [v] for k, v in observed_states.items()}
+            print("Collecting states for all nodes via BFS...")
+            # Use BFS to collect states (returns {frozenset(atoms): [states]})
+            atom_states = collect_states_for_all_nodes(system, planning_graph, max_steps_per_skill=50)
+
+            # Convert to node ID format: {node_id: [states]}
+            observed_states = {}
+            for node in planning_graph.nodes:
+                node_atoms_frozen = frozenset(node.atoms)
+                if node_atoms_frozen in atom_states:
+                    observed_states[node.id] = atom_states[node_atoms_frozen]
 
         print(
             f"Graph has {len(planning_graph.nodes)} nodes, "
@@ -176,7 +323,7 @@ def collect_all_shortcuts(
 def collect_total_shortcuts(
     system: ImprovisationalTAMPSystem,
     approach: ImprovisationalTAMPApproach,
-    config: dict[str, Any],
+    cfg: DictConfig,
     rng: np.random.Generator | None = None,
 ) -> GoalConditionedTrainingData:
     """Collect all shortcuts from a unified total planning graph.
@@ -196,11 +343,11 @@ def collect_total_shortcuts(
         GoalConditionedTrainingData with all shortcuts from the total graph
     """
     if rng is None:
-        seed = config.get("seed", 42)
+        seed = cfg.seed
         rng = np.random.default_rng(seed)
 
     approach.training_mode = True
-    collect_episodes = config.get("collect_episodes", 10)
+    collect_episodes = cfg.collection.num_episodes
 
     print(f"\n{'=' * 80}")
     print(f"Collecting total planning graph from {collect_episodes} episodes")
@@ -210,8 +357,9 @@ def collect_total_shortcuts(
     total_graph, node_states = collect_total_planning_graph(
         system=system,
         collect_episodes=collect_episodes,
-        seed=config.get("seed", 42),
-        planner_id=config.get("planner_id", "pyperplan"),
+        seed=cfg.seed,
+        planner_id=cfg.collection.planner_id,
+        max_steps_per_edge=cfg.collection.max_steps_per_edge
     )
 
     # Store the total graph in the approach
@@ -245,6 +393,7 @@ def collect_total_shortcuts(
     all_current_atoms = []
     all_goal_atoms = []
     all_valid_shortcuts = []
+    all_unique_shortcuts = []  # One per node-node pair
     all_node_atoms = {}
     all_shortcut_info = []
 
@@ -253,6 +402,9 @@ def collect_total_shortcuts(
         target_id = candidate.target_node.id
 
         if source_id in observed_states and observed_states[source_id] is not None:
+            # Add to unique shortcuts (once per node-node pair)
+            all_unique_shortcuts.append((source_id, target_id))
+
             for source_state in observed_states[source_id]:
                 all_states.append(source_state)
                 all_current_atoms.append(candidate.source_atoms)
@@ -280,7 +432,7 @@ def collect_total_shortcuts(
     print(
         f"\n{'=' * 80}\n"
         f"Collection complete: {len(all_states)} training examples, "
-        f"{len(all_valid_shortcuts)} shortcuts\n"
+        f"{len(all_unique_shortcuts)} unique shortcuts ({len(all_valid_shortcuts)} state-node pairs)\n"
         f"{'=' * 80}"
     )
 
@@ -291,14 +443,20 @@ def collect_total_shortcuts(
         current_atoms=all_current_atoms,
         goal_atoms=all_goal_atoms,
         config={
-            **config,
             "collection_method": "total_shortcuts",
             "collect_episodes": collect_episodes,
             "num_shortcuts_collected": len(all_valid_shortcuts),
+            "num_unique_shortcuts": len(all_unique_shortcuts),
             "shortcut_info": all_shortcut_info,
+            "max_training_steps_per_shortcut": cfg.policy.max_episode_steps,
+            "episodes_per_scenario": cfg.policy.episodes_per_scenario,
+            "early_stopping": cfg.policy.early_stopping,
+            "early_stopping_patience": cfg.policy.early_stopping_patience,
+            "training_record_interval": cfg.policy.training_record_interval,
         },
         node_states=observed_states,
         valid_shortcuts=all_valid_shortcuts,
+        unique_shortcuts=all_unique_shortcuts,
         node_atoms=all_node_atoms,
         graph=total_graph,
     )
@@ -331,10 +489,15 @@ def collect_shortcuts_single_episode(
     if hasattr(approach, "observed_states") and approach.observed_states is not None:
         observed_states = approach.observed_states
     else:
-        observed_states = collect_states_for_all_nodes(
-            system, planning_graph, max_attempts=3
-        )
-        observed_states = {k: [v] for k, v in observed_states.items()}
+        # Use BFS to collect states (returns {frozenset(atoms): [states]})
+        atom_states = collect_states_for_all_nodes(system, planning_graph, max_steps_per_skill=50)
+
+        # Convert to node ID format: {node_id: [states]}
+        observed_states = {}
+        for node in planning_graph.nodes:
+            node_atoms_frozen = frozenset(node.atoms)
+            if node_atoms_frozen in atom_states:
+                observed_states[node.id] = atom_states[node_atoms_frozen]
 
     # Identify all shortcut candidates
     shortcut_candidates = identify_shortcut_candidates(
@@ -387,7 +550,7 @@ def collect_total_planning_graph(
     seed: int = 42,
     planner_id: str = "pyperplan",
     compute_costs: bool = True,
-    cost_samples: int = 5,
+    cost_samples: int = 25,
     max_steps_per_edge: int = 100,
 ) -> tuple[PlanningGraph, dict[frozenset, list]]:
     """Build a unified planning graph across multiple episodes.
@@ -418,11 +581,13 @@ def collect_total_planning_graph(
     print(f"Building total planning graph from {collect_episodes} episodes...")
 
     for episode_idx in range(collect_episodes):
+        print(f"\n=== Episode {episode_idx + 1}/{collect_episodes} ===")
+
         # Reset environment with random seed
         obs, info = system.reset(seed=int(rng.integers(0, 2**31)))
         objects, atoms, goal = system.perceiver.reset(obs, info)
 
-        # Create a temporary approach just for this episode's BFS
+        # Create a temporary approach just for this episode's planning graph
         from tamp_improv.approaches.improvisational.policies.base import Policy
 
         # Create a dummy policy (not used for collection)
@@ -442,17 +607,19 @@ def collect_total_planning_graph(
         )
         temp_approach.training_mode = True
 
-        # Build planning graph directly (faster - no path-dependent costs)
+        # Build planning graph to determine nodes and edges
         temp_approach._goal = goal
         episode_graph = temp_approach._create_planning_graph(objects, atoms)
         temp_approach.planning_graph = episode_graph
 
-        # Collect states using simple BFS (faster - no path dependency)
+        # Collect states using BFS exploration (returns {frozenset(atoms): [states]})
+        # This fills in the actual low-level states for nodes discovered in episode_graph
         episode_states = collect_states_for_all_nodes(
-            system, episode_graph, max_attempts=3
+            system, episode_graph, max_steps_per_skill=max_steps_per_edge
         )
-        # Convert to multi-state format to match observed_states structure
-        episode_states = {k: [v] for k, v in episode_states.items()}
+
+        print(f"Episode graph has {len(episode_graph.nodes)} nodes, {len(episode_graph.edges)} edges")
+        print(f"BFS collected states for {len(episode_states)} atom sets")
 
         # Merge nodes into total graph
         for node in episode_graph.nodes:
@@ -460,23 +627,24 @@ def collect_total_planning_graph(
             total_node = total_graph.get_or_add_node(set(node.atoms))
 
             # Accumulate states for this atom set
-            if node.atoms not in node_states:
-                node_states[node.atoms] = []
+            if total_node.atoms not in node_states:
+                node_states[total_node.atoms] = []
 
-            # Add states from this episode (check for duplicates)
-            if node.id in episode_states:
-                for new_state in episode_states[node.id]:
+            # Add states from this episode (episode_states uses frozenset(atoms) as keys)
+            node_atoms_frozen = frozenset(node.atoms)
+            if node_atoms_frozen in episode_states:
+                for new_state in episode_states[node_atoms_frozen]:
                     # Check if this state is a duplicate
                     is_duplicate = False
                     if hasattr(new_state, "nodes"):
-                        for existing_state in node_states[node.atoms]:
+                        for existing_state in node_states[total_node.atoms]:
                             if hasattr(existing_state, "nodes") and np.array_equal(
                                 existing_state.nodes, new_state.nodes
                             ):
                                 is_duplicate = True
                                 break
                     elif isinstance(new_state, np.ndarray):
-                        for existing_state in node_states[node.atoms]:
+                        for existing_state in node_states[total_node.atoms]:
                             if isinstance(existing_state, np.ndarray) and np.array_equal(
                                 existing_state, new_state
                             ):
@@ -484,7 +652,7 @@ def collect_total_planning_graph(
                                 break
 
                     if not is_duplicate:
-                        node_states[node.atoms].append(new_state)
+                        node_states[total_node.atoms].append(new_state)
 
         # Merge edges (only add if not already present)
         for edge in episode_graph.edges:
@@ -523,6 +691,17 @@ def collect_total_planning_graph(
         f"{len(total_graph.edges)} edges, "
         f"{sum(len(states) for states in node_states.values())} total states"
     )
+
+    # Print node atoms for understanding
+    print("\nNode ID -> Atoms mapping:")
+    print("=" * 80)
+    for node in sorted(total_graph.nodes, key=lambda n: n.id):
+        atoms_str = ", ".join(sorted([str(atom) for atom in node.atoms]))
+        if not atoms_str:
+            atoms_str = "(empty - initial state)"
+        num_states = len(node_states.get(node.atoms, []))
+        print(f"  Node {node.id:3d} ({num_states:2d} states): {atoms_str}")
+    print("=" * 80)
 
     # Compute edge costs if requested
     if compute_costs:

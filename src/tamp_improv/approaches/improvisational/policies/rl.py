@@ -64,6 +64,7 @@ class TrainingProgressCallback(BaseCallback):
         self.policy_key = policy_key
         self.plateau_count: int = 0
         self.success_rates: list[float] = []
+        self.lengths: list[float] = []
 
         self.save_checkpoints = save_checkpoints
         self.checkpoint_dir = checkpoint_dir
@@ -106,25 +107,39 @@ class TrainingProgressCallback(BaseCallback):
                     self.model.save(save_path)
                     self.checkpoints.append((n_episodes, success_rate, save_path))
 
+                # if self.early_stopping:
+                #     self.success_rates.append(success_rate)
+                #     if len(self.success_rates) >= 3:
+                #         recent_rates = self.success_rates[-3:]
+                #         if all(
+                #             r >= self.early_stopping_threshold for r in recent_rates
+                #         ):
+                #             self.plateau_count += 1
+                #             print(
+                #                 f"Plateau detected: {self.plateau_count}/{self.early_stopping_patience}"  # pylint: disable=line-too-long
+                #             )
+                #         if self.plateau_count >= self.early_stopping_patience:
+                #             policy_info = (
+                #                 f" for {self.policy_key}" if self.policy_key else ""
+                #             )
+                #             print(
+                #                 f"Early stopping{policy_info}: Success rate consistently above {self.early_stopping_threshold:.0%}"  # pylint: disable=line-too-long
+                #             )
+                #             return False  # Stop training
+
                 if self.early_stopping:
-                    self.success_rates.append(success_rate)
-                    if len(self.success_rates) >= 3:
-                        recent_rates = self.success_rates[-3:]
-                        if all(
-                            r >= self.early_stopping_threshold for r in recent_rates
-                        ):
-                            self.plateau_count += 1
-                            print(
-                                f"Plateau detected: {self.plateau_count}/{self.early_stopping_patience}"  # pylint: disable=line-too-long
-                            )
-                        if self.plateau_count >= self.early_stopping_patience:
+                    self.lengths.append(np.mean(recent_lengths))
+                    if len(self.lengths) >= self.early_stopping_patience:
+                        recent_ls = self.lengths[-self.early_stopping_patience:]
+                        if min(recent_ls) == recent_ls[0]:
                             policy_info = (
                                 f" for {self.policy_key}" if self.policy_key else ""
                             )
                             print(
-                                f"Early stopping{policy_info}: Success rate consistently above {self.early_stopping_threshold:.0%}"  # pylint: disable=line-too-long
+                                f"Early stopping{policy_info}: Path length past its minimum"  # pylint: disable=line-too-long
                             )
                             return False  # Stop training
+                        
 
         return True
 

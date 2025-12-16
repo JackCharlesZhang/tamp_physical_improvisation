@@ -153,6 +153,13 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
 
         self.rng = np.random.default_rng(seed)
 
+        # For evaluation episode logging
+        self.initial_node_id: int | None = None
+        self.goal_node_ids: list[int] = []
+        self.best_eval_path_node_ids: list[int] = []
+        self.best_eval_path_edge_details: list[dict[str, Any]] = []
+        self.shortcuts_added_to_graph: int = 0
+
         # Only initialize MultiRLPolicy here (needs base_env set up early)
         # Other policies will be initialized during training after wrappers are applied
         if isinstance(policy, MultiRLPolicy):
@@ -168,6 +175,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         self._goal = goal
         self.observed_states = {}
         self.edge_action_cache.clear()
+        self.shortcuts_added_to_graph = 0
 
         self.planning_graph = self._create_planning_graph(objects, atoms)
 
@@ -175,13 +183,46 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         self.observed_states[initial_node.id] = []
         self.observed_states[initial_node.id].append(obs)
 
+        # Check if already at goal
+        if goal.issubset(atoms):
+            # Already at goal - episode immediately succeeds
+            self.current_path = []
+            self.best_eval_path = []
+            self.best_eval_total_steps = 0
+            self._current_operator = None
+            self._current_skill = None
+            self._current_edge = None
+            self._goal_atoms = set()
+            self.policy_active = False
+            # Terminate with success
+            return ApproachStepResult(
+                action=self.system.wrapped_env.action_space.sample(),
+                terminate=True,
+                info={"already_at_goal": True}
+            )
+
         # Compute edge costs and find shortest path
+        print("Training mode:", self.training_mode)
         if not self.training_mode:
             self._try_add_shortcuts(self.planning_graph)
             self.current_path = self._compute_eval_path(obs, info, goal)
+            # print("Computed eval path:", self.current_path)
         else:
             self._compute_planning_graph_edge_costs(obs, info)
             self.current_path = self.planning_graph.find_shortest_path(atoms, goal)
+
+        # If no path found, terminate with failure
+        if not self.current_path:
+            self._current_operator = None
+            self._current_skill = None
+            self._current_edge = None
+            self._goal_atoms = set()
+            self.policy_active = False
+            return ApproachStepResult(
+                action=self.system.wrapped_env.action_space.sample(),
+                terminate=True,
+                info={"no_path_found": True}
+            )
 
         self.best_eval_path = list(self.current_path)
         self.best_eval_total_steps = int(
@@ -205,6 +246,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         info: dict[str, Any],
     ) -> ApproachStepResult[ActType]:
         """Step approach with new observation."""
+        # print("Step")
         atoms = self.system.perceiver.step(obs)
         using_goal_env, goal_env = self._using_goal_env(self.system.wrapped_env)
         using_context_env, context_env = self._using_context_env(
@@ -306,7 +348,10 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             raise TaskThenMotionPlanningFailure("No current skill")
 
         try:
+            # print("I am in state:", obs)
+            # print("I am getting my current skill's action:", self._current_skill, "from edge:", self._current_edge)
             action = self._current_skill.get_action(obs)
+            # print("I am executing action:", action)
             if action is None:
                 print(f"No action returned by skill {self._current_skill}")
         except AssertionError as e:
@@ -439,7 +484,6 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
         using_goal_env, _ = self._using_goal_env(self.system.wrapped_env)
         if not self.training_mode and self.trained_signatures:
             print(f"DEBUG: Attempting to add shortcuts with {len(self.trained_signatures)} trained signatures")
-        shortcuts_added = 0
         for source_node in graph.nodes:
             for target_node in graph.nodes:
                 if source_node == target_node:
@@ -449,11 +493,12 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                     for edge in graph.node_to_outgoing_edges.get(source_node, [])
                 ):
                     continue
-                if target_node.id <= source_node.id:
-                    continue
+                # if target_node.id <= source_node.id:
+                #     continue
 
                 source_atoms = set(source_node.atoms)
                 target_atoms = set(target_node.atoms)
+                # print(source_atoms, target_atoms)
                 if not target_atoms:
                     continue
 
@@ -461,6 +506,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                     current_sig = ShortcutSignature.from_context(
                         source_atoms, target_atoms
                     )
+                    # print(current_sig)
                     can_handle = False
                     best_similarity = 0.0
 
@@ -469,6 +515,7 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                         if similarity > 0.99:
                             can_handle = True
                             best_similarity = max(best_similarity, similarity)
+                    # print("Best sim:", best_similarity)
 
                     if not can_handle:
                         # if self.training_mode:
@@ -486,15 +533,20 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                     )
                 )
                 if self.policy.can_initiate():
-                    # if not self.training_mode:
-                    #     print(f"  DEBUG: Adding shortcut {source_node.id}→{target_node.id} (sim: {best_similarity:.2f})")
+                    if not self.training_mode:
+                        print(f"  DEBUG: Adding shortcut {source_node.id}→{target_node.id} (sim: {best_similarity:.2f})")
                     graph.add_edge(source_node, target_node, None, is_shortcut=True)
-                    shortcuts_added += 1
+                    self.shortcuts_added_to_graph += 1
                 elif not self.training_mode:
-                    print(f"  DEBUG: Matched signature for {source_node.id}→{target_node.id} but policy.can_initiate() = False")
+                    # print(f"  DEBUG: Matched signature for {source_node.id}→{target_node.id} but policy.can_initiate() = False")
+                    pass
 
         if not self.training_mode and self.trained_signatures:
-            print(f"DEBUG: Added {shortcuts_added} shortcuts to graph")
+            print(f"DEBUG: Added {self.shortcuts_added_to_graph} shortcuts to graph")
+
+    @property
+    def eval_path(self) -> list[PlanningGraphEdge]:
+        return self.best_eval_path
 
     def _compute_eval_path(
         self,
@@ -511,11 +563,25 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             node for node in self.planning_graph.nodes if goal.issubset(node.atoms)
         ]
 
+        self.initial_node_id = initial_node.id
+        self.goal_node_ids = [node.id for node in goal_nodes]
+
+        print("Initial node:", initial_node)
+        print("Goal nodes:", goal_nodes)
+
         if not goal_nodes:
             print("No goal nodes found in planning graph")
             return []
 
+        # Check if already at goal
+        if initial_node in goal_nodes:
+            print("Already at goal node - no path needed")
+            return []
+
         raw_env = self._create_planning_env()
+        # CRITICAL: Reset planning env to match current state before planning
+        # Otherwise the deepcopy will have a different random initialization
+        raw_env.reset_from_state(obs)  # type: ignore
         using_goal_env, goal_env = self._using_goal_env(self.system.wrapped_env)
         using_context_env, context_env = self._using_context_env(
             self.system.wrapped_env
@@ -567,7 +633,8 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
             for edge in self.planning_graph.node_to_outgoing_edges.get(
                 current_node, []
             ):
-                if edge.target.id <= current_node.id:
+                # Check if target node is already in current path to prevent cycles
+                if edge.target.id in current_path:
                     continue
 
                 edge_cost, end_state, end_info, success = self._execute_edge(
@@ -641,6 +708,21 @@ class ImprovisationalTAMPApproach(BaseApproach[ObsType, ActType]):
                 for edge in best_goal_path
                 if edge.is_shortcut
             ]
+            self.best_eval_path_node_ids = node_ids
+            self.best_eval_path_edge_details = []
+            current_path_tuple = empty_path
+            for i, edge in enumerate(best_goal_path):
+                path_key = (current_path_tuple, edge.source.id)
+                cost_for_this_path_segment = edge.costs.get(path_key, float("inf"))
+                self.best_eval_path_edge_details.append(
+                    {
+                        "source": edge.source.id,
+                        "target": edge.target.id,
+                        "is_shortcut": edge.is_shortcut,
+                        "cost": cost_for_this_path_segment,
+                    }
+                )
+                current_path_tuple = current_path_tuple + (edge.source.id,)
             if shortcut_edges:
                 shortcut_str = ", ".join(shortcut_edges)
                 print(

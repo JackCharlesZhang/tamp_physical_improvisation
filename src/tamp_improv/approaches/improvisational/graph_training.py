@@ -109,6 +109,7 @@ def collect_states_for_all_nodes(
                     break
 
             if success:
+                # print("Success:", target_node, obs)
                 observed_states[target_node.id] = obs
                 break
 
@@ -446,13 +447,16 @@ def identify_shortcut_candidates(
             continue
 
         # Use the first state for the candidate (we'll expand later)
+        if len(observed_states[source_node.id]) == 0:
+            continue
+        
         source_state = observed_states[source_node.id][0]
 
         for target_node in nodes:
             if source_node == target_node:
                 continue
-            if target_node.id <= source_node.id:
-                continue
+            # if target_node.id <= source_node.id:
+            #     continue
 
             has_direct_edge = False
             for edge in planning_graph.node_to_outgoing_edges.get(source_node, []):

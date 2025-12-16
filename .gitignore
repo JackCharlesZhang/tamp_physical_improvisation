@@ -2,6 +2,10 @@
 .python-version
 .vscode
 
+*wandb*
+
+*something*
+
 # Training artifacts
 videos/
 trained_policies/

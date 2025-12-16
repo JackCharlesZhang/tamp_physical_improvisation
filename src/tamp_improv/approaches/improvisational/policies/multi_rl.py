@@ -76,8 +76,8 @@ class MultiRLPolicy(Policy[ObsType, ActType]):
         if matching_policy is None:
             # Debug: show what key we're looking for vs what's available
             key = self._get_policy_key(self._current_context)
-            print(f"    DEBUG can_initiate: Looking for key '{key}'")
-            print(f"    DEBUG can_initiate: Available keys ({len(self.policies)}): {list(self.policies.keys())}")
+            # print(f"    DEBUG can_initiate: Looking for key '{key}'")
+            # print(f"    DEBUG can_initiate: Available keys ({len(self.policies)}): {list(self.policies.keys())}")
         return matching_policy is not None
 
     def get_action(self, obs: ObsType) -> ActType:
@@ -199,8 +199,8 @@ class MultiRLPolicy(Policy[ObsType, ActType]):
         target_hash = hashlib.md5("|".join(target_atoms_str).encode()).hexdigest()[:8]
         source_id = context.info.get("source_node_id", "")
         target_id = context.info.get("target_node_id", "")
-        if source_id != "" and target_id != "":
-            return f"n{source_id}-to-n{target_id}_{source_hash}_{target_hash}"
+        # if source_id != "" and target_id != "":
+        #     return f"n{source_id}-to-n{target_id}_{source_hash}_{target_hash}"
         return f"{source_hash}_{target_hash}"
 
     def _find_matching_policy(self, context: PolicyContext) -> str | None:
@@ -411,9 +411,9 @@ def train_single_policy(
     if save_dir:
         checkpoint_dir = str(Path(save_dir) / "checkpoints")
     callback = TrainingProgressCallback(
-        check_freq=train_data.config.get("training_record_interval", 100),
-        early_stopping=train_data.config.get("early_stopping", True),
-        early_stopping_patience=1,
+        check_freq=train_data.config['training_record_interval'],
+        early_stopping=train_data.config['early_stopping'],
+        early_stopping_patience=train_data.config['early_stopping_patience'],
         early_stopping_threshold=0.8,
         policy_key=policy_key,
         save_checkpoints=True,
