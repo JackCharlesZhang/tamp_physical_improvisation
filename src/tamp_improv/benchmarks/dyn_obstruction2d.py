@@ -1,0 +1,1056 @@
+"""DynObstruction2D environment implementation with physics-based manipulation."""
+
+from __future__ import annotations
+
+import abc
+from dataclasses import dataclass
+from typing import Any, Sequence, Union
+
+import gymnasium as gym
+import numpy as np
+from gymnasium.spaces import Box
+from numpy.typing import NDArray
+from relational_structs import (
+    GroundAtom,
+    LiftedOperator,
+    Object,
+    ObjectCentricState,
+    PDDLDomain,
+    Predicate,
+    Type,
+    Variable,
+)
+from task_then_motion_planning.structs import LiftedOperatorSkill, Perceiver
+from tomsgeoms2d.structs import Rectangle
+
+from tamp_improv.benchmarks.base import (
+    BaseTAMPSystem,
+    ImprovisationalTAMPSystem,
+    PlanningComponents,
+)
+from tamp_improv.benchmarks.wrappers import ImprovWrapper
+
+# Annoying monkeypatch
+import tomsgeoms2d.structs
+if not hasattr(tomsgeoms2d.structs, "Tobject"):
+    from tomsgeoms2d.structs import Lobject
+    tomsgeoms2d.structs.Tobject = Lobject  
+
+from prbench.envs.dynamic2d.dyn_obstruction2d import (
+    DynObstruction2DEnv,
+    DynObstruction2DEnvConfig,
+    TargetSurfaceType,
+)
+from prbench.envs.dynamic2d.object_types import (
+    Dynamic2DType,
+    Dynamic2DRobotEnvTypeFeatures,
+    DynRectangleType,
+    KinRobotType,
+)
+
+from tamp_improv.benchmarks.prbench_patch import patch_prbench_environments
+patch_prbench_environments()
+
+
+def compute_horizontal_overlap_percentage(
+    block_x: float, block_y: float, block_width: float, block_height: float, block_theta: float,
+    obs_x: float, obs_y: float, obs_width: float, obs_height: float, obs_theta: float
+) -> float:
+    """Compute what percentage of the held block's bottom face is covered by an obstruction's top face.
+
+    Uses tomsgeoms2d Rectangle to handle rotations properly.
+
+    Args:
+        block_x, block_y: Center position of held block
+        block_width, block_height: Dimensions of held block
+        block_theta: Rotation of held block
+        obs_x, obs_y: Center position of obstruction
+        obs_width, obs_height: Dimensions of obstruction
+        obs_theta: Rotation of obstruction
+
+    Returns:
+        Percentage (0.0 to 1.0) of held block's bottom face covered by obstruction's top face
+    """
+    block_rect = Rectangle.from_center(block_x, block_y, block_width, block_height, block_theta)
+    obs_rect = Rectangle.from_center(obs_x, obs_y, obs_width, obs_height, obs_theta)
+
+    if obs_y > block_y:
+        return 0.0  
+
+    block_vertices = sorted(block_rect.vertices, key=lambda v: v[1])
+    bottom_vertices = block_vertices[:2]  
+    overlap_count = 0
+    for vx, vy in bottom_vertices:
+        if obs_rect.contains_point(vx, obs_y + obs_height/2):
+            overlap_count += 1
+
+    return overlap_count / 2.0
+
+@dataclass
+class DynObstruction2DTypes:
+    """Container for DynObstruction2D types.
+
+    Uses the same types as prbench's DynObstruction2DEnv for compatibility.
+    """
+
+    def __init__(self) -> None:
+        """Initialize types using prbench types."""
+        self.robot = KinRobotType
+        self.pickable = Type("pickable", parent=DynRectangleType)
+        self.block = Type("target_block", parent=self.pickable)  
+        self.obstruction = Type("obstruction", parent=self.pickable)  
+        self.surface = TargetSurfaceType  
+        self.dynamic2d = Dynamic2DType
+
+    def as_set(self) -> set[Type]:
+        """Convert to set of types, including parent types for PDDL."""
+        types = {self.robot, self.block, self.obstruction, self.surface}
+        all_types = set(types)
+        for t in types:
+            current = t
+            while current.parent is not None:
+                all_types.add(current.parent)
+                current = current.parent
+        return all_types
+
+
+@dataclass
+class DynObstruction2DPredicates:
+    """Container for DynObstruction2D predicates."""
+
+    def __init__(self, types: DynObstruction2DTypes) -> None:
+        """Initialize predicates."""
+        self.on = Predicate("On", [types.block, types.surface])
+        self.clear = Predicate("Clear", [types.surface])
+        self.blocking = Predicate("Blocking", [types.obstruction, types.surface])  # Obstruction blocking surface
+        self.holding = Predicate("Holding", [types.robot, types.pickable])  # Use pickable parent type
+        self.gripper_empty = Predicate("GripperEmpty", [types.robot])
+        # Count predicates for tracking number of obstructions blocking - this is annoying but necessary
+        self.one_obstruction_blocking = Predicate("OneObstructionBlocking", [types.surface])
+        self.two_obstructions_blocking = Predicate("TwoObstructionsBlocking", [types.surface])
+
+    def __getitem__(self, key: str) -> Predicate:
+        """Get predicate by name."""
+        return next(p for p in self.as_set() if p.name == key)
+
+    def as_set(self) -> set[Predicate]:
+        """Convert to set of predicates."""
+        return {
+            self.on,
+            self.clear,
+            self.blocking,
+            self.holding,
+            self.gripper_empty,
+            self.one_obstruction_blocking,
+            self.two_obstructions_blocking,
+        }
+
+
+def _obs_to_state(obs: NDArray[np.float32], objects: Sequence[Object]) -> ObjectCentricState:
+    """Convert flat observation array to ObjectCentricState.
+
+    This allows us to use the same controller interface as other environments.
+    Observation structure (80 dims):
+    - target_surface: [0:14]
+    - target_block: [14:29]
+    - obstruction0: [29:44]
+    - obstruction1: [44:59]
+    - robot: [59:80]
+    """
+    state_dict: dict[Object, dict[str, float]] = {}
+
+    robot = None
+    target_block = None
+    target_surface = None
+    obstructions = []
+
+    for obj in objects:
+        if obj.name == "robot":
+            robot = obj
+        elif obj.name == "target_block":
+            target_block = obj
+        elif obj.name == "target_surface":
+            target_surface = obj
+        elif obj.name.startswith("obstruction"):
+            obstructions.append(obj)
+
+    if target_surface is not None:
+        state_dict[target_surface] = {
+            "x": float(obs[0]),
+            "y": float(obs[1]),
+            "theta": float(obs[2]),
+            "vx": float(obs[3]),
+            "vy": float(obs[4]),
+            "omega": float(obs[5]),
+            "static": float(obs[6]),
+            "held": float(obs[7]),
+            "color_r": float(obs[8]),
+            "color_g": float(obs[9]),
+            "color_b": float(obs[10]),
+            "z_order": float(obs[11]),
+            "width": float(obs[12]),
+            "height": float(obs[13]),
+        }
+
+    if target_block is not None:
+        state_dict[target_block] = {
+            "x": float(obs[14]),
+            "y": float(obs[15]),
+            "theta": float(obs[16]),
+            "vx": float(obs[17]),
+            "vy": float(obs[18]),
+            "omega": float(obs[19]),
+            "static": float(obs[20]),
+            "held": float(obs[21]),
+            "color_r": float(obs[22]),
+            "color_g": float(obs[23]),
+            "color_b": float(obs[24]),
+            "z_order": float(obs[25]),
+            "width": float(obs[26]),
+            "height": float(obs[27]),
+            "mass": float(obs[28]),
+        }
+
+    for i, obstruction_obj in enumerate(sorted(obstructions, key=lambda o: o.name)):
+        offset = 29 + i * 15
+        state_dict[obstruction_obj] = {
+            "x": float(obs[offset]),
+            "y": float(obs[offset + 1]),
+            "theta": float(obs[offset + 2]),
+            "vx": float(obs[offset + 3]),
+            "vy": float(obs[offset + 4]),
+            "omega": float(obs[offset + 5]),
+            "static": float(obs[offset + 6]),
+            "held": float(obs[offset + 7]),
+            "color_r": float(obs[offset + 8]),
+            "color_g": float(obs[offset + 9]),
+            "color_b": float(obs[offset + 10]),
+            "z_order": float(obs[offset + 11]),
+            "width": float(obs[offset + 12]),
+            "height": float(obs[offset + 13]),
+            "mass": float(obs[offset + 14]),
+        }
+
+    if robot is not None:
+        robot_offset = 29 + len(obstructions) * 15
+        state_dict[robot] = {
+            "x": float(obs[robot_offset]),
+            "y": float(obs[robot_offset + 1]),
+            "theta": float(obs[robot_offset + 2]),
+            "vx_base": float(obs[robot_offset + 3]),
+            "vy_base": float(obs[robot_offset + 4]),
+            "omega_base": float(obs[robot_offset + 5]),
+            "vx_arm": float(obs[robot_offset + 6]),
+            "vy_arm": float(obs[robot_offset + 7]),
+            "omega_arm": float(obs[robot_offset + 8]),
+            "vx_gripper": float(obs[robot_offset + 9]),
+            "vy_gripper": float(obs[robot_offset + 10]),
+            "omega_gripper": float(obs[robot_offset + 11]),
+            "static": float(obs[robot_offset + 12]),
+            "base_radius": float(obs[robot_offset + 13]),
+            "arm_joint": float(obs[robot_offset + 14]),
+            "arm_length": float(obs[robot_offset + 15]),
+            "gripper_base_width": float(obs[robot_offset + 16]),
+            "gripper_base_height": float(obs[robot_offset + 17]),
+            "finger_gap": float(obs[robot_offset + 18]),
+            "finger_height": float(obs[robot_offset + 19]),
+            "finger_width": float(obs[robot_offset + 20]),
+        }
+
+    data_arrays = {obj: np.array(list(features.values()), dtype=np.float32)
+                   for obj, features in state_dict.items()}
+
+    return ObjectCentricState(data_arrays, Dynamic2DRobotEnvTypeFeatures)
+
+
+class DynObstruction2DPerceiver(Perceiver[NDArray[np.float32]]):
+
+    def __init__(
+        self, types: DynObstruction2DTypes, num_obstructions: int = 2
+    ) -> None:
+        self._robot = Object("robot", types.robot)
+        self._target_block = Object("target_block", types.block)
+        self._target_surface = Object("target_surface", types.surface)
+        self._obstructions = [
+            Object(f"obstruction{i}", types.obstruction)
+            for i in range(num_obstructions)
+        ]
+        self._predicates: DynObstruction2DPredicates | None = None
+        self._types = types
+        self._num_obstructions = num_obstructions
+
+    def initialize(self, predicates: DynObstruction2DPredicates) -> None:
+        self._predicates = predicates
+
+    @property
+    def predicates(self) -> DynObstruction2DPredicates:
+        if self._predicates is None:
+            raise RuntimeError("Predicates not initialized. Call initialize() first.")
+        return self._predicates
+
+    def get_objects(self):
+        return set([self._robot, self._target_block, self._target_surface] + self._obstructions)
+
+    def reset(
+        self,
+        obs: NDArray[np.float32],
+        _info: dict[str, Any],
+    ) -> tuple[set[Object], set[GroundAtom], set[GroundAtom]]:
+        objects = self.get_objects()
+        atoms = self._get_atoms(obs)
+        goal = { 
+            self.predicates["On"]([self._target_block, self._target_surface]),
+            self.predicates["GripperEmpty"]([self._robot]),
+        }
+        return objects, atoms, goal
+
+    def step(self, obs: NDArray[np.float32]) -> set[GroundAtom]:
+        return self._get_atoms(obs)
+
+    def _get_atoms(self, obs: NDArray[np.float32]) -> set[GroundAtom]:
+
+        atoms = set()
+
+        target_surface_x = obs[0]
+        target_surface_y = obs[1]
+        target_surface_theta = obs[2]
+        target_surface_width = obs[12]
+        target_surface_height = obs[13]
+
+        target_block_x = obs[14]
+        target_block_y = obs[15]
+        target_block_theta = obs[16]
+        target_block_width = obs[26]
+        target_block_height = obs[27]
+        target_block_held = obs[21] > 0.5
+
+        obstruction_data = []
+        obstruction_held_status = []
+        for i in range(self._num_obstructions):
+            offset = 29 + i * 15
+            obs_x = obs[offset]
+            obs_y = obs[offset + 1]
+            obs_held = obs[offset + 7] > 0.5
+            obs_width = obs[offset + 12]
+            obs_height = obs[offset + 13]
+            obstruction_data.append((obs_x, obs_y, obs_width, obs_height))
+            obstruction_held_status.append(obs_held)
+
+        robot_offset = 29 + self._num_obstructions * 15
+        robot_x = obs[robot_offset]
+        robot_y = obs[robot_offset + 1]
+        finger_gap = obs[robot_offset + 18]
+
+        holding_something = False
+        if target_block_held:
+            atoms.add(self.predicates["Holding"]([self._robot, self._target_block]))
+            holding_something = True
+        else:
+            for i, obs_held in enumerate(obstruction_held_status):
+                if obs_held:
+                    atoms.add(self.predicates["Holding"]([self._robot, self._obstructions[i]]))
+                    holding_something = True
+                    break  # Can only hold one object at a time
+
+        if not holding_something:
+            atoms.add(self.predicates["GripperEmpty"]([self._robot]))
+
+        if self._is_on_surface(
+            target_block_x,
+            target_block_y,
+            target_block_theta,
+            target_block_width,
+            target_block_height,
+            target_surface_x,
+            target_surface_y,
+            target_surface_theta,
+            target_surface_width,
+            target_surface_height,
+        ):
+            atoms.add(self.predicates["On"]([self._target_block, self._target_surface]))
+
+        for i, (obs_x, obs_y, obs_width, obs_height) in enumerate(obstruction_data):
+            obs_held = obstruction_held_status[i]
+            is_blocking = self._is_obstructing(
+                obs_x,
+                obs_y,
+                obs_width,
+                obs_height,
+                target_surface_x,
+                target_surface_y,
+                target_surface_width,
+                target_surface_height,
+            )
+            if not obs_held and is_blocking:
+                # This obstruction is blocking the surface (and not being held)
+                atoms.add(self.predicates["Blocking"]([self._obstructions[i], self._target_surface]))
+
+        # Count how many obstructions are blocking the target surface
+        blocking_count = sum(
+            1 for atom in atoms
+            if atom.predicate.name == "Blocking" and atom.entities[1] == self._target_surface
+        )
+
+        # Add count predicates based on how many obstructions are blocking
+        if blocking_count == 0:
+            atoms.add(self.predicates["Clear"]([self._target_surface]))
+        elif blocking_count == 1:
+            atoms.add(self.predicates["OneObstructionBlocking"]([self._target_surface]))
+        elif blocking_count == 2:
+            atoms.add(self.predicates["TwoObstructionsBlocking"]([self._target_surface]))
+
+        return atoms
+
+    def _is_on_surface(
+        self,
+        block_x: float,
+        block_y: float,
+        block_theta: float,
+        block_width: float,
+        block_height: float,
+        surface_x: float,
+        surface_y: float,
+        surface_theta: float,
+        surface_width: float,
+        surface_height: float,
+    ) -> bool:
+        """Check if block is on surface.
+
+        Exactly matches prbench's is_on logic from geom2d/utils.py using tomsgeoms2d.
+        """
+        tol = 0.025  # From prbench default
+
+        # Create Rectangle objects using tomsgeoms2d (same as prbench)
+        block_geom = Rectangle.from_center(
+            block_x, block_y, block_width, block_height, block_theta
+        )
+        surface_geom = Rectangle.from_center(
+            surface_x, surface_y, surface_width, surface_height, surface_theta
+        )
+
+        # Get bottom 2 vertices of block (sorted by y coordinate)
+        sorted_vertices = sorted(block_geom.vertices, key=lambda v: v[1])
+        bottom_two = sorted_vertices[:2]
+
+        # Check if both bottom vertices (with offset) are contained in surface
+        for x, y in bottom_two:
+            offset_y = y - tol
+            if not surface_geom.contains_point(x, offset_y):
+                return False
+
+        return True
+
+    def _is_obstructing(
+        self,
+        obs_x: float,
+        obs_y: float,
+        obs_width: float,
+        obs_height: float,
+        surface_x: float,
+        surface_y: float,
+        surface_width: float,
+        surface_height: float,
+    ) -> bool:
+        """Check if obstruction is blocking the target surface.
+
+        Uses the same overlap logic as PlaceOnTarget skill to ensure consistency.
+        """
+        overlap = compute_horizontal_overlap_percentage(
+            block_x=obs_x, block_y=obs_y,
+            block_width=obs_width, block_height=obs_height, block_theta=0.0,
+            obs_x=surface_x, obs_y=surface_y,
+            obs_width=surface_width, obs_height=surface_height, obs_theta=0.0
+        )
+
+        # Match the threshold used in PlaceOnTarget skill
+        return overlap > 0.1
+
+class BaseDynObstruction2DSkill(
+    LiftedOperatorSkill[NDArray[np.float32], NDArray[np.float32]]
+):
+    """Base class for DynObstruction2D SLAP skills."""
+
+    POSITION_TOL = 5e-2  # Looser tolerance for physics
+    SAFE_Y = 1.5  # Higher safe navigation height for better clearance
+    GARBAGE_X = 0.3  # X-position for garbage/disposal placement
+    TARGET_THETA = -np.pi / 2  # -90° = pointing down (theta=0 is pointing right)
+    MAX_DX = MAX_DY = 5e-2
+    MAX_DTHETA = np.pi / 16
+    MAX_DARM, MAX_DGRIPPER = 1e-1, 2e-2
+
+    def __init__(self, components: PlanningComponents[NDArray[np.float32]]) -> None:
+        super().__init__()
+        self._components = components
+        self._lifted_operator = self._get_lifted_operator()
+
+    def _get_lifted_operator(self) -> LiftedOperator:
+        """Get the operator this skill implements."""
+        return next(
+            op
+            for op in self._components.operators
+            if op.name == self._get_operator_name()
+        )
+
+    def _get_operator_name(self) -> str:
+        """Get the name of the operator this skill implements."""
+        raise NotImplementedError
+
+    def _parse_obs(self, obs: NDArray[np.float32]) -> dict[str, float]:
+        """Parse observation (80 dims: surface[0:14], block[14:29], obs0[29:44], obs1[44:59], robot[59:80])."""
+        return {
+            'surface_x': obs[0], 'surface_y': obs[1], 'surface_width': obs[12], 'surface_height': obs[13],
+            'block_x': obs[14], 'block_y': obs[15], 'block_width': obs[26], 'block_height': obs[27], 'target_block_held': bool(obs[21]),
+            'obs0_x': obs[29], 'obs0_y': obs[30], 'obs0_width': obs[41], 'obs0_height': obs[42],
+            'obs1_x': obs[44], 'obs1_y': obs[45], 'obs1_width': obs[56], 'obs1_height': obs[57],
+            'robot_x': obs[59], 'robot_y': obs[60], 'robot_theta': obs[61], 'robot_static': bool(obs[71]),
+            'arm_joint': obs[73], 'arm_length_max': obs[74], 'gripper_base_height': obs[76], 'finger_gap': obs[77]
+        }
+
+    @staticmethod
+    def _angle_diff(target: float, current: float) -> float:
+        """Compute shortest angular distance from current to target, handling wrapping."""
+        diff = target - current
+        while diff > np.pi:
+            diff -= 2 * np.pi
+        while diff < -np.pi:
+            diff += 2 * np.pi
+        return diff
+
+    @staticmethod
+    def _calculate_placement_height(
+        surface_y: float,
+        surface_height: float,
+        block_height: float,
+        arm_length_max: float
+    ) -> float:
+        return surface_y + surface_height + block_height/2 + arm_length_max
+
+    @staticmethod
+    def _compute_horizontal_overlap_percentage(
+        block_x: float, block_y: float, block_width: float, block_height: float, block_theta: float,
+        obs_x: float, obs_y: float, obs_width: float, obs_height: float, obs_theta: float
+    ) -> float: 
+        return compute_horizontal_overlap_percentage(
+            block_x, block_y, block_width, block_height, block_theta,
+            obs_x, obs_y, obs_width, obs_height, obs_theta
+        )
+
+
+class PickUpSkill(BaseDynObstruction2DSkill):
+    """SLAP skill for picking up target block."""
+
+    def _get_operator_name(self) -> str:
+        return "PickUp"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        p = self._parse_obs(obs)
+        target_obj = objects[1]
+        if target_obj.name == "target_block":
+            obj_x, obj_y = p['block_x'], p['block_y']
+            obj_width, obj_height = p['block_width'], p['block_height']
+            obj_held = p['target_block_held']
+        elif target_obj.name == "obstruction0":
+            obj_x, obj_y = p['obs0_x'], p['obs0_y']
+            obj_width, obj_height = p['obs0_width'], p['obs0_height']
+            obj_held = bool(obs[29 + 7])
+        elif target_obj.name == "obstruction1":
+            obj_x, obj_y = p['obs1_x'], p['obs1_y']
+            obj_width, obj_height = p['obs1_width'], p['obs1_height']
+            obj_held = bool(obs[44 + 7])
+        else:
+            raise ValueError(f"Unknown object to pick up: {target_obj.name}")
+
+        angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
+        theta_aligned = abs(angle_error) <= self.POSITION_TOL
+        arm_extended = abs(p['arm_joint'] - p['arm_length_max'] * 0.95) <= self.POSITION_TOL
+        below_safe_height = p['robot_y'] < (self.SAFE_Y - self.POSITION_TOL)
+        in_descent_phase = theta_aligned and arm_extended and below_safe_height and not obj_held
+
+        # Phase 0: Move to safe height (only when not holding anything yet)
+        if not obj_held:
+            at_safe_y = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+            if not in_descent_phase and not at_safe_y:
+                action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+                return action
+
+        # Phase 1: Rotate gripper
+        angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
+        if abs(angle_error) > self.POSITION_TOL:
+            action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 2: Open gripper and extend arm simultaneously
+        at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+        target_gap = p['gripper_base_height'] 
+        gripper_not_open = p['finger_gap'] < target_gap - self.POSITION_TOL
+
+        target_arm = p['arm_length_max'] * 0.95
+        arm_not_extended = abs(p['arm_joint'] - target_arm) > self.POSITION_TOL
+
+        if at_safe_height and not obj_held and (gripper_not_open or arm_not_extended):
+            darm = np.clip(target_arm - p['arm_joint'], -self.MAX_DARM, self.MAX_DARM) if arm_not_extended else 0
+            dgripper = self.MAX_DGRIPPER if gripper_not_open else 0
+            action = np.array([0, 0, 0, darm, dgripper], dtype=np.float64)
+            return action
+
+        # Phase 3: Move horizontally to object x (only before grasping)
+        gripper_is_open = p['finger_gap'] >= p['gripper_base_height'] * 0.95
+        x_aligned = np.isclose(p['robot_x'], obj_x, atol=self.POSITION_TOL)
+        if gripper_is_open and not x_aligned:
+            if not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+                action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+                return action
+            action = np.array([np.clip(obj_x - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 4: Descend to object (only if haven't grasped yet)
+        if not obj_held:
+            target_y = obj_y + obj_height/2 + p['arm_length_max']
+            need_descend = p['robot_y'] > target_y + self.POSITION_TOL
+            if gripper_is_open and need_descend:
+                action = np.array([0, np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+                return action
+
+        # Phase 5: Close gripper (only if not holding yet and at grasp position)
+        if not obj_held:
+            target_y = obj_y + obj_height/2 + p['arm_length_max']
+            at_grasp_position = abs(p['robot_y'] - target_y) <= self.POSITION_TOL
+            gripper_wide = p['finger_gap'] >= p['gripper_base_height'] * 0.7  # Check against max capability
+            if at_grasp_position and gripper_wide:
+                action = np.array([0, 0, 0, 0, -self.MAX_DGRIPPER], dtype=np.float64)
+                return action
+
+        # Phase 6: Lift to safe height (only if holding the object)
+        if obj_held:
+            at_safe_height = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+            if not at_safe_height:
+                action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+                return action
+
+        return np.array([0, 0, 0, 0, 0], dtype=np.float64)
+
+
+class PickUpFromTargetSkill(PickUpSkill):
+    """SLAP skill for picking up blocking obstructions from target surface.
+    """
+
+    def _get_operator_name(self) -> str:
+        return "PickUpFromTarget"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        return super()._get_action_given_objects(objects, obs)
+
+
+class PickUpFirstFromTargetSkill(PickUpSkill):
+    """SLAP skill for picking up first obstruction (2→1 transition)."""
+
+    def _get_operator_name(self) -> str:
+        return "PickUpFirstFromTarget"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        return super()._get_action_given_objects(objects, obs)
+
+
+class PickUpLastFromTargetSkill(PickUpSkill):
+    """SLAP skill for picking up last obstruction (1→0/Clear transition)."""
+
+    def _get_operator_name(self) -> str:
+        return "PickUpLastFromTarget"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        return super()._get_action_given_objects(objects, obs)
+
+
+class PlaceSkill(BaseDynObstruction2DSkill):
+    """SLAP skill for placing to garbage zone."""
+
+    def _get_operator_name(self) -> str:
+        return "Place"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        p = self._parse_obs(obs)
+        placement_y = self._calculate_placement_height(
+            surface_y=p['surface_y'],
+            surface_height=p['surface_height'],
+            block_height=p['block_height'],
+            arm_length_max=p['arm_length_max']
+        )
+
+        # Phase 1: Rotate gripper
+        angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
+        if abs(angle_error) > self.POSITION_TOL:
+            action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 2: Move to safe height before horizontal movement
+        not_at_garbage_x = not np.isclose(p['robot_x'], self.GARBAGE_X, atol=self.POSITION_TOL)
+        if not_at_garbage_x and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 3: Move horizontally to garbage zone
+        if not_at_garbage_x:
+            action = np.array([np.clip(self.GARBAGE_X - p['robot_x'], -self.MAX_DX, self.MAX_DX), 0, 0, 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 4: Descend to placement height
+        still_holding = p['target_block_held']
+        if still_holding and not np.isclose(p['robot_y'], placement_y, atol=self.POSITION_TOL):
+            action = np.array([0, np.clip(placement_y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 5: Open gripper to release
+        if p['finger_gap'] < p['gripper_base_height'] * 0.95:
+            action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
+            return action
+
+        # Phase 6: Return to safe height after release
+        block_released = not p['target_block_held']
+        if block_released and not np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL):
+            action = np.array([0, np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY), 0, 0, 0], dtype=np.float64)
+            return action
+
+        return np.zeros(5, dtype=np.float64)
+
+
+class PlaceFirstSkill(PlaceSkill):
+    """SLAP skill for placing first obstruction (2→1 transition)."""
+
+    def _get_operator_name(self) -> str:
+        return "PlaceFirst"
+    
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        return super()._get_action_given_objects(objects, obs)
+
+
+class PlaceLastSkill(PlaceSkill):
+    """SLAP skill for placing last obstruction (1→0/Clear transition)."""
+
+    def _get_operator_name(self) -> str:
+        return "PlaceLast"
+    
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        return super()._get_action_given_objects(objects, obs)
+
+
+class PlaceOnTargetSkill(BaseDynObstruction2DSkill):
+    """SLAP skill for placing on target surface."""
+
+    def _get_operator_name(self) -> str:
+        return "PlaceOnTarget"
+
+    def _get_action_given_objects(self, objects: Sequence[Object], obs: NDArray[np.float32]) -> NDArray[np.float64]:
+        p = self._parse_obs(obs)
+
+        target_x = p['surface_x']
+        target_y = self._calculate_placement_height(
+            surface_y=p['surface_y'],
+            surface_height=p['surface_height'],
+            block_height=p['block_height'],
+            arm_length_max=p['arm_length_max']
+        )
+
+        # Phase 0: Ensure alignment - use shortest angular path
+        angle_error = self._angle_diff(self.TARGET_THETA, p['robot_theta'])
+        if abs(angle_error) > self.POSITION_TOL:
+            action = np.array([0, 0, np.clip(angle_error, -self.MAX_DTHETA, self.MAX_DTHETA), 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 1: To safe height (only if we haven't reached target x yet)
+        not_at_target_x = not np.isclose(p['robot_x'], target_x, atol=self.POSITION_TOL)
+        at_safe_y = np.isclose(p['robot_y'], self.SAFE_Y, atol=self.POSITION_TOL)
+        if not_at_target_x and not at_safe_y:
+            dy = np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY)
+            action = np.array([0, dy, 0, 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 2: To target x
+        if not_at_target_x:
+            dx = np.clip(target_x - p['robot_x'], -self.MAX_DX, self.MAX_DX)
+            action = np.array([dx, 0, 0, 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 3: Descend (only if gripper is still holding the object)
+        still_holding = p['target_block_held']
+        at_target_y = np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL)
+        if still_holding and not at_target_y:
+            dy = np.clip(target_y - p['robot_y'], -self.MAX_DY, self.MAX_DY)
+            action = np.array([0, dy, 0, 0, 0], dtype=np.float64)
+            return action
+
+        # Phase 4: Open gripper (only if we're at target position and still holding)
+        at_target_position = np.isclose(p['robot_y'], target_y, atol=self.POSITION_TOL)
+        still_holding_at_target = at_target_position and p['target_block_held']
+        gripper_open = p['finger_gap'] >= p['gripper_base_height'] * 0.95
+        if still_holding_at_target and not gripper_open:
+            action = np.array([0, 0, 0, 0, self.MAX_DGRIPPER], dtype=np.float64)
+            return action
+
+        # Phase 5: Lift (only after block has been released)
+        block_released = not p['target_block_held']
+
+        if block_released and not at_safe_y:
+            dy = np.clip(self.SAFE_Y - p['robot_y'], -self.MAX_DY, self.MAX_DY)
+            action = np.array([0, dy, 0, 0, 0], dtype=np.float64)
+            return action
+
+        return np.zeros(5, dtype=np.float64)
+
+class BaseDynObstruction2DTAMPSystem(
+    BaseTAMPSystem[NDArray[np.float32], NDArray[np.float32]]
+):
+    """Base TAMP system for DynObstruction2D environment."""
+
+    def __init__(
+        self,
+        planning_components: PlanningComponents[NDArray[np.float32]],
+        num_obstructions: int = 2,
+        seed: int | None = None,
+        render_mode: str | None = None,
+    ) -> None:
+        """Initialize DynObstruction2D TAMP system."""
+        self._render_mode = render_mode
+        self._num_obstructions = num_obstructions
+        super().__init__(
+            planning_components, name="DynObstruction2DTAMPSystem", seed=seed
+        )
+
+    def _create_env(self) -> gym.Env:
+        """Create base environment.
+
+        NOTE: Requires prbench to be installed.
+        Install with: pip install -e 'path/to/prbench[dynamic2d]'
+        """
+        env = DynObstruction2DEnvWithReset(
+            num_obstructions=self._num_obstructions, render_mode=self._render_mode
+        )
+
+        return env
+
+    def _get_domain_name(self) -> str:
+        """Get domain name."""
+        return "dyn-obstruction2d-domain"
+
+    def get_domain(self) -> PDDLDomain:
+        """Get domain."""
+        return PDDLDomain(
+            self._get_domain_name(),
+            self.components.operators,
+            self.components.predicate_container.as_set(),
+            self.components.types,
+        )
+
+    @classmethod
+    def _create_planning_components(
+        cls, num_obstructions: int = 2
+    ) -> PlanningComponents[NDArray[np.float32]]:
+        """Create planning components for DynObstruction2D system."""
+        types_container = DynObstruction2DTypes()
+        types_set = types_container.as_set()
+        predicates = DynObstruction2DPredicates(types_container)
+        perceiver = DynObstruction2DPerceiver(types_container, num_obstructions)
+        perceiver.initialize(predicates)
+
+        robot = Variable("?robot", types_container.robot)
+        block = Variable("?block", types_container.block)
+        obstruction = Variable("?obstruction", types_container.obstruction)
+        pickable_obj = Variable("?obj", types_container.pickable)  # Parent type for PickUp
+        surface = Variable("?surface", types_container.surface)
+
+        pick_up_operator = LiftedOperator(
+            "PickUp",
+            [robot, block, surface], 
+            preconditions={
+                predicates["GripperEmpty"]([robot]),
+                predicates["Clear"]([surface]),
+            },
+            add_effects={
+                predicates["Holding"]([robot, block]),
+            },
+            delete_effects={
+                predicates["GripperEmpty"]([robot]),
+            },
+        )
+
+        pick_up_first_from_target_operator = LiftedOperator(
+            "PickUpFirstFromTarget",
+            [robot, obstruction, surface],
+            preconditions={
+                predicates["GripperEmpty"]([robot]),
+                predicates["Blocking"]([obstruction, surface]),
+                predicates["TwoObstructionsBlocking"]([surface]),
+            },
+            add_effects={
+                predicates["Holding"]([robot, obstruction]),
+                predicates["OneObstructionBlocking"]([surface]),
+            },
+            delete_effects={
+                predicates["GripperEmpty"]([robot]),
+                predicates["Blocking"]([obstruction, surface]),
+                predicates["TwoObstructionsBlocking"]([surface]),
+            },
+        )
+
+        pick_up_last_from_target_operator = LiftedOperator(
+            "PickUpLastFromTarget",
+            [robot, obstruction, surface],
+            preconditions={
+                predicates["GripperEmpty"]([robot]),
+                predicates["Blocking"]([obstruction, surface]),
+                predicates["OneObstructionBlocking"]([surface]),
+            },
+            add_effects={
+                predicates["Holding"]([robot, obstruction]),
+                predicates["Clear"]([surface]),
+            },
+            delete_effects={
+                predicates["GripperEmpty"]([robot]),
+                predicates["Blocking"]([obstruction, surface]),
+                predicates["OneObstructionBlocking"]([surface]),
+            },
+        )
+
+        place_first_operator = LiftedOperator(
+            "PlaceFirst",
+            [robot, obstruction, surface], 
+            preconditions={
+                predicates["Holding"]([robot, obstruction]),
+                predicates["OneObstructionBlocking"]([surface]),
+            },
+            add_effects={
+                predicates["GripperEmpty"]([robot]),
+            },
+            delete_effects={
+                predicates["Holding"]([robot, obstruction]),
+            },
+        )
+
+        place_last_operator = LiftedOperator(
+            "PlaceLast",
+            [robot, obstruction, surface],
+            preconditions={
+                predicates["Holding"]([robot, obstruction]),
+                predicates["Clear"]([surface]),
+            },
+            add_effects={
+                predicates["GripperEmpty"]([robot]),
+            },
+            delete_effects={
+                predicates["Holding"]([robot, obstruction]),
+            },
+        )
+
+        place_on_target_operator = LiftedOperator(
+            "PlaceOnTarget",
+            [robot, block, surface],
+            preconditions={
+                predicates["Holding"]([robot, block]),
+                predicates["Clear"]([surface]),
+            },
+            add_effects={
+                predicates["On"]([block, surface]),
+                predicates["GripperEmpty"]([robot]),
+            },
+            delete_effects={
+                predicates["Holding"]([robot, block]),
+            },
+        )
+
+        operators_dict = {
+            "PickUp": pick_up_operator,
+            "PickUpFirstFromTarget": pick_up_first_from_target_operator,
+            "PickUpLastFromTarget": pick_up_last_from_target_operator,
+            "PlaceFirst": place_first_operator,
+            "PlaceLast": place_last_operator,
+            "PlaceOnTarget": place_on_target_operator,
+        }
+
+        return PlanningComponents(
+            types=types_set,
+            predicate_container=predicates,
+            operators=set(operators_dict.values()),
+            skills=set(),
+            perceiver=perceiver,
+        )
+
+    @classmethod
+    def create_default(
+        cls,
+        num_obstructions: int = 2,
+        seed: int | None = None,
+        render_mode: str | None = None,
+    ) -> BaseDynObstruction2DTAMPSystem:
+        """Factory method for creating system with default components."""
+        planning_components = cls._create_planning_components(num_obstructions)
+        system = cls(
+            planning_components,
+            num_obstructions=num_obstructions,
+            seed=seed,
+            render_mode=render_mode,
+        )
+        system.components.skills.update({
+            PickUpSkill(system.components),  # type: ignore
+            PickUpFirstFromTargetSkill(system.components),  # type: ignore
+            PickUpLastFromTargetSkill(system.components),  # type: ignore
+            PlaceFirstSkill(system.components),  # type: ignore
+            PlaceLastSkill(system.components),  # type: ignore
+            PlaceOnTargetSkill(system.components),  # type: ignore
+        })
+        return system
+
+
+class DynObstruction2DTAMPSystem(
+    ImprovisationalTAMPSystem[NDArray[np.float32], NDArray[np.float32]],
+    BaseDynObstruction2DTAMPSystem,
+):
+    """TAMP system for DynObstruction2D environment with improvisational policy
+    learning enabled."""
+
+    def __init__(
+        self,
+        planning_components: PlanningComponents[NDArray[np.float32]],
+        num_obstructions: int = 2,
+        seed: int | None = None,
+        render_mode: str | None = None,
+    ) -> None:
+        """Initialize DynObstruction2D TAMP system."""
+        self._num_obstructions = num_obstructions
+        self._render_mode = render_mode
+        super().__init__(planning_components, seed=seed, render_mode=render_mode)
+
+    def _create_wrapped_env(
+        self, components: PlanningComponents[NDArray[np.float32]]
+    ) -> gym.Env:
+        """Create wrapped environment for training."""
+        return ImprovWrapper(
+            base_env=self.env,
+            perceiver=components.perceiver,
+            step_penalty=-0.5,
+            achievement_bonus=10.0,
+        )
+
+    @classmethod
+    def create_default(
+        cls,
+        num_obstructions: int = 2,
+        seed: int | None = None,
+        render_mode: str | None = None,
+    ) -> DynObstruction2DTAMPSystem:
+        """Factory method for creating improvisational system with default
+        components."""
+        planning_components = cls._create_planning_components(num_obstructions)
+        system = cls(
+            planning_components,
+            num_obstructions=num_obstructions,
+            seed=seed,
+            render_mode=render_mode,
+        )
+        system.components.skills.update({
+            PickUpSkill(system.components),  # type: ignore
+            PickUpFirstFromTargetSkill(system.components),  # type: ignore
+            PickUpLastFromTargetSkill(system.components),  # type: ignore
+            PlaceFirstSkill(system.components),  # type: ignore
+            PlaceLastSkill(system.components),  # type: ignore
+            PlaceOnTargetSkill(system.components),  # type: ignore
+        })
+        return system
